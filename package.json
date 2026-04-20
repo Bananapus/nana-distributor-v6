@@ -1,0 +1,29 @@
+{
+  "name": "@bananapus/distributor-v6",
+  "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bananapus/nana-distributor-v6"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "forge test",
+    "test:fork": "forge test --fork-url $RPC_ETHEREUM_MAINNET",
+    "coverage": "forge coverage --match-path \"./src/*.sol\" --report lcov --report summary",
+    "deploy:mainnets": "source ./.env && npx sphinx propose ./script/Deploy.s.sol --networks mainnets",
+    "deploy:testnets": "source ./.env && npx sphinx propose ./script/Deploy.s.sol --networks testnets"
+  },
+  "dependencies": {
+    "@bananapus/721-hook-v6": "^0.0.32",
+    "@bananapus/core-v6": "^0.0.32",
+    "@bananapus/permission-ids-v6": "^0.0.15",
+    "@openzeppelin/contracts": "^5.6.1",
+    "@prb/math": "^4.1.0"
+  },
+  "devDependencies": {
+    "@sphinx-labs/plugins": "^0.33.2"
+  }
+}
