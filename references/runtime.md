@@ -33,3 +33,4 @@ The 721 distributor excludes burned NFTs from total stake and treats `ownerOf` f
 |---|---|
 | [`test/JBTokenDistributor.t.sol`](../test/JBTokenDistributor.t.sol) | Checkpointed vote allocation, non-delegated supply behavior, vesting flow, split-hook funding |
 | [`test/JB721Distributor.t.sol`](../test/JB721Distributor.t.sol) | Tier-based share math, burned token handling, split-hook funding, vesting collection |
+| [`test/invariant/JB721DistributorInvariant.t.sol`](../test/invariant/JB721DistributorInvariant.t.sol) | Longer-lived 721 accounting relationships that are easier to break than unit tests suggest |

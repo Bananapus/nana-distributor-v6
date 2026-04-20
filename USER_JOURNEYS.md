@@ -15,9 +15,10 @@ split configuration in [nana-core-v6](../nana-core-v6/USER_JOURNEYS.md).
 
 ## Key Surfaces
 
-- `JBDistributor`: shared funding, round, vesting, and claim accounting
+- `JBDistributor`: shared funding, round math, vesting, forfeiture release, and claim accounting
 - `JB721Distributor`: split hook that vests rewards to holders of a `JB721TiersHook`
 - `JBTokenDistributor`: split hook that vests rewards to holders of an `IVotes` token
+- `processSplitWith(...)`, `fund(...)`, `beginVesting(...)`, `collectVestedRewards(...)`, `releaseForfeitedRewards(...)`: main external lifecycle
 
 ## Journey 1: Fund A Distributor Through A Project Payout Split
 
@@ -33,12 +34,17 @@ split configuration in [nana-core-v6](../nana-core-v6/USER_JOURNEYS.md).
 **Main Flow**
 1. Configure the project payout split so the distributor is the split hook.
 2. During payout execution, `processSplitWith(...)` is called on the distributor.
-3. The distributor credits the received token amount to the hook-specific distributor balance.
+3. The distributor distinguishes terminal-style pull flows from controller-style pre-sent flows.
+4. The hook-specific distributor balance is credited for future vesting rounds.
 
 **Failure Modes**
 - the split beneficiary is not the intended 721 hook or `IVotes` token
 - an unauthorized caller tries to invoke `processSplitWith(...)`
+- the funding path is misclassified between allowance-pull and pre-funded controller flow
 - teams expect this repo to create the payout split automatically
+
+**Postconditions**
+- the relevant distributor balance is funded and available for a later vesting round
 
 ## Journey 2: Begin A New Vesting Round
 
@@ -53,13 +59,17 @@ split configuration in [nana-core-v6](../nana-core-v6/USER_JOURNEYS.md).
 
 **Main Flow**
 1. Call the vesting entrypoint for the relevant distributor and hook.
-2. The distributor snapshots stake information for the current round.
+2. `beginVesting(...)` snapshots stake at the current round boundary and fixes the round's distributable balance.
 3. Reward amounts become claimable over `vestingRounds` rather than immediately.
 
 **Failure Modes**
 - vesting was already started for that round
 - the chosen staking surface has zero usable stake
+- another caller triggers the snapshot earlier in the round than operators expected
 - integrators ignore that `JBTokenDistributor` depends on delegated voting power, not raw balances
+
+**Postconditions**
+- the round has a fixed distributable balance and snapshot-backed vesting schedule
 
 ## Journey 3: Claim And Collect Vested Rewards
 
@@ -74,13 +84,17 @@ split configuration in [nana-core-v6](../nana-core-v6/USER_JOURNEYS.md).
 
 **Main Flow**
 1. Query `collectableFor(...)` or `claimedFor(...)` to inspect position state.
-2. Call the relevant collection path for the token, hook, and reward token.
+2. Call `collectVestedRewards(...)` for the token IDs, reward token, and beneficiary.
 3. The distributor releases the vested amount and updates claim accounting.
 
 **Failure Modes**
 - the caller is not the token owner or encoded staker
 - the rewards are still locked by the vesting schedule
+- the beneficiary expects cliff-style unlocks instead of linear vesting
 - teams misread `claimedFor(...)` as "available now" instead of "total amount represented by vesting entries"
+
+**Postconditions**
+- vested rewards are transferred and claim accounting advances for the holder's position
 
 ## Journey 4: Release Forfeited Rewards From Burned 721 Positions
 
@@ -95,12 +109,15 @@ split configuration in [nana-core-v6](../nana-core-v6/USER_JOURNEYS.md).
 
 **Main Flow**
 1. Detect that a 721 position used for staking has been burned.
-2. Call the forfeiture-release path so unvested rewards are no longer stranded against a dead token.
+2. Call `releaseForfeitedRewards(...)` so unvested rewards are no longer stranded against a dead token.
 3. Let the reclaimed amount return to the distributor pool for future rounds or accounting.
 
 **Failure Modes**
 - the token was not actually burned
 - reviewers assume the same forfeiture path exists for `IVotes` staking, which it does not
+
+**Postconditions**
+- unvested rewards are no longer stranded against a burned 721 position
 
 ## Trust Boundaries
 

@@ -26,7 +26,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 2. Economic Risks
 
-- **Round snapshot timing.** The first `beginVesting` call for a `(hook, token, round)` takes the snapshot and fixes that round's distributable balance. Later funding in the same round is excluded until a later round.
+- **Round snapshot timing has a zero-balance edge case.** `_takeSnapshotOf` treats `snapshot.balance != 0` as the "already snapshotted" sentinel. Once a round snapshots a non-zero tracked balance, later funding in the same round is excluded until a later round. But if the first snapshot for that `(hook, token, round)` sees `balance == 0`, later funding in the same round can still be picked up by a later `beginVesting` call because the stored zero-balance snapshot is indistinguishable from "no snapshot yet".
 - **Unclaimed value stays in the pool.** `distributable = snapshot.balance - snapshot.vestingAmount`, so rewards not vested in the current round remain available for future rounds rather than being lost.
 - **Partial-round claims are linear, not cliff-based.** `collectableFor` unlocks value proportionally as rounds elapse. Integrators should not assume "nothing until release round".
 - **Forfeited 721 rewards are recycled, not burned.** `releaseForfeitedRewards` decrements `totalVestingAmountOf` but intentionally does not decrement `_balanceOf`, so burned-NFT rewards return to the hook's future distributable pool.
@@ -38,6 +38,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Claim authority differs by distributor.**
   - `JB721Distributor` only allows the current NFT owner to collect for a token ID.
   - `JBTokenDistributor` encodes the claimant address into `tokenId` and only that address can collect.
+- **721 claim batches are brittle to invalid token IDs.** `JB721Distributor._canClaim` uses a direct `IERC721(hook).ownerOf(tokenId)` check without try-catch. Unlike `beginVesting`, which skips burned NFTs via `_tokenBurned`, a `collectFor` batch that includes a burned or never-minted token ID can revert before any claims in the batch are processed.
 - **Forfeiture release is 721-only in practice.** `JBTokenDistributor._tokenBurned` always returns `false`, so `releaseForfeitedRewards` always reverts there.
 - **Split-hook entry is tightly gated.** `processSplitWith` reverts unless the caller is the current project terminal or controller for `context.projectId`.
 
@@ -57,13 +58,14 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Controller-vs-terminal split funding heuristic.** For ERC-20 splits, `processSplitWith` treats `allowance >= context.amount` as the terminal flow and otherwise assumes tokens were already sent by the controller. Integrators should preserve that calling convention.
 - **Fee-on-transfer handling is asymmetric by design.** Terminal-style pull flows and direct `fund()` measure actual received balance deltas. Controller-style split flows trust `context.amount` because the tokens are presumed to have already been transferred.
 - **721 stake weights depend on tier metadata, not token count alone.** A tier with higher `votingUnits` receives more rewards per NFT.
+- **721 vesting and claiming treat burned tokens differently.** `beginVesting` skips burned NFTs to avoid overbooking new vesting, but `collectFor` still depends on `ownerOf(tokenId)` succeeding for authorization. Integrators should sanitize 721 claim batches off-chain instead of assuming the distributor will ignore invalid token IDs.
 - **Checkpoint availability matters for `IVotes`.** If the target token lacks reliable historical checkpoints, `JBTokenDistributor` cannot allocate correctly.
 
 ## 6. Invariants to Verify
 
 - For every `(hook, token)`, `totalVestingAmountOf <= _balanceOf`.
 - Claim collections plus remaining vesting plus future distributable balance never exceed tracked funded balance for a `(hook, token)`.
-- A `(hook, token, round)` snapshot is stable after first creation and reused for later vesting calls in the same round.
+- A `(hook, token, round)` snapshot is stable after the first non-zero-balance snapshot and reused for later vesting calls in the same round.
 - `latestVestedIndexOf` only advances contiguously past fully exhausted vesting entries.
 - In `JB721Distributor`, burned NFTs are excluded from total stake and can only have rewards recycled through `releaseForfeitedRewards`.
 - In `JBTokenDistributor`, only the encoded address for a `tokenId` can collect that token's vested rewards.
@@ -72,7 +74,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ### 7.1 Anyone can trigger a round snapshot
 
-`beginVesting` is intentionally permissionless. This improves liveness, but it also means operators do not control the exact block at which a round snapshot is first taken.
+`beginVesting` is intentionally permissionless. This improves liveness, but it also means operators do not control the exact block at which a round snapshot is first taken, and zero-balance rounds are not fully crystallized until some later call snapshots a non-zero tracked balance.
 
 ### 7.2 Rewards can remain undistributed when stake is missing
 
