@@ -6,7 +6,7 @@
 
 ## System Overview
 
-`JBDistributor` is the shared vesting engine. `JBTokenDistributor` changes stake measurement to checkpointed voting power. `JB721Distributor` changes stake measurement to tier voting units and current NFT ownership.
+`JBDistributor` is the shared vesting engine. `JBTokenDistributor` changes stake measurement to checkpointed voting power. `JB721Distributor` changes stake measurement to checkpointed voting power from the hook's `CHECKPOINTS()` module, ensuring only NFTs held at round start are eligible.
 
 Both variants can be used as `IJBSplitHook` receivers.
 
@@ -24,13 +24,13 @@ Both variants can be used as `IJBSplitHook` receivers.
 | --- | --- | --- |
 | `JBDistributor` | Shared rounds, vesting, snapshots, and claims | Economic core |
 | `JBTokenDistributor` | ERC-20 distribution using `IVotes` checkpoints | Token stake source |
-| `JB721Distributor` | NFT distribution using tier voting units | 721 stake source |
+| `JB721Distributor` | NFT distribution using checkpointed voting power | 721 stake source |
 
 ## Trust Boundaries
 
 - split-hook caller authentication depends on `JBDirectory`
 - `JBTokenDistributor` trusts `IVotes` checkpoint history
-- `JB721Distributor` trusts the 721 hook and its store for stake state
+- `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
 - upstream entitlement logic still lives outside this repo
 
 ## Critical Flows

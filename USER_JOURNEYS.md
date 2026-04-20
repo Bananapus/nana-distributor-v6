@@ -112,7 +112,7 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 
 - this repo trusts `JBDirectory` for authenticated split-hook caller checks
 - `JBTokenDistributor` trusts `IVotes` checkpoints
-- `JB721Distributor` trusts the 721 hook and its store for stake state
+- `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
 
 ## Hand-Offs
 

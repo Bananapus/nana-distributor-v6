@@ -17,7 +17,7 @@ The package separates distribution mechanics by asset type:
 
 - `JBDistributor` coordinates shared round and vesting logic
 - `JBTokenDistributor` distributes ERC-20 balances using `IVotes` checkpointed voting power
-- `JB721Distributor` distributes value to 721 holders using tier voting units
+- `JB721Distributor` distributes value to 721 holders using checkpointed voting power, ensuring only holders at round start are eligible
 
 Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
 
@@ -31,7 +31,7 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 | --- | --- |
 | `JBDistributor` | Shared round-based vesting, claiming, and accounting logic. |
 | `JBTokenDistributor` | ERC-20 distributor keyed to `IVotes` checkpointed voting power. |
-| `JB721Distributor` | NFT-aware distributor keyed to tier voting units and holder state. |
+| `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's `CHECKPOINTS()` module. Only NFTs held at round start are eligible. |
 
 ## Mental Model
 
