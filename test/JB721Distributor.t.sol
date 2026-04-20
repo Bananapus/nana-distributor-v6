@@ -62,18 +62,75 @@ contract MockToken2 is ERC20 {
     }
 }
 
+/// @notice Mock checkpoints contract that provides IVotes-compatible getPastVotes/getPastTotalSupply.
+/// @dev Computes getPastTotalSupply dynamically from the store (tier data minus burned), matching
+/// the old _totalStake logic. getPastVotes returns type(uint256).max for any address so that
+/// min(votingUnits, pastVotes) always equals votingUnits.
+contract MockCheckpoints {
+    MockStore public store;
+    address public hookAddr;
+
+    /// @dev Override: if non-zero, getPastTotalSupply returns this instead of computing from store.
+    uint256 public totalSupplyOverride;
+
+    /// @dev Per-address vote overrides. If set to non-zero, getPastVotes returns this value.
+    mapping(address => uint256) public votesOverride;
+
+    /// @dev Tracks whether a per-address override was explicitly set (to allow setting 0).
+    mapping(address => bool) public votesOverrideSet;
+
+    constructor(MockStore _store, address _hook) {
+        store = _store;
+        hookAddr = _hook;
+    }
+
+    function setTotalSupplyOverride(uint256 value) external {
+        totalSupplyOverride = value;
+    }
+
+    function setVotesOverride(address account, uint256 value) external {
+        votesOverride[account] = value;
+        votesOverrideSet[account] = true;
+    }
+
+    function getPastTotalSupply(uint256) external view returns (uint256 total) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
+        uint256 maxTier = store.maxTier();
+        for (uint256 i = 1; i <= maxTier; i++) {
+            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
+            if (tier.id == 0 || tier.initialSupply == 0) continue;
+            uint256 burned = store.burned(i);
+            uint256 held = tier.initialSupply - tier.remainingSupply - burned;
+            total += held * tier.votingUnits;
+        }
+    }
+
+    function getPastVotes(address account, uint256) external view returns (uint256) {
+        if (votesOverrideSet[account]) return votesOverride[account];
+        // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
+        return type(uint256).max;
+    }
+}
+
 /// @notice Mock 721 tiers hook for testing.
 contract MockHook {
     MockStore public immutable _store;
+    MockCheckpoints public _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
 
     constructor(MockStore store) {
         _store = store;
+        _checkpoints = new MockCheckpoints(store, address(this));
     }
 
     function STORE() external view returns (MockStore) {
         return _store;
+    }
+
+    function CHECKPOINTS() external view returns (MockCheckpoints) {
+        return _checkpoints;
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {
@@ -1771,29 +1828,30 @@ contract JB721DistributorTest is Test {
         assertFalse(distributor.supportsInterface(0xdeadbeef));
     }
 
-    /// @notice processSplitWith with no allowance credits balance if tokens were already sent (controller pattern).
+    /// @notice processSplitWith with allowance credits balance (terminal/controller pull pattern).
     function test_processSplitWith_erc20_noAllowance_creditsBalance() public {
         uint256 amount = 10 ether;
-        // Send tokens directly to distributor (controller pattern).
-        rewardToken.mint(address(distributor), amount);
+        // Mint to caller and approve distributor (pull pattern).
+        rewardToken.mint(address(this), amount);
+        rewardToken.approve(address(distributor), amount);
 
-        // No approval -- simulates controller having already sent tokens directly.
         distributor.processSplitWith(_splitContext(address(rewardToken), amount));
-        // Balance credited to hook even though no pull happened.
+        // Balance credited to hook via pull.
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), amount);
     }
 
-    /// @notice Controller pattern: tokens sent before processSplitWith, no pull needed.
+    /// @notice Controller pattern: controller approves and processSplitWith pulls tokens.
     function test_processSplitWith_controllerPattern() public {
         // Register this test as controller (not just terminal) for the controller path.
         directory.setTerminal(PROJECT_ID, address(this), false);
         directory.setController(PROJECT_ID, address(this));
 
         uint256 amount = 50 ether;
-        // Controller sends tokens directly to the distributor first.
-        rewardToken.mint(address(distributor), amount);
+        // Controller mints to itself and approves the distributor.
+        rewardToken.mint(address(this), amount);
+        rewardToken.approve(address(distributor), amount);
 
-        // Controller calls processSplitWith -- no allowance, tokens already there.
+        // Controller calls processSplitWith -- distributor pulls via allowance.
         distributor.processSplitWith(_splitContext(address(rewardToken), amount));
 
         // Balance credited to hook.
