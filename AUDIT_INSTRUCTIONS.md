@@ -1,75 +1,72 @@
 # Audit Instructions
 
+This repo distributes rewards over time to ERC-20 voting power or tiered 721 holders. Audit it as a vesting and pro-rata accounting system that is usually funded by split hooks.
+
+## Audit Objective
+
+Find issues that:
+- let a claimant extract more than their pro-rata share
+- break conservation between funded balances, vested balances, and claimed balances
+- let a burned NFT or ineligible voting position continue claiming rewards
+- double-vest or double-claim the same round
+- trap rewards permanently through edge-case state transitions
+
 ## Scope
 
-All Solidity source files in `src/`:
+In scope:
+- `src/JBDistributor.sol`
+- `src/JBTokenDistributor.sol`
+- `src/JB721Distributor.sol`
+- all interfaces in `src/interfaces/`
+- all structs in `src/structs/`
+- `script/Deploy.s.sol`
 
-| File | Lines | Description |
-|------|-------|-------------|
-| `JBDistributor.sol` | ~350 | Abstract base: round logic, vesting, claiming, forfeiture |
-| `JBTokenDistributor.sol` | ~100 | ERC20Votes staking + IJBSplitHook integration |
-| `JB721Distributor.sol` | ~120 | JB 721 NFT staking + IJBSplitHook integration |
-| `interfaces/` | ~80 | Public API definitions |
-| `structs/` | ~15 | JBTokenSnapshotData, JBVestingData |
+## Start Here
 
-Total: ~665 lines of Solidity.
+1. `src/JBDistributor.sol`
+2. `src/JBTokenDistributor.sol`
+3. `src/JB721Distributor.sol`
 
-## Reading Order
+## Security Model
 
-1. `src/structs/` — data structures
-2. `src/interfaces/IJBDistributor.sol` — public API
-3. `src/JBDistributor.sol` — core logic (start here for bugs)
-4. `src/JBTokenDistributor.sol` — ERC20Votes concrete
-5. `src/JB721Distributor.sol` — 721 concrete
+The shared base contract receives funds, snapshots stake for a round, vests balances over time, and lets holders claim unlocked rewards.
+- `JBTokenDistributor` derives stake from ERC-20 voting snapshots
+- `JB721Distributor` derives stake from eligible 721 holdings and has forfeiture logic for burned NFTs
+- anyone may fund, but vesting state should only release value once per round and claimant
 
-## System Model
+## Roles And Privileges
 
-```
-Funding:
-  Project Split → processSplitWith() → _balanceOf[hook][token] += amount
-  Anyone        → fund()             → _balanceOf[hook][token] += amount
+| Role | Powers | How constrained |
+|------|--------|-----------------|
+| Funder | Add rewards to the distributor | Must not be able to corrupt claim accounting |
+| Claimant | Collect unlocked rewards | Must remain bounded by snapshot stake and vesting progress |
+| Split hook caller | Route project funds into the distributor | Must preserve actual received balances |
 
-Distribution cycle (per round):
-  beginVesting() → snapshot(balance - vestingAmount) → vest pro-rata to each tokenId
-                   │
-                   └─ vestingDataOf[hook][tokenId][token].push({releaseRound, amount, shareClaimed:0})
+## Integration Assumptions
 
-Claiming:
-  collectVestedRewards() → linear unlock: (currentRound - claimRound) / vestingRounds
-                         → transfer unlocked portion → update shareClaimed
-
-Forfeiture (721 only):
-  releaseForfeitedRewards() → return unvested portion of burned NFT to hook balance
-```
+| Dependency | Assumption | What breaks if wrong |
+|------------|------------|----------------------|
+| ERC-20 voting checkpoints | Historical voting power reflects intended stake | Round allocations can be manipulated |
+| 721 eligibility source | Ownership and burn status are authentic | Forfeiture and claim eligibility break |
 
 ## Critical Invariants
 
-1. `sum(all vesting amounts) + sum(all balances) == sum(all funds received)` (conservation)
-2. A tokenId can only have one active vesting entry per releaseRound (no double-vest)
-3. `shareClaimed` is monotonically non-decreasing, bounded by `MAX_SHARE`
-4. Burned tokens cannot collect rewards (721) / non-delegated tokens get nothing (ERC20)
-5. `snapshotAtRoundOf` is write-once per hook/token/round
+1. Funded balance equals live balance plus total unclaimed vested balance.
+2. A token or holder cannot receive more than its round share.
+3. A round is snapshotted at most once per token and funding asset.
+4. `shareClaimed` is monotonic and cannot exceed the full vested amount.
+5. Burned or otherwise ineligible positions cannot continue collecting rewards they no longer back.
 
-## Threat Model
+## Attack Surfaces
 
-- **Attacker goal**: Extract more rewards than their pro-rata stake entitles them to
-- **Attack vectors**:
-  - Flash-loan stake manipulation before `beginVesting()` (mitigated: uses past block via `getPastVotes`)
-  - Double-claim across rounds (mitigated: releaseRound uniqueness check)
-  - Reentrancy during `collectVestedRewards` (mitigated: state updated before transfer)
-  - Grief `beginVesting` to lock out a round (mitigated: permissionless, idempotent per round)
-  - Manipulate `_totalStake()` via 721 minting right before `beginVesting()` (live state risk — see RISKS.md)
+- round-start vesting logic and snapshot timing
+- linear unlock math during claims
+- 721 forfeiture and burned-token handling
+- split-hook funding paths and fee-on-transfer token deltas
+- stake calculation right before a round begins
 
-## Hotspots
+## Verification
 
-1. **`_vestTokenIds()`** — Pro-rata math, snapshot creation, double-vest prevention
-2. **`_unlockTokenIds()`** — Linear vesting math, `shareClaimed` accounting
-3. **`_totalStake()` in JB721Distributor** — Live tier iteration, burned NFT exclusion
-4. **`processSplitWith()`** — Balance-delta for FOT safety, caller validation
-
-## Finding Bar
-
-- **Critical**: Fund loss, bypass of ownership checks, double-claim
-- **High**: Permanent DoS of claiming, incorrect pro-rata distribution
-- **Medium**: Dust accumulation beyond acceptable bounds, gas griefing
-- **Low**: Informational, style, gas optimizations
+- `npm install`
+- `forge build`
+- `forge test`

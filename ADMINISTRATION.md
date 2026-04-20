@@ -1,48 +1,81 @@
 # Administration
 
-## At a Glance
+## At A Glance
 
-| Property | Value |
-|----------|-------|
-| Admin role | None — fully permissionless |
-| Upgradeability | None — immutable |
-| Pause mechanism | None |
-| Fee mechanism | None |
-| Owner | None |
+| Item | Details |
+| --- | --- |
+| Scope | Permissionless distributor funding and vesting with terminal/controller-gated split-hook entry |
+| Control posture | Nearly adminless with caller validation on a few paths |
+| Highest-risk actions | Deploying with the wrong round duration or using the wrong distributor variant for the product |
+| Recovery posture | Most mistakes require redeployment; there is no admin rescue or pause path |
+
+## Purpose
+
+`nana-distributor-v6` is almost entirely permissionless. The only hard gate is that payout-split funding through `processSplitWith(...)` must come from a recognized terminal or controller for the project. There is no owner, pause, or upgrade role.
+
+## Control Model
+
+- No owner
+- No governance
+- No pause
+- No upgrade
+- Terminal or controller validation for split-hook funding
+- Holder-based claim checks for collection
 
 ## Roles
 
-This system is **fully permissionless**. There is no admin, owner, or governance role.
+| Role | How Assigned | Scope | Notes |
+| --- | --- | --- | --- |
+| Anyone | No assignment | Global | Can fund and begin vesting |
+| Reward claimant | Token ownership or encoded claimant model | Per position | Must satisfy `_canClaim(...)` |
+| Terminal or controller | `JBDirectory` routing | Per project | Only these callers can use `processSplitWith(...)` |
 
-## Access Control
+## Privileged Surfaces
 
-| Function | Who can call | Gate |
-|----------|-------------|------|
-| `fund()` | Anyone | — |
-| `beginVesting()` | Anyone | — |
-| `collectVestedRewards()` | Token owner (ERC-721) or staker (ERC-20) | `_canClaim()` ownership check |
-| `releaseForfeitedRewards()` | Anyone (only for burned NFTs) | `_tokenBurned()` check |
-| `processSplitWith()` | Project terminal or controller | `DIRECTORY` validation |
+There are no owner-only or governance-only functions.
 
-## Immutable Configuration
+Access-controlled behavior is limited to:
 
-Set at deployment, never changeable:
+- `processSplitWith(...)`: only a recognized terminal or controller for the project
+- `collectVestedRewards(...)`: caller must satisfy `_canClaim(...)`
+- `releaseForfeitedRewards(...)`: only works for token IDs that satisfy `_tokenBurned(...)`
 
-- `startingBlock` — block when distributor was deployed
-- `roundDuration` — blocks per round
-- `vestingRounds` — number of rounds for full vesting
+Everything else that matters operationally, including `fund(...)` and `beginVesting(...)`, is permissionless.
 
-## Routine Operations
+## Immutable And One-Way
 
-None required. The system operates autonomously once deployed.
+- `startingBlock`, `roundDuration`, and `vestingRounds` are constructor immutables.
+- Vesting entries are append-only claim state for each hook, tokenId, and reward token.
+- There is no admin rewrite or delete path for snapshot and vesting state.
 
-- `beginVesting()` should be called once per round per hook/token pair (permissionless, incentive-compatible)
-- `collectVestedRewards()` called by token holders at their convenience
-- Rewards never expire — uncollected rewards remain claimable indefinitely
+## Operational Notes
+
+- Call `beginVesting(...)` once per round and reward token set you actually intend to vest.
+- Validate the chain-specific `roundDuration` before deployment; it is a real operational parameter, not metadata.
+- Remember the two distributor variants use different stake models: current 721 state versus checkpointed `IVotes` state.
+
+## Machine Notes
+
+- Do not search for owner or governance roles here; they do not exist.
+- Treat `processSplitWith(...)` caller validation and claimant checks as the only meaningful control logic.
+- If product requirements need pausing, mutable schedules, or operator overrides, this repo is the wrong primitive.
+
+## Recovery
+
+- There is no admin rescue surface.
+- If deployment parameters are wrong, the fix is a new distributor deployment.
+- If a stake model is wrong for the product, use the correct distributor variant rather than expecting mutable reconfiguration.
 
 ## Admin Boundaries
 
-- No contract can be paused or upgraded
-- No parameters can be changed post-deployment
-- No funds can be extracted except through the defined claiming mechanisms
-- No emergency withdrawal function exists
+- Nobody can pause distributions or claims.
+- Nobody can change round duration or vesting length after deployment.
+- Nobody can extract rewards except through the defined claim or forfeiture flows.
+- Nobody can bypass terminal/controller validation on the split-hook funding path.
+
+## Source Map
+
+- `src/JBDistributor.sol`
+- `src/JB721Distributor.sol`
+- `src/JBTokenDistributor.sol`
+- `test/JB721Distributor.t.sol`

@@ -1,27 +1,74 @@
-# Bananapus Distributor V6
+# Juicebox Distributor
 
-Token distribution and linear vesting system for Juicebox V6 projects.
+`@bananapus/distributor-v6` distributes ERC-20 balances or 721 token inventories to many recipients under round-based vesting rules. It is a payout utility package for Juicebox-adjacent flows, not a protocol accounting layer.
 
-| Contract | Description |
-|----------|-------------|
-| `JBDistributor` | Abstract base. Round-based distribution with linear vesting over N rounds. |
-| `JBTokenDistributor` | For ERC20Votes stakers. Stake = delegated voting power at round start. Singleton. |
-| `JB721Distributor` | For JB 721 NFT holders. Stake = tier's `votingUnits`. Burned NFTs excluded. Singleton. |
+Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)  
+User journeys: [USER_JOURNEYS.md](./USER_JOURNEYS.md)  
+Skills: [SKILLS.md](./SKILLS.md)  
+Risks: [RISKS.md](./RISKS.md)  
+Administration: [ADMINISTRATION.md](./ADMINISTRATION.md)  
+Audit instructions: [AUDIT_INSTRUCTIONS.md](./AUDIT_INSTRUCTIONS.md)
 
-Both concrete distributors implement `IJBSplitHook` for direct integration with Juicebox payout splits.
+## Overview
+
+This repo provides reusable distributors for teams that need deterministic post-funding or post-mint distribution.
+
+The package separates distribution mechanics by asset type:
+
+- `JBDistributor` coordinates shared round and vesting logic
+- `JBTokenDistributor` distributes ERC-20 balances using IVotes checkpointed voting power
+- `JB721Distributor` distributes value to 721 holders using tier voting units
+
+Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
+
+Use this repo when the problem is "how do we distribute already-owned assets over time?" Do not use it when the problem is project accounting, treasury settlement, or terminal execution.
+
+If the issue is "where did the project's value come from?" start in `nana-core-v6`, `nana-721-hook-v6`, or the upstream repo that minted or received the assets first. This repo matters after the inventory already exists.
+
+## Key Contracts
+
+| Contract | Role |
+| --- | --- |
+| `JBDistributor` | Shared round-based vesting, claiming, and accounting logic. |
+| `JBTokenDistributor` | ERC-20 distributor keyed to IVotes checkpointed voting power. |
+| `JB721Distributor` | NFT-aware distributor keyed to tier voting units and holder state. |
 
 ## Mental Model
 
-1. Project pays into distributor via payout split (or direct `fund()` call)
-2. Anyone calls `beginVesting()` at round start — snapshots balances and begins linear vest
-3. Stakers call `collectVestedRewards()` to claim their pro-rata share as it vests
-4. Burned NFT rewards are reclaimable via `releaseForfeitedRewards()`
+1. a project funds the distributor, often through a payout split
+2. a vesting round begins and snapshots the eligible stake state
+3. recipients collect their pro-rata share as that round vests
+4. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
 
-## Read First
+This repo does not explain the economic reason an allocation exists. It only defines how the funded inventory is handed out.
 
-1. `src/interfaces/IJBDistributor.sol` — full public API
-2. `src/JBDistributor.sol` — core vesting logic
-3. `src/JBTokenDistributor.sol` or `src/JB721Distributor.sol` — concrete implementations
+## Read These Files First
+
+1. `src/interfaces/IJBDistributor.sol`
+2. `src/JBDistributor.sol`
+3. `src/JBTokenDistributor.sol`
+4. `src/JB721Distributor.sol`
+
+## Integration Traps
+
+- distribution correctness depends on the distributor actually holding the assets it is expected to vest
+- ERC-20 and ERC-721 distributions share a mental model, but their edge cases are different
+- `releaseForfeitedRewards` is meaningful for 721-based distributions; token-vote distributions do not have the same burned-token forfeiture path
+- snapshot timing is part of the trusted surface because it defines who is entitled to a round
+- this repo settles distributions, but it does not prove the upstream entitlement math was correct
+
+## Where State Lives
+
+- round and vesting state live in `JBDistributor`
+- token-snapshot inputs live in `JBTokenSnapshotData`
+- vesting schedule state lives in `JBVestingData`
+- asset-specific claim behavior lives in the concrete distributor
+
+## High-Signal Tests
+
+1. `test/JBTokenDistributor.t.sol`
+2. `test/JB721Distributor.t.sol`
+3. `test/invariant/JB721DistributorInvariant.t.sol`
 
 ## Install
 
@@ -29,7 +76,7 @@ Both concrete distributors implement `IJBSplitHook` for direct integration with 
 npm install @bananapus/distributor-v6
 ```
 
-## Develop
+## Development
 
 ```bash
 npm install
@@ -37,25 +84,34 @@ forge build
 forge test
 ```
 
-## Layout
+Useful scripts:
 
-```
+- `npm run test:fork`
+- `npm run deploy:mainnets`
+- `npm run deploy:testnets`
+
+## Repository Layout
+
+```text
 src/
-├── JBDistributor.sol           # Abstract base: rounds, vesting, claiming
-├── JBTokenDistributor.sol      # ERC20Votes implementation + IJBSplitHook
-├── JB721Distributor.sol        # JB 721 NFT implementation + IJBSplitHook
-├── interfaces/
-│   ├── IJBDistributor.sol
-│   ├── IJBTokenDistributor.sol
-│   └── IJB721Distributor.sol
-└── structs/
-    ├── JBTokenSnapshotData.sol # {balance, vestingAmount} per round
-    └── JBVestingData.sol       # {releaseRound, amount, shareClaimed}
+  JBDistributor.sol
+  JBTokenDistributor.sol
+  JB721Distributor.sol
+  interfaces/
+  structs/
 test/
-├── unit/                       # Unit tests for each contract
-└── invariant/                  # Stateful fuzz tests
+  token, 721, and invariant coverage
+script/
+  Deploy.s.sol
 ```
 
-## Risks
+## Risks And Notes
 
-See [RISKS.md](./RISKS.md).
+- distributors are only as trustworthy as the vesting parameters and funding they receive
+- operational mistakes often come from funding the wrong asset or underfunding the distributor
+- teams should review claim timing and snapshot assumptions with the same care they review the payout source
+
+## For AI Agents
+
+- Treat this repo as distribution plumbing, not as the source of upstream entitlement math.
+- Read both the ERC-20 and ERC-721 tests before claiming the flows are equivalent.
