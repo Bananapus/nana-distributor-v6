@@ -16,21 +16,21 @@ This repo provides reusable distributors for teams that need deterministic post-
 The package separates distribution mechanics by asset type:
 
 - `JBDistributor` coordinates shared round and vesting logic
-- `JBTokenDistributor` distributes ERC-20 balances using IVotes checkpointed voting power
+- `JBTokenDistributor` distributes ERC-20 balances using `IVotes` checkpointed voting power
 - `JB721Distributor` distributes value to 721 holders using tier voting units
 
 Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
 
 Use this repo when the problem is "how do we distribute already-owned assets over time?" Do not use it when the problem is project accounting, treasury settlement, or terminal execution.
 
-If the issue is "where did the project's value come from?" start in `nana-core-v6`, `nana-721-hook-v6`, or the upstream repo that minted or received the assets first. This repo matters after the inventory already exists.
+If the issue is "where did the project's value come from?" start in `nana-core-v6`, `nana-721-hook-v6`, or the upstream repo that minted or received the assets first.
 
 ## Key Contracts
 
 | Contract | Role |
 | --- | --- |
 | `JBDistributor` | Shared round-based vesting, claiming, and accounting logic. |
-| `JBTokenDistributor` | ERC-20 distributor keyed to IVotes checkpointed voting power. |
+| `JBTokenDistributor` | ERC-20 distributor keyed to `IVotes` checkpointed voting power. |
 | `JB721Distributor` | NFT-aware distributor keyed to tier voting units and holder state. |
 
 ## Mental Model
@@ -40,7 +40,7 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 3. recipients collect their pro-rata share as that round vests
 4. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
 
-This repo does not explain the economic reason an allocation exists. It only defines how the funded inventory is handed out.
+This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
 ## Read These Files First
 
@@ -53,16 +53,16 @@ This repo does not explain the economic reason an allocation exists. It only def
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
 - ERC-20 and ERC-721 distributions share a mental model, but their edge cases are different
-- `releaseForfeitedRewards` is meaningful for 721-based distributions; token-vote distributions do not have the same burned-token forfeiture path
-- snapshot timing is part of the trusted surface because it defines who is entitled to a round
+- `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token path
+- snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 
 ## Where State Lives
 
-- round and vesting state live in `JBDistributor`
-- token-snapshot inputs live in `JBTokenSnapshotData`
-- vesting schedule state lives in `JBVestingData`
-- asset-specific claim behavior lives in the concrete distributor
+- round and vesting state: `JBDistributor`
+- token snapshot inputs: `JBTokenSnapshotData`
+- vesting schedule state: `JBVestingData`
+- asset-specific claim behavior: the concrete distributor
 
 ## High-Signal Tests
 

@@ -2,103 +2,88 @@
 
 ## Purpose
 
-`nana-distributor-v6` distributes ERC-20 or native-token rewards to token holders over time. It supports two staking models: Juicebox 721 holders through `JB721Distributor` and delegated-vote holders of an `IVotes` token through `JBTokenDistributor`.
+`nana-distributor-v6` provides round-based vesting and claiming for already-owned assets. It supports both `IVotes`-based ERC-20 distributions and 721-based distributions without becoming a treasury or accounting layer.
 
 ## System Overview
 
-`JBDistributor` is the abstract vesting and snapshot engine. Concrete distributors decide who can claim, how stake weight is measured, and how total stake is computed for each round. Both concrete contracts also implement `IJBSplitHook`, so Juicebox projects can route payout splits directly into the distributor that serves their staker base.
+`JBDistributor` is the shared vesting engine. `JBTokenDistributor` changes stake measurement to checkpointed voting power. `JB721Distributor` changes stake measurement to tier voting units and current NFT ownership.
+
+Both variants can be used as `IJBSplitHook` receivers.
 
 ## Core Invariants
 
-- Rewards are distributed round by round from snapshots taken at round boundaries.
-- Vesting schedules are linear across `vestingRounds`.
-- Claim rights must be tied to the actual current owner or encoded claimant model of the staking asset.
-- Snapshot stake totals and per-token stake lookups must use the same round boundary.
-- Beginning vesting snapshots the current round's total stake once; later ownership changes affect who can claim, not the historical round allocation itself.
-- Burned 721 positions can forfeit unvested rewards; non-delegated `IVotes` supply remains unclaimable and stays in the pool for future rounds.
+- snapshot timing must stay coherent
+- tracked funded balance must cover current vesting obligations
+- claim authority must match the distributor type
+- 721 forfeiture handling must not over-allocate or burn value accidentally
+- token and 721 variants must preserve the same core vesting math
 
 ## Modules
 
 | Module | Responsibility | Notes |
 | --- | --- | --- |
-| `JBDistributor` | Funding, round math, vesting state, and generic claim logic | Abstract base |
-| `JB721Distributor` | Reward distribution to 721 holders by tier voting units | Split hook + staking adapter |
-| `JBTokenDistributor` | Reward distribution to `IVotes` holders by checkpointed delegated voting power | Split hook + staking adapter |
-| `JBTokenSnapshotData`, `JBVestingData` | Snapshot and vesting structs | Shared accounting data |
+| `JBDistributor` | Shared rounds, vesting, snapshots, and claims | Economic core |
+| `JBTokenDistributor` | ERC-20 distribution using `IVotes` checkpoints | Token stake source |
+| `JB721Distributor` | NFT distribution using tier voting units | 721 stake source |
 
 ## Trust Boundaries
 
-- Juicebox terminals and controllers are trusted only as authorized sources for split-hook funding calls.
-- `JB721Distributor` trusts `nana-721-hook-v6` tier and burn semantics to measure stake.
-- `JBTokenDistributor` trusts `IVotes.getPastVotes(...)` and `getPastTotalSupply(...)` checkpoint data.
-- Treasury accounting for the source project stays in `nana-core-v6`; this repo only accounts for reward custody and vesting once funds arrive.
+- split-hook caller authentication depends on `JBDirectory`
+- `JBTokenDistributor` trusts `IVotes` checkpoint history
+- `JB721Distributor` trusts the 721 hook and its store for stake state
+- upstream entitlement logic still lives outside this repo
 
 ## Critical Flows
-
-### Fund
-
-```text
-funder or split hook
-  -> sends ERC-20 or native funds for a specific staking hook
-  -> distributor credits the actual received amount
-  -> balance becomes available for future round vesting
-```
 
 ### Begin Vesting
 
 ```text
-authorized caller
-  -> selects a hook and reward token
-  -> distributor snapshots total stake for the current round
-  -> reward amount is assigned into round-based vesting entries
+funded distributor
+  -> begin a round
+  -> snapshot stake and tracked balance for that round
+  -> record vesting entries for the requested token IDs
 ```
 
-### Claim Or Collect
+### Collect
 
 ```text
 claimant
-  -> distributor checks ownership or encoded claimant rights
-  -> computes vested or collectable share across vesting entries
-  -> transfers claimable funds and updates claimed-share state
+  -> prove authority for the token ID or encoded claimant slot
+  -> compute unlocked share
+  -> transfer the vested amount
 ```
 
 ## Accounting Model
 
-- Rounds are block-based from `startingBlock` and `roundDuration`.
-- `MAX_SHARE` is `100_000` and is used for vesting-share accounting.
-- `JBDistributor` stores reward balances per `hook` and `token`, round snapshots, and per-tokenId vesting entries.
-- The repo uses actual received balance deltas for ERC-20 funding paths to tolerate fee-on-transfer ingress.
+This repo owns vesting-round accounting. It does not own upstream treasury accounting or entitlement creation.
+
+The main variables are snapshot balance, total vesting amount, and the stake source used to split each round.
 
 ## Security Model
 
-- Snapshot consistency is the main correctness requirement; stake totals and individual stake lookups must refer to the same round boundary.
-- `JB721Distributor` has a gas-sensitive total-stake loop over tiers.
-- Authorization on `processSplitWith(...)` must remain limited to a terminal or controller recognized by `JBDirectory`.
-- Claim semantics differ by staking model: 721 burns can make rewards permanently unclaimable, while `IVotes` delegation state determines whether supply participates at all.
-- Burn handling differs by distributor type and is part of the economic model.
+- wrong snapshots can misallocate a whole round
+- bad constructor parameters can brick a distributor instance
+- split-funding caller assumptions matter because `processSplitWith` distinguishes pull and pre-sent flows
+- 721 and token variants intentionally differ in authority and forfeiture behavior
 
 ## Safe Change Guide
 
-- Review `JBDistributor` first before changing either concrete distributor.
-- If round timing changes, re-check snapshot block selection and claim math together.
-- If 721 stake semantics change, inspect `tierOfTokenId(...)`, total-stake iteration, and burn handling in one review.
-- If claimant rules change, re-check how historical vesting entries interact with current ownership or delegation at claim time.
-- If `IVotes` stake semantics change, keep `getPastVotes(...)` and `getPastTotalSupply(...)` aligned.
+- review snapshot timing and vesting math together
+- if claim authority changes, re-check both distributor variants separately
+- if funding semantics change, test terminal-style and controller-style flows explicitly
 
 ## Canonical Checks
 
-- 721 round funding, vesting, and claim paths:
-  `test/JB721Distributor.t.sol`
-- delegated-votes snapshot and claim semantics:
+- token distribution behavior:
   `test/JBTokenDistributor.t.sol`
-- 721 distributor state-machine invariants:
+- 721 distribution behavior:
+  `test/JB721Distributor.t.sol`
+- 721 invariants:
   `test/invariant/JB721DistributorInvariant.t.sol`
 
 ## Source Map
 
 - `src/JBDistributor.sol`
-- `src/JB721Distributor.sol`
 - `src/JBTokenDistributor.sol`
-- `test/JB721Distributor.t.sol`
-- `test/JBTokenDistributor.t.sol`
-- `test/invariant/JB721DistributorInvariant.t.sol`
+- `src/JB721Distributor.sol`
+- `src/interfaces/IJBDistributor.sol`
