@@ -23,6 +23,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when a native ETH transfer fails.
     error JBDistributor_NativeTransferFailed();
 
+    /// @notice Thrown when there is nothing to distribute for a token in the current round.
+    error JBDistributor_NothingToDistribute();
+
     /// @notice Thrown when the caller does not have access to the token.
     error JBDistributor_NoAccess();
 
@@ -250,6 +253,9 @@ abstract contract JBDistributor is IJBDistributor {
             // Take a snapshot of the token balance if it hasn't been taken already.
             JBTokenSnapshotData memory snapshot = _takeSnapshotOf(hook, token);
             uint256 distributable = snapshot.balance - snapshot.vestingAmount;
+
+            // Revert if there is nothing to distribute for this token.
+            if (distributable == 0) revert JBDistributor_NothingToDistribute();
 
             // Vest each token ID and get the total amount vested.
             uint256 totalVestingAmount =

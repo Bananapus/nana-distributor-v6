@@ -30,6 +30,9 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JBTokenDistributor_Unauthorized();
 
+    /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
+    error JBTokenDistributor_InvalidTokenId();
+
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
     //*********************************************************************//
@@ -81,17 +84,14 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
         // If it's not a native-token transfer, check if the caller approved tokens (terminal pattern).
         if (msg.value == 0 && context.amount != 0) {
+            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
             uint256 allowance = IERC20(context.token).allowance(msg.sender, address(this));
             if (allowance >= context.amount) {
-                // Terminal pattern: pull tokens and credit actual received amount (handles fee-on-transfer).
-                uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
+                // Terminal pattern: pull tokens via transferFrom.
                 IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this))
-                - balanceBefore;
-            } else {
-                // Controller pattern: tokens already sent before this call, trust context.amount.
-                _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
+            // For both terminal and controller paths, credit actual received amount (handles fee-on-transfer).
+            _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this)) - balanceBefore;
         } else if (msg.value != 0) {
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
@@ -122,6 +122,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @return canClaim True if the account matches the encoded address.
     function _canClaim(address hook, uint256 tokenId, address account) internal pure override returns (bool canClaim) {
         hook; // Silence unused variable warning.
+        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
         canClaim = address(uint160(tokenId)) == account;
     }
 
@@ -133,6 +134,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
     /// @return tokenStakeAmount The delegated voting power at the round start block.
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
+        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
         tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundStartBlock(currentRound()));
     }
 

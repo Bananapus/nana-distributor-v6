@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IJB721Checkpoints} from "@bananapus/721-hook-v6/src/interfaces/IJB721Checkpoints.sol";
 import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHook.sol";
-import {IJB721TiersHookStore} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHookStore.sol";
-import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
@@ -12,6 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
 import {JBDistributor} from "./JBDistributor.sol";
@@ -86,19 +86,16 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // If it's not a native-token transfer, check if the caller approved tokens (terminal pattern).
         if (msg.value == 0 && context.amount != 0) {
+            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
             // Check if the caller has granted an allowance (terminal). If so, pull the tokens.
             // The controller sends tokens before calling, so no pull is needed in that case.
             uint256 allowance = IERC20(context.token).allowance(msg.sender, address(this));
             if (allowance >= context.amount) {
-                // Terminal pattern: pull tokens and credit actual received amount (handles fee-on-transfer).
-                uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
+                // Terminal pattern: pull tokens via transferFrom.
                 IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this))
-                - balanceBefore;
-            } else {
-                // Controller pattern: tokens already sent before this call, trust context.amount.
-                _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
+            // For both terminal and controller paths, credit actual received amount (handles fee-on-transfer).
+            _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this)) - balanceBefore;
         } else if (msg.value != 0) {
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
@@ -130,39 +127,41 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         canClaim = IERC721(hook).ownerOf(tokenId) == account;
     }
 
-    /// @notice The stake weight of a given NFT token ID based on its tier's voting units.
+    /// @notice The stake weight of a given NFT token ID based on its tier's voting units, validated against historical
+    /// state.
+    /// @dev Returns 0 if the token's current owner had no checkpointed voting power at the round's start block,
+    /// preventing late mints from capturing pro-rata rewards within the current round.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The ID of the token to get the stake weight of.
-    /// @return tokenStakeAmount The voting units of the token's tier.
+    /// @return tokenStakeAmount The voting units of the token's tier (or 0 if ineligible).
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
-        tokenStakeAmount = IJB721TiersHook(hook).STORE().tierOfTokenId(hook, tokenId, false).votingUnits;
+        uint256 votingUnits = IJB721TiersHook(hook).STORE().tierOfTokenId(hook, tokenId, false).votingUnits;
+
+        // Use the checkpoints module to verify the token's owner had voting power at the round's start block.
+        // If they had no voting power at that time, this token was minted or acquired after the round started
+        // and is not eligible for this round's rewards.
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+        address owner = IERC721(hook).ownerOf(tokenId);
+        uint256 pastVotes = IVotes(address(checkpoints)).getPastVotes(owner, roundStartBlock(currentRound()));
+
+        // If the owner had no voting power at round start, the token is ineligible.
+        if (pastVotes == 0) return 0;
+
+        // Cap at the token's tier voting units — the owner's past votes may cover multiple tokens,
+        // but each individual token's stake is at most its tier's voting units.
+        tokenStakeAmount = votingUnits < pastVotes ? votingUnits : pastVotes;
     }
 
-    /// @notice The total stake across all tiers, excluding burned NFTs.
-    /// @dev Iterates all tiers and sums `(minted - burned) * votingUnits` per tier.
+    /// @notice The total stake at a specific block, using the hook's checkpoints module for historical accuracy.
+    /// @dev Uses `IVotes.getPastTotalSupply` from the hook's CHECKPOINTS module. This ensures that only NFTs
+    /// that existed (and were delegated) at `blockNumber` are counted, preventing late mints from diluting or
+    /// capturing rewards within the current round.
     /// @param hook The hook to get the total stake for.
-    /// @param blockNumber Unused — the 721 hook does not support checkpoints.
-    /// @return total The total voting units of all currently held NFTs.
+    /// @param blockNumber The block number to get the total staked amount at.
+    /// @return total The total checkpointed voting units at the given block.
     function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
-        // Silence unused variable warning.
-        blockNumber;
-
-        IJB721TiersHookStore store = IJB721TiersHook(hook).STORE();
-        uint256 maxTierId = store.maxTierIdOf(hook);
-
-        for (uint256 i = 1; i <= maxTierId;) {
-            JB721Tier memory tier = store.tierOf(hook, i, false);
-
-            if (tier.initialSupply != 0) {
-                // Subtract burned NFTs so they don't dilute active stakers.
-                uint256 held = tier.initialSupply - tier.remainingSupply - store.numberOfBurnedFor(hook, i);
-                total += held * tier.votingUnits;
-            }
-
-            unchecked {
-                ++i;
-            }
-        }
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+        total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
     }
 
     /// @notice Checks if the given token was burned.
