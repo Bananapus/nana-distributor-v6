@@ -62,6 +62,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param hook The hook the tokenId belongs to.
     /// @custom:param tokenId The ID of the token to which the vests belong.
     /// @custom:param token The address of the token being vested.
+    // slither-disable-next-line uninitialized-state
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => JBVestingData[]))) public vestingDataOf;
 
     /// @notice The index within `vestingDataOf` of the latest vest.
@@ -305,6 +306,7 @@ abstract contract JBDistributor is IJBDistributor {
 
             // Make sure this token hasn't already been claimed by checking if the last item is the current round.
             uint256 numVesting = vestings.length;
+            // slither-disable-next-line incorrect-equality
             if (numVesting != 0 && vestings[numVesting - 1].releaseRound == vestingReleaseRound) {
                 revert JBDistributor_AlreadyVesting();
             }
@@ -421,6 +423,7 @@ abstract contract JBDistributor is IJBDistributor {
                     _balanceOf[hook][token] -= totalTokenAmount;
 
                     if (address(token) == JBConstants.NATIVE_TOKEN) {
+                        // slither-disable-next-line arbitrary-send-eth,reentrancy-eth
                         (bool success,) = beneficiary.call{value: totalTokenAmount}("");
                         if (!success) revert JBDistributor_NativeTransferFailed();
                     } else {
@@ -490,6 +493,7 @@ abstract contract JBDistributor is IJBDistributor {
                     ++vestedIndex;
 
                     // Only advance the latest-vested index contiguously past fully exhausted entries.
+                    // slither-disable-next-line incorrect-equality
                     if (lockedShare == 0 && vestedIndex == newLatestVestedIndex + 1) {
                         ++newLatestVestedIndex;
                     }

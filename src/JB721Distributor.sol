@@ -145,6 +145,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 pastVotes = IVotes(address(checkpoints)).getPastVotes(owner, roundStartBlock(currentRound()));
 
         // If the owner had no voting power at round start, the token is ineligible.
+        // slither-disable-next-line incorrect-equality
         if (pastVotes == 0) return 0;
 
         // Cap at the token's tier voting units — the owner's past votes may cover multiple tokens,
@@ -169,6 +170,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param tokenId The tokenId to check.
     /// @return tokenWasBurned True if the token was burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {
+        // slither-disable-next-line unused-return
         try IERC721(hook).ownerOf(tokenId) returns (address) {
             tokenWasBurned = false;
         } catch {
