@@ -18,6 +18,9 @@ abstract contract JBDistributor is IJBDistributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
+    /// @notice Thrown when an empty tokenIds array is passed.
+    error JBDistributor_EmptyTokenIds();
+
     /// @notice Thrown when a native ETH transfer fails.
     error JBDistributor_NativeTransferFailed();
 
@@ -110,6 +113,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
+        // Revert if no token IDs are provided.
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds();
+
         // Keep a reference to the current round.
         uint256 round = currentRound();
 
@@ -118,6 +124,9 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Keep a reference to the total staked amount at the snapshot block.
         uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
+
+        // Skip vesting when there are no stakers — funds carry over to the next round.
+        if (totalStakeAmount == 0) return;
 
         // Loop through each token for which vesting is beginning.
         for (uint256 i; i < tokens.length;) {
@@ -328,6 +337,9 @@ abstract contract JBDistributor is IJBDistributor {
         public
         override
     {
+        // Revert if no token IDs are provided.
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds();
+
         // Make sure that all tokens can be claimed by this sender.
         for (uint256 i; i < tokenIds.length;) {
             if (!_canClaim(hook, tokenIds[i], msg.sender)) revert JBDistributor_NoAccess();
