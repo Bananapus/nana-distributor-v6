@@ -75,7 +75,7 @@ contract JBTokenDistributorTest is Test {
     address terminal = makeAddr("terminal");
     uint256 projectId = 1;
 
-    // 100 blocks per round, 4 vesting rounds.
+    // 100 seconds per round, 4 vesting rounds.
     uint256 constant ROUND_DURATION = 100;
     uint256 constant VESTING_ROUNDS = 4;
 
@@ -102,12 +102,14 @@ contract JBTokenDistributorTest is Test {
         return uint256(uint160(staker));
     }
 
-    /// @notice Advance to 1 block after the start of the given round.
+    /// @notice Advance to 1 second after the start of the given round, and advance block number too.
     function _advanceToRound(uint256 round) internal {
-        uint256 targetBlock = distributor.roundStartBlock(round) + 1;
-        if (block.number < targetBlock) {
-            vm.roll(targetBlock);
+        uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        if (block.timestamp < targetTimestamp) {
+            vm.warp(targetTimestamp);
         }
+        // Also advance block number so getPastVotes works with past blocks.
+        vm.roll(block.number + 1);
     }
 
     /// @notice Fund the distributor via the direct `fund` method.
@@ -133,7 +135,7 @@ contract JBTokenDistributorTest is Test {
         // Fund the distributor with 1000 reward tokens.
         _fundDistributor(1000 ether);
 
-        // Advance to round 1 (so round 0's start block is in the past for getPastVotes).
+        // Advance to round 1 (so snapshot block is in the past for getPastVotes).
         _advanceToRound(1);
 
         // Begin vesting for alice and bob.
@@ -332,17 +334,16 @@ contract JBTokenDistributorTest is Test {
         distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, alice);
         assertEq(rewardToken.balanceOf(alice), 350 ether, "Alice collected 350");
 
-        // Fund more for round 2.
+        // Advance to a new round so a fresh snapshot is taken for the new funds.
+        _advanceToRound(4);
+
+        // Fund more for the new round.
         _fundDistributor(500 ether);
 
-        // Advance to round 2 to vest new funds.
-        // Already in round 3, we can begin vesting for round 3 (which looks at round 3's start block).
-        // But we need to be past round 3's start block. We're at round 3 + 1 block already.
-
-        // Begin vesting round 3's rewards.
+        // Begin vesting round 4's rewards.
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Advance past both vesting periods.
+        // Advance past both vesting periods (entry 0 releases at round 5, entry 1 at round 8).
         _advanceToRound(1 + VESTING_ROUNDS + VESTING_ROUNDS);
 
         // Collect all remaining.
@@ -411,6 +412,84 @@ contract JBTokenDistributorTest is Test {
         _advanceToRound(4);
         collectable = distributor.collectableFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
         assertEq(collectable, 525 ether, "75% vested after 3/4 rounds");
+    }
+
+    function test_autoVest_collectWithoutBeginVesting() public {
+        // Alice delegates to self.
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        // Fund the distributor.
+        _fundDistributor(1000 ether);
+
+        // Advance to round 1.
+        _advanceToRound(1);
+
+        // Advance past full vesting WITHOUT calling beginVesting first.
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        // Alice calls collectVestedRewards directly — auto-vest should kick in.
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, alice);
+
+        // Alice should have auto-vested for the current round (1 + VESTING_ROUNDS).
+        // Her claimed amount depends on what round the auto-vest captures.
+        // The auto-vest happens at the current round, so it creates a new vesting entry for that round.
+        // Since it's a new vesting entry, it won't be fully vested yet (just started).
+        // But previous rounds' funds accumulated and the collect at the current round auto-vests them.
+        uint256 aliceClaimed =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertGt(aliceClaimed, 0, "Alice should have auto-vested something");
+    }
+
+    function test_poke_recordsSnapshotBlock() public {
+        _advanceToRound(1);
+
+        uint256 expectedBlock = block.number - 1;
+        distributor.poke();
+
+        assertEq(distributor.roundSnapshotBlock(1), expectedBlock, "Snapshot block should be block.number - 1");
+    }
+
+    function test_poke_idempotent() public {
+        _advanceToRound(1);
+
+        distributor.poke();
+        uint256 firstSnapshot = distributor.roundSnapshotBlock(1);
+
+        // Advance block but stay in same round.
+        vm.roll(block.number + 10);
+
+        distributor.poke();
+        uint256 secondSnapshot = distributor.roundSnapshotBlock(1);
+
+        assertEq(firstSnapshot, secondSnapshot, "Poke should be idempotent within a round");
+    }
+
+    function test_skipAlreadyVested_noRevert() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        _fundDistributor(1000 ether);
+        _advanceToRound(1);
+
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = _tokenId(alice);
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        // First vest.
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+
+        // Second vest in same round should NOT revert (skips silently).
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+
+        // Only one vesting entry should exist.
+        uint256 claimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(claimed, 700 ether, "Should have exactly one vesting entry worth 700");
     }
 
     //*********************************************************************//

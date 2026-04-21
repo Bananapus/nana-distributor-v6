@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -27,11 +27,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when the caller is not a terminal or controller for the project.
-    error JBTokenDistributor_Unauthorized();
-
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
     error JBTokenDistributor_InvalidTokenId();
+
+    /// @notice Thrown when the caller is not a terminal or controller for the project.
+    error JBTokenDistributor_Unauthorized();
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -45,7 +45,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param roundDuration_ The minimum amount of time stakers have to claim rewards, specified in blocks.
+    /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(
         IJBDirectory directory,
@@ -111,7 +111,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     //*********************************************************************//
-    // ---------------------- internal transactions ---------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Check if the account matches the staker address encoded in the tokenId.
@@ -126,27 +126,6 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         canClaim = address(uint160(tokenId)) == account;
     }
 
-    /// @notice The delegated voting power of a staker at the current round's start block.
-    /// @dev Uses `IVotes.getPastVotes` for checkpointed lookups. The block number is derived from
-    /// `roundStartBlock(currentRound())`, which is deterministic within a single transaction and
-    /// consistent with the block used for `_totalStake` in `beginVesting`.
-    /// @param hook The IVotes-compatible token contract.
-    /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
-    /// @return tokenStakeAmount The delegated voting power at the round start block.
-    function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
-        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
-        tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundStartBlock(currentRound()));
-    }
-
-    /// @notice The total supply of votes at a specific block.
-    /// @dev Uses `IVotes.getPastTotalSupply` for checkpointed lookups.
-    /// @param hook The IVotes-compatible token contract.
-    /// @param blockNumber The block number to get the total supply at.
-    /// @return totalStakedAmount The total supply of votes at the given block.
-    function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 totalStakedAmount) {
-        totalStakedAmount = IVotes(hook).getPastTotalSupply(blockNumber);
-    }
-
     /// @notice IVotes tokens cannot be "burned" in the NFT sense — always returns false.
     /// @dev `releaseForfeitedRewards` will always revert for this distributor.
     /// @param hook Unused.
@@ -156,5 +135,26 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         hook;
         tokenId;
         tokenWasBurned = false;
+    }
+
+    /// @notice The delegated voting power of a staker at the current round's snapshot block.
+    /// @dev Uses `IVotes.getPastVotes` for checkpointed lookups. The block number is derived from
+    /// `roundSnapshotBlock[currentRound()]`, which is set on first interaction in a round and
+    /// consistent with the block used for `_totalStake` in `beginVesting` and `collectVestedRewards`.
+    /// @param hook The IVotes-compatible token contract.
+    /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
+    /// @return tokenStakeAmount The delegated voting power at the round's snapshot block.
+    function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
+        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
+        tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundSnapshotBlock[currentRound()]);
+    }
+
+    /// @notice The total supply of votes at a specific block.
+    /// @dev Uses `IVotes.getPastTotalSupply` for checkpointed lookups.
+    /// @param hook The IVotes-compatible token contract.
+    /// @param blockNumber The block number to get the total supply at.
+    /// @return totalStakedAmount The total supply of votes at the given block.
+    function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 totalStakedAmount) {
+        totalStakedAmount = IVotes(hook).getPastTotalSupply(blockNumber);
     }
 }
