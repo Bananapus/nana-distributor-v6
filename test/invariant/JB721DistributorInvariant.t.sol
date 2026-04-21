@@ -6,7 +6,6 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHook.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
@@ -14,7 +13,6 @@ import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
-import {JBDistributor} from "../../src/JBDistributor.sol";
 
 /// @notice Simple ERC20 token for invariant testing.
 contract InvariantToken is ERC20 {
@@ -135,16 +133,16 @@ contract DistributorHandler is Test {
     uint256 public ghost_collectCalls;
     uint256 public ghost_forfeitCalls;
     uint256 public ghost_fundCalls;
-    uint256 public ghost_rollCalls;
+    uint256 public ghost_warpCalls;
 
     // Track whether tokens are burned.
     bool public token1Burned;
     bool public token2Burned;
 
-    // Track latest round we vested in per tokenId to avoid AlreadyVesting.
+    // Track latest round we vested in per tokenId to avoid double-vest in same round.
     mapping(uint256 tokenId => uint256 lastVestedRound) public lastVestedRoundOf;
 
-    uint256 constant ROUND_DURATION = 100;
+    uint256 constant ROUND_DURATION = 100; // 100 seconds per round.
 
     constructor(
         JB721Distributor _distributor,
@@ -172,20 +170,21 @@ contract DistributorHandler is Test {
         ghost_fundCalls++;
     }
 
-    /// @notice Advance blocks by random amount (0-3 rounds).
-    function rollForward(uint8 rawRounds) external {
+    /// @notice Advance time by random amount (0-3 rounds) and advance block number.
+    function warpForward(uint8 rawRounds) external {
         uint256 rounds = bound(rawRounds, 0, 3);
         if (rounds > 0) {
-            vm.roll(block.number + ROUND_DURATION * rounds);
+            vm.warp(block.timestamp + ROUND_DURATION * rounds);
+            vm.roll(block.number + 1); // Advance block for getPastVotes.
         }
-        ghost_rollCalls++;
+        ghost_warpCalls++;
     }
 
     /// @notice Begin vesting for one or both tokens.
     function beginVesting(uint8 tokenSelector) external {
         uint256 currentRound = distributor.currentRound();
 
-        // Determine which tokens to vest (avoid AlreadyVesting).
+        // Determine which tokens to vest (skip already-vested — they'll be silently skipped anyway).
         bool vest1 = !token1Burned && (tokenSelector % 3 != 1) && lastVestedRoundOf[1] != currentRound;
         bool vest2 = !token2Burned && (tokenSelector % 3 != 0) && lastVestedRoundOf[2] != currentRound;
 
@@ -284,7 +283,7 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    uint256 constant ROUND_DURATION = 100;
+    uint256 constant ROUND_DURATION = 100; // 100 seconds per round.
     uint256 constant VESTING_ROUNDS = 4;
 
     function setUp() public {
@@ -405,6 +404,6 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
         handler.ghost_vestingCalls();
         handler.ghost_collectCalls();
         handler.ghost_forfeitCalls();
-        handler.ghost_rollCalls();
+        handler.ghost_warpCalls();
     }
 }

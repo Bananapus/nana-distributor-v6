@@ -41,11 +41,16 @@ interface IJBDistributor {
         address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 balance, uint256 vestingAmount
     );
 
+    /// @notice Emitted when a snapshot block is first recorded for a round.
+    /// @param round The round the snapshot block was recorded for.
+    /// @param snapshotBlock The block number recorded as the snapshot point.
+    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
+
     //*********************************************************************//
     // ----------------------------- views ------------------------------- //
     //*********************************************************************//
 
-    /// @notice The minimum amount of time stakers have to claim rewards, specified in blocks.
+    /// @notice The duration of each round, specified in seconds.
     function roundDuration() external view returns (uint256);
 
     /// @notice The number of rounds until tokens are fully vested.
@@ -54,9 +59,14 @@ interface IJBDistributor {
     /// @notice The number of the current round.
     function currentRound() external view returns (uint256);
 
-    /// @notice The block at which a round started.
-    /// @param round The round to get the start block of.
-    function roundStartBlock(uint256 round) external view returns (uint256);
+    /// @notice The timestamp at which a round started.
+    /// @param round The round to get the start timestamp of.
+    function roundStartTimestamp(uint256 round) external view returns (uint256);
+
+    /// @notice The block number recorded as the snapshot point for a round.
+    /// @dev Returns 0 if no snapshot block has been recorded yet for this round.
+    /// @param round The round to get the snapshot block of.
+    function roundSnapshotBlock(uint256 round) external view returns (uint256);
 
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @param hook The hook whose balance to check.
@@ -109,6 +119,9 @@ interface IJBDistributor {
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external;
+
+    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
+    function poke() external;
 
     /// @notice Collect vested tokens.
     /// @param hook The hook whose stakers are collecting.

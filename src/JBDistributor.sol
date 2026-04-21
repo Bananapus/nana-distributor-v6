@@ -17,9 +17,6 @@ abstract contract JBDistributor is IJBDistributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when a token has already begun vesting for a given round.
-    error JBDistributor_AlreadyVesting();
-
     /// @notice Thrown when a native ETH transfer fails.
     error JBDistributor_NativeTransferFailed();
 
@@ -33,10 +30,10 @@ abstract contract JBDistributor is IJBDistributor {
     // ---------------- public immutable stored properties --------------- //
     //*********************************************************************//
 
-    /// @notice The starting block of the distributor.
-    uint256 public immutable startingBlock;
+    /// @notice The starting timestamp of the distributor.
+    uint256 public immutable startingTimestamp;
 
-    /// @notice The minimum amount of time stakers have to claim rewards, specified in blocks.
+    /// @notice The duration of each round, specified in seconds.
     uint256 public immutable override roundDuration;
 
     /// @notice The number of rounds until tokens are fully vested.
@@ -71,6 +68,10 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param token The address of the token being vested.
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public latestVestedIndexOf;
 
+    /// @notice The block number recorded as the snapshot point for each round.
+    /// @dev Set to `block.number - 1` on first interaction in a round, so that `IVotes.getPastVotes` works.
+    mapping(uint256 round => uint256) public override roundSnapshotBlock;
+
     //*********************************************************************//
     // ------------------------ internal properties ---------------------- //
     //*********************************************************************//
@@ -93,13 +94,13 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The number of the current round.
     function currentRound() public view override returns (uint256) {
-        return (block.number - startingBlock) / roundDuration;
+        return (block.timestamp - startingTimestamp) / roundDuration;
     }
 
-    /// @notice The block at which a round started.
-    /// @param round The round to get the start block of.
-    function roundStartBlock(uint256 round) public view override returns (uint256) {
-        return startingBlock + roundDuration * round;
+    /// @notice The timestamp at which a round started.
+    /// @param round The round to get the start timestamp of.
+    function roundStartTimestamp(uint256 round) public view override returns (uint256) {
+        return startingTimestamp + roundDuration * round;
     }
 
     /// @notice The balance of a token held for a specific hook's stakers.
@@ -206,11 +207,10 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
-    /// @param roundDuration_ The minimum amount of time stakers have to claim rewards, specified in blocks. Make sure
-    /// this is correct for each blockchain/rollup this gets deployed to.
+    /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(uint256 roundDuration_, uint256 vestingRounds_) {
-        startingBlock = block.number;
+        startingTimestamp = block.timestamp;
         roundDuration = roundDuration_;
         vestingRounds = vestingRounds_;
     }
@@ -244,8 +244,11 @@ abstract contract JBDistributor is IJBDistributor {
         // Keep a reference to the current round.
         uint256 round = currentRound();
 
-        // Keep a reference to the total staked amount at the current round.
-        uint256 totalStakeAmount = _totalStake(hook, roundStartBlock(round));
+        // Ensure the snapshot block is recorded for this round.
+        _ensureSnapshotBlock(round);
+
+        // Keep a reference to the total staked amount at the snapshot block.
+        uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
 
         // Loop through each token for which vesting is beginning.
         for (uint256 i; i < tokens.length;) {
@@ -271,59 +274,9 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Vests each token ID for a given reward token and returns the total amount vested.
-    /// @param hook The hook whose stakers are vesting.
-    /// @param tokenIds The IDs to claim rewards for.
-    /// @param token The reward token.
-    /// @param distributable The distributable amount for this round.
-    /// @param totalStakeAmount The total stake amount.
-    /// @param vestingReleaseRound The round at which vesting will be released.
-    /// @return totalVestingAmount The total amount that began vesting.
-    function _vestTokenIds(
-        address hook,
-        uint256[] calldata tokenIds,
-        IERC20 token,
-        uint256 distributable,
-        uint256 totalStakeAmount,
-        uint256 vestingReleaseRound
-    )
-        internal
-        returns (uint256 totalVestingAmount)
-    {
-        for (uint256 j; j < tokenIds.length;) {
-            uint256 tokenId = tokenIds[j];
-
-            // Skip burned tokens — they are excluded from _totalStake, so including them would overbook vesting.
-            if (_tokenBurned(hook, tokenId)) {
-                unchecked {
-                    ++j;
-                }
-                continue;
-            }
-
-            // Keep a reference to the vesting data for this hook/tokenId/token.
-            JBVestingData[] storage vestings = vestingDataOf[hook][tokenId][token];
-
-            // Make sure this token hasn't already been claimed by checking if the last item is the current round.
-            uint256 numVesting = vestings.length;
-            // slither-disable-next-line incorrect-equality
-            if (numVesting != 0 && vestings[numVesting - 1].releaseRound == vestingReleaseRound) {
-                revert JBDistributor_AlreadyVesting();
-            }
-
-            // Keep a reference to the amount of tokens being claimed.
-            uint256 tokenAmount = mulDiv(distributable, _tokenStake(hook, tokenId), totalStakeAmount);
-
-            // Add to the list of vesting data.
-            vestings.push(JBVestingData({releaseRound: vestingReleaseRound, amount: tokenAmount, shareClaimed: 0}));
-
-            emit Claimed(hook, tokenId, token, tokenAmount, vestingReleaseRound);
-
-            unchecked {
-                totalVestingAmount += tokenAmount;
-                ++j;
-            }
-        }
+    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
+    function poke() external override {
+        _ensureSnapshotBlock(currentRound());
     }
 
     /// @notice Release vested rewards in the case that a token was burned.
@@ -356,7 +309,7 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- public transactions ----------------------- //
     //*********************************************************************//
 
-    /// @notice Collect vested tokens.
+    /// @notice Collect vested tokens. Auto-vests for the current round if not already vested.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenIds The IDs of the tokens to collect for.
     /// @param tokens The address of the tokens being claimed.
@@ -378,6 +331,38 @@ abstract contract JBDistributor is IJBDistributor {
             }
         }
 
+        // --- Auto-vest for the current round ---
+        uint256 round = currentRound();
+
+        // Ensure the snapshot block is recorded for this round.
+        _ensureSnapshotBlock(round);
+
+        // Keep a reference to the total staked amount at the snapshot block.
+        uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
+
+        // Loop through each token and auto-vest if there's something distributable.
+        for (uint256 i; i < tokens.length;) {
+            IERC20 token = tokens[i];
+
+            // Take a snapshot of the token balance if it hasn't been taken already.
+            JBTokenSnapshotData memory snapshot = _takeSnapshotOf(hook, token);
+            uint256 distributable = snapshot.balance - snapshot.vestingAmount;
+
+            // Only auto-vest if there's something to distribute and there's stake.
+            if (distributable > 0 && totalStakeAmount > 0) {
+                uint256 totalVestingAmount =
+                    _vestTokenIds(hook, tokenIds, token, distributable, totalStakeAmount, round + vestingRounds);
+
+                unchecked {
+                    totalVestingAmountOf[hook][token] += totalVestingAmount;
+                }
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
         // Unlock the rewards and send them to the beneficiary.
         _unlockRewards(hook, tokenIds, tokens, beneficiary, true);
     }
@@ -385,6 +370,76 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
+
+    /// @notice Ensures that a snapshot block is recorded for the given round.
+    /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
+    /// @param round The round to ensure a snapshot block for.
+    function _ensureSnapshotBlock(uint256 round) internal {
+        // slither-disable-next-line incorrect-equality
+        if (roundSnapshotBlock[round] == 0) {
+            roundSnapshotBlock[round] = block.number - 1;
+            emit RoundSnapshotRecorded(round, block.number - 1);
+        }
+    }
+
+    /// @notice Vests each token ID for a given reward token and returns the total amount vested.
+    /// @dev Silently skips already-vested tokenIds instead of reverting, to support auto-vest.
+    /// @param hook The hook whose stakers are vesting.
+    /// @param tokenIds The IDs to claim rewards for.
+    /// @param token The reward token.
+    /// @param distributable The distributable amount for this round.
+    /// @param totalStakeAmount The total stake amount.
+    /// @param vestingReleaseRound The round at which vesting will be released.
+    /// @return totalVestingAmount The total amount that began vesting.
+    function _vestTokenIds(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20 token,
+        uint256 distributable,
+        uint256 totalStakeAmount,
+        uint256 vestingReleaseRound
+    )
+        internal
+        returns (uint256 totalVestingAmount)
+    {
+        for (uint256 j; j < tokenIds.length;) {
+            uint256 tokenId = tokenIds[j];
+
+            // Skip burned tokens — they are excluded from _totalStake, so including them would overbook vesting.
+            if (_tokenBurned(hook, tokenId)) {
+                unchecked {
+                    ++j;
+                }
+                continue;
+            }
+
+            // Keep a reference to the vesting data for this hook/tokenId/token.
+            JBVestingData[] storage vestings = vestingDataOf[hook][tokenId][token];
+
+            // Skip if this token has already been vested for this round (same releaseRound).
+            uint256 numVesting = vestings.length;
+            // slither-disable-next-line incorrect-equality
+            if (numVesting != 0 && vestings[numVesting - 1].releaseRound == vestingReleaseRound) {
+                unchecked {
+                    ++j;
+                }
+                continue;
+            }
+
+            // Keep a reference to the amount of tokens being claimed.
+            uint256 tokenAmount = mulDiv(distributable, _tokenStake(hook, tokenId), totalStakeAmount);
+
+            // Add to the list of vesting data.
+            vestings.push(JBVestingData({releaseRound: vestingReleaseRound, amount: tokenAmount, shareClaimed: 0}));
+
+            emit Claimed(hook, tokenId, token, tokenAmount, vestingReleaseRound);
+
+            unchecked {
+                totalVestingAmount += tokenAmount;
+                ++j;
+            }
+        }
+    }
 
     /// @notice Unlocks rewards for the given token IDs and tokens, either for collection or forfeiture.
     /// @param hook The hook the tokens belong to.

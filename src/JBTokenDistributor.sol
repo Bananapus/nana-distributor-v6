@@ -45,7 +45,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param roundDuration_ The minimum amount of time stakers have to claim rewards, specified in blocks.
+    /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(
         IJBDirectory directory,
@@ -126,16 +126,16 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         canClaim = address(uint160(tokenId)) == account;
     }
 
-    /// @notice The delegated voting power of a staker at the current round's start block.
+    /// @notice The delegated voting power of a staker at the current round's snapshot block.
     /// @dev Uses `IVotes.getPastVotes` for checkpointed lookups. The block number is derived from
-    /// `roundStartBlock(currentRound())`, which is deterministic within a single transaction and
-    /// consistent with the block used for `_totalStake` in `beginVesting`.
+    /// `roundSnapshotBlock[currentRound()]`, which is set on first interaction in a round and
+    /// consistent with the block used for `_totalStake` in `beginVesting` and `collectVestedRewards`.
     /// @param hook The IVotes-compatible token contract.
     /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
-    /// @return tokenStakeAmount The delegated voting power at the round start block.
+    /// @return tokenStakeAmount The delegated voting power at the round's snapshot block.
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
-        tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundStartBlock(currentRound()));
+        tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundSnapshotBlock[currentRound()]);
     }
 
     /// @notice The total supply of votes at a specific block.

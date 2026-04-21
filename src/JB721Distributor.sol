@@ -44,7 +44,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param roundDuration_ The minimum amount of time stakers have to claim rewards, specified in blocks.
+    /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(
         IJBDirectory directory,
@@ -129,7 +129,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice The stake weight of a given NFT token ID based on its tier's voting units, validated against historical
     /// state.
-    /// @dev Returns 0 if the token's current owner had no checkpointed voting power at the round's start block,
+    /// @dev Returns 0 if the token's current owner had no checkpointed voting power at the round's snapshot block,
     /// preventing late mints from capturing pro-rata rewards within the current round.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The ID of the token to get the stake weight of.
@@ -137,12 +137,12 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
         uint256 votingUnits = IJB721TiersHook(hook).STORE().tierOfTokenId(hook, tokenId, false).votingUnits;
 
-        // Use the checkpoints module to verify the token's owner had voting power at the round's start block.
+        // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
         // If they had no voting power at that time, this token was minted or acquired after the round started
         // and is not eligible for this round's rewards.
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         address owner = IERC721(hook).ownerOf(tokenId);
-        uint256 pastVotes = IVotes(address(checkpoints)).getPastVotes(owner, roundStartBlock(currentRound()));
+        uint256 pastVotes = IVotes(address(checkpoints)).getPastVotes(owner, roundSnapshotBlock[currentRound()]);
 
         // If the owner had no voting power at round start, the token is ineligible.
         // slither-disable-next-line incorrect-equality
