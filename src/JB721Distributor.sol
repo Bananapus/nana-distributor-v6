@@ -115,7 +115,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     }
 
     //*********************************************************************//
-    // ---------------------- internal transactions ---------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Check if the account owns the given NFT token ID.
@@ -125,6 +125,19 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @return canClaim True if the account owns the token.
     function _canClaim(address hook, uint256 tokenId, address account) internal view override returns (bool canClaim) {
         canClaim = IERC721(hook).ownerOf(tokenId) == account;
+    }
+
+    /// @notice Checks if the given token was burned.
+    /// @param hook The hook the token belongs to.
+    /// @param tokenId The tokenId to check.
+    /// @return tokenWasBurned True if the token was burned.
+    function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {
+        // slither-disable-next-line unused-return
+        try IERC721(hook).ownerOf(tokenId) returns (address) {
+            tokenWasBurned = false;
+        } catch {
+            tokenWasBurned = true;
+        }
     }
 
     /// @notice The stake weight of a given NFT token ID based on its tier's voting units, validated against historical
@@ -163,18 +176,5 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
-    }
-
-    /// @notice Checks if the given token was burned.
-    /// @param hook The hook the token belongs to.
-    /// @param tokenId The tokenId to check.
-    /// @return tokenWasBurned True if the token was burned.
-    function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {
-        // slither-disable-next-line unused-return
-        try IERC721(hook).ownerOf(tokenId) returns (address) {
-            tokenWasBurned = false;
-        } catch {
-            tokenWasBurned = true;
-        }
     }
 }

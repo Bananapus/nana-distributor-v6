@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -27,11 +27,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when the caller is not a terminal or controller for the project.
-    error JBTokenDistributor_Unauthorized();
-
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
     error JBTokenDistributor_InvalidTokenId();
+
+    /// @notice Thrown when the caller is not a terminal or controller for the project.
+    error JBTokenDistributor_Unauthorized();
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -111,7 +111,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     //*********************************************************************//
-    // ---------------------- internal transactions ---------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Check if the account matches the staker address encoded in the tokenId.
@@ -124,6 +124,17 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         hook; // Silence unused variable warning.
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
         canClaim = address(uint160(tokenId)) == account;
+    }
+
+    /// @notice IVotes tokens cannot be "burned" in the NFT sense — always returns false.
+    /// @dev `releaseForfeitedRewards` will always revert for this distributor.
+    /// @param hook Unused.
+    /// @param tokenId Unused.
+    /// @return tokenWasBurned Always false.
+    function _tokenBurned(address hook, uint256 tokenId) internal pure override returns (bool tokenWasBurned) {
+        hook;
+        tokenId;
+        tokenWasBurned = false;
     }
 
     /// @notice The delegated voting power of a staker at the current round's snapshot block.
@@ -145,16 +156,5 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @return totalStakedAmount The total supply of votes at the given block.
     function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 totalStakedAmount) {
         totalStakedAmount = IVotes(hook).getPastTotalSupply(blockNumber);
-    }
-
-    /// @notice IVotes tokens cannot be "burned" in the NFT sense — always returns false.
-    /// @dev `releaseForfeitedRewards` will always revert for this distributor.
-    /// @param hook Unused.
-    /// @param tokenId Unused.
-    /// @return tokenWasBurned Always false.
-    function _tokenBurned(address hook, uint256 tokenId) internal pure override returns (bool tokenWasBurned) {
-        hook;
-        tokenId;
-        tokenWasBurned = false;
     }
 }

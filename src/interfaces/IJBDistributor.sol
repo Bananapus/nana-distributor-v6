@@ -31,6 +31,11 @@ interface IJBDistributor {
         address indexed hook, uint256 indexed tokenId, IERC20 token, uint256 amount, uint256 vestingReleaseRound
     );
 
+    /// @notice Emitted when a snapshot block is first recorded for a round.
+    /// @param round The round the snapshot block was recorded for.
+    /// @param snapshotBlock The block number recorded as the snapshot point.
+    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
+
     /// @notice Emitted when a snapshot is created for a round.
     /// @param hook The hook the snapshot is for.
     /// @param round The round the snapshot was created for.
@@ -41,32 +46,9 @@ interface IJBDistributor {
         address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 balance, uint256 vestingAmount
     );
 
-    /// @notice Emitted when a snapshot block is first recorded for a round.
-    /// @param round The round the snapshot block was recorded for.
-    /// @param snapshotBlock The block number recorded as the snapshot point.
-    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
-
     //*********************************************************************//
     // ----------------------------- views ------------------------------- //
     //*********************************************************************//
-
-    /// @notice The duration of each round, specified in seconds.
-    function roundDuration() external view returns (uint256);
-
-    /// @notice The number of rounds until tokens are fully vested.
-    function vestingRounds() external view returns (uint256);
-
-    /// @notice The number of the current round.
-    function currentRound() external view returns (uint256);
-
-    /// @notice The timestamp at which a round started.
-    /// @param round The round to get the start timestamp of.
-    function roundStartTimestamp(uint256 round) external view returns (uint256);
-
-    /// @notice The block number recorded as the snapshot point for a round.
-    /// @dev Returns 0 if no snapshot block has been recorded yet for this round.
-    /// @param round The round to get the snapshot block of.
-    function roundSnapshotBlock(uint256 round) external view returns (uint256);
 
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @param hook The hook whose balance to check.
@@ -85,10 +67,20 @@ interface IJBDistributor {
     /// @param token The address of the token being claimed.
     function collectableFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
 
-    /// @notice The amount of a token that is currently vesting for a hook's stakers.
-    /// @param hook The hook whose vesting amount to check.
-    /// @param token The address of the token that is vesting.
-    function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
+    /// @notice The number of the current round.
+    function currentRound() external view returns (uint256);
+
+    /// @notice The duration of each round, specified in seconds.
+    function roundDuration() external view returns (uint256);
+
+    /// @notice The block number recorded as the snapshot point for a round.
+    /// @dev Returns 0 if no snapshot block has been recorded yet for this round.
+    /// @param round The round to get the snapshot block of.
+    function roundSnapshotBlock(uint256 round) external view returns (uint256);
+
+    /// @notice The timestamp at which a round started.
+    /// @param round The round to get the start timestamp of.
+    function roundStartTimestamp(uint256 round) external view returns (uint256);
 
     /// @notice The snapshot data of the token information for each round.
     /// @param hook The hook the snapshot is for.
@@ -103,25 +95,23 @@ interface IJBDistributor {
         view
         returns (JBTokenSnapshotData memory);
 
+    /// @notice The amount of a token that is currently vesting for a hook's stakers.
+    /// @param hook The hook whose vesting amount to check.
+    /// @param token The address of the token that is vesting.
+    function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
+
+    /// @notice The number of rounds until tokens are fully vested.
+    function vestingRounds() external view returns (uint256);
+
     //*********************************************************************//
     // ---------------------------- transactions ------------------------- //
     //*********************************************************************//
-
-    /// @notice Fund the distributor for a specific hook.
-    /// @dev For native ETH, send `msg.value` and pass `IERC20(NATIVE_TOKEN)` as the token.
-    /// @param hook The hook to fund.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund.
-    function fund(address hook, IERC20 token, uint256 amount) external payable;
 
     /// @notice Claims tokens and begins vesting.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external;
-
-    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
-    function poke() external;
 
     /// @notice Collect vested tokens.
     /// @param hook The hook whose stakers are collecting.
@@ -135,6 +125,16 @@ interface IJBDistributor {
         address beneficiary
     )
         external;
+
+    /// @notice Fund the distributor for a specific hook.
+    /// @dev For native ETH, send `msg.value` and pass `IERC20(NATIVE_TOKEN)` as the token.
+    /// @param hook The hook to fund.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund.
+    function fund(address hook, IERC20 token, uint256 amount) external payable;
+
+    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
+    function poke() external;
 
     /// @notice Release vested rewards for burned tokens.
     /// @param hook The hook whose tokens were burned.
