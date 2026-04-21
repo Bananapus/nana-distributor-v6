@@ -126,6 +126,7 @@ abstract contract JBDistributor is IJBDistributor {
         uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
 
         // Skip vesting when there are no stakers — funds carry over to the next round.
+        // slither-disable-next-line incorrect-equality
         if (totalStakeAmount == 0) return;
 
         // Loop through each token for which vesting is beginning.
