@@ -63,7 +63,8 @@ contract AuditFixMockVotesToken is ERC20, ERC20Votes {
     }
 }
 
-/// @notice Tests for audit findings H-22, M-36, and L-11 in JBTokenDistributor / JBDistributor.
+/// @notice Tests for controller-prepaid split funds, zero-stake vesting, and empty claim array handling in
+/// JBTokenDistributor / JBDistributor.
 contract AuditFixesTest is Test {
     AuditFixMockDirectory directory;
     AuditFixMockRewardToken rewardToken;
@@ -129,11 +130,11 @@ contract AuditFixesTest is Test {
     }
 
     //*********************************************************************//
-    // ------------ H-22: Controller-Prepaid ERC20 Split Funds ----------- //
+    // ------- Controller-Prepaid ERC20 Split Funds ---------------------- //
     //*********************************************************************//
 
     /// @notice Terminal path: ERC20 credited via allowance + transferFrom.
-    function test_H22_processSplitWith_terminalPath_creditsViaAllowance() public {
+    function test_controllerPrepaidSplits_processSplitWith_terminalPath_creditsViaAllowance() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
 
@@ -155,7 +156,7 @@ contract AuditFixesTest is Test {
     }
 
     /// @notice Controller-prepaid path: ERC20 credited when tokens are sent before processSplitWith.
-    function test_H22_processSplitWith_controllerPrepaidPath_creditsDirectly() public {
+    function test_controllerPrepaidSplits_processSplitWith_controllerPrepaidPath_creditsDirectly() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
 
@@ -177,7 +178,7 @@ contract AuditFixesTest is Test {
     }
 
     /// @notice Verifies that the controller-prepaid path allows end-to-end vesting and collection.
-    function test_H22_controllerPrepaidPath_endToEndVestAndCollect() public {
+    function test_controllerPrepaidSplits_controllerPrepaidPath_endToEndVestAndCollect() public {
         uint256 amount = 1000 ether;
 
         // Alice delegates to self so she has voting power.
@@ -224,11 +225,11 @@ contract AuditFixesTest is Test {
     }
 
     //*********************************************************************//
-    // ----------- M-36: Zero totalStake Causes beginVesting Revert ------ //
+    // ------- Zero totalStake Causes beginVesting Revert ---------------- //
     //*********************************************************************//
 
     /// @notice beginVesting with zero totalStake should silently return (no revert).
-    function test_M36_beginVesting_zeroTotalStake_doesNotRevert() public {
+    function test_zeroTotalStake_beginVesting_zeroTotalStake_doesNotRevert() public {
         // Nobody delegates, so getPastTotalSupply will return 0. But we use the mock votes token
         // which returns totalSupply via getPastTotalSupply. We need to ensure totalSupply is 0.
         // Since votesToken was minted in setUp but nobody delegated, getPastTotalSupply returns
@@ -266,7 +267,7 @@ contract AuditFixesTest is Test {
     }
 
     /// @notice After zero-stake round passes, a round with stakers should distribute normally.
-    function test_M36_zeroTotalStake_fundsCarryOverToNextRound() public {
+    function test_zeroTotalStake_zeroTotalStake_fundsCarryOverToNextRound() public {
         // Fund the distributor.
         rewardToken.mint(address(this), 1000 ether);
         rewardToken.approve(address(distributor), 1000 ether);
@@ -299,11 +300,11 @@ contract AuditFixesTest is Test {
     }
 
     //*********************************************************************//
-    // ---------- L-11: Empty Claim Arrays Freeze Round Snapshot ---------- //
+    // ------- Empty Claim Arrays Freeze Round Snapshot ------------------ //
     //*********************************************************************//
 
     /// @notice beginVesting with empty tokenIds should revert.
-    function test_L11_beginVesting_emptyTokenIds_reverts() public {
+    function test_emptyClaimArrays_beginVesting_emptyTokenIds_reverts() public {
         uint256[] memory tokenIds = new uint256[](0);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
@@ -313,7 +314,7 @@ contract AuditFixesTest is Test {
     }
 
     /// @notice collectVestedRewards with empty tokenIds should revert.
-    function test_L11_collectVestedRewards_emptyTokenIds_reverts() public {
+    function test_emptyClaimArrays_collectVestedRewards_emptyTokenIds_reverts() public {
         uint256[] memory tokenIds = new uint256[](0);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
@@ -323,7 +324,7 @@ contract AuditFixesTest is Test {
     }
 
     /// @notice Empty tokenIds should not cause a snapshot to be recorded.
-    function test_L11_emptyTokenIds_doesNotFreezeSnapshot() public {
+    function test_emptyClaimArrays_emptyTokenIds_doesNotFreezeSnapshot() public {
         _advanceToRound(1);
 
         uint256[] memory tokenIds = new uint256[](0);
