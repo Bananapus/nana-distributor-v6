@@ -84,18 +84,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // The target hook is the split's beneficiary.
         address hook = address(context.split.beneficiary);
 
-        // If it's not a native-token transfer, check if the caller approved tokens (terminal pattern).
+        // If it's not a native-token transfer, credit the ERC-20 amount.
         if (msg.value == 0 && context.amount != 0) {
-            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-            // Check if the caller has granted an allowance (terminal). If so, pull the tokens.
-            // The controller sends tokens before calling, so no pull is needed in that case.
             uint256 allowance = IERC20(context.token).allowance(msg.sender, address(this));
             if (allowance >= context.amount) {
-                // Terminal pattern: pull tokens via transferFrom.
+                // Terminal path: the caller granted an allowance — pull tokens via transferFrom.
+                // Use balance delta to handle fee-on-transfer tokens correctly.
+                uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
                 IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
+                _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this))
+                - balanceBefore;
+            } else {
+                // Controller-prepaid path: the controller sends tokens directly before calling processSplitWith.
+                // Credit the declared amount since the tokens are already held by this contract.
+                _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
-            // For both terminal and controller paths, credit actual received amount (handles fee-on-transfer).
-            _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this)) - balanceBefore;
         } else if (msg.value != 0) {
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;

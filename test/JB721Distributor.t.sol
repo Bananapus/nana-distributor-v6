@@ -1278,9 +1278,9 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // Should succeed with no-op for inner loop.
+        // Should revert when no token IDs are provided.
+        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
     }
 
     function test_beginVesting_emptyTokens() public {
@@ -1296,6 +1296,8 @@ contract JB721DistributorTest is Test {
         uint256[] memory tokenIds = new uint256[](0);
         IERC20[] memory tokens = new IERC20[](0);
 
+        // Should revert when no token IDs are provided.
+        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
     }
 
