@@ -55,6 +55,8 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 2. The distributor snapshots the relevant balance and stake source.
 3. Vesting entries become claimable over the configured schedule.
 
+**Snapshot timing:** The snapshot for each round is taken when the previous round first sees activity (`poke`, `beginVesting`, or `collectVestedRewards`). To be included in round N's distribution, make sure your tokens are held and delegated before anyone interacts with round N-1. In practice, keep your delegation current — if it is set before the previous round's activity begins, your voting power will be counted for the next round.
+
 **Failure Modes**
 - zero total stake
 - bad deployment parameters such as zero round duration or zero vesting rounds
