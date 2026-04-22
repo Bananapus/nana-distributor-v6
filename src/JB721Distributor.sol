@@ -218,6 +218,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice Vest a single token with per-owner voting power cap.
     /// @dev Returns 0 for burned tokens, already-vested tokens, and tokens whose owner had no snapshot voting power.
+    // slither-disable-next-line incorrect-equality
     function _vestSingleToken(
         VestContext memory ctx,
         uint256 tokenId,
@@ -236,7 +237,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Skip already-vested tokenIds.
         {
             uint256 numVesting = vestingDataOf[ctx.hook][tokenId][ctx.token].length;
-            // slither-disable-next-line incorrect-equality
             if (
                 numVesting != 0
                     && vestingDataOf[ctx.hook][tokenId][ctx.token][numVesting - 1].releaseRound
