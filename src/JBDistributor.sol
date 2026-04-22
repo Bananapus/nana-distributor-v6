@@ -398,6 +398,12 @@ abstract contract JBDistributor is IJBDistributor {
             roundSnapshotBlock[round] = block.number - 1;
             emit RoundSnapshotRecorded(round, block.number - 1);
         }
+        // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
+        // slither-disable-next-line incorrect-equality
+        if (roundSnapshotBlock[round + 1] == 0) {
+            roundSnapshotBlock[round + 1] = block.number - 1;
+            emit RoundSnapshotRecorded(round + 1, block.number - 1);
+        }
     }
 
     /// @notice Takes a snapshot of the token balance and vesting amount for the current round.
@@ -564,6 +570,7 @@ abstract contract JBDistributor is IJBDistributor {
         uint256 vestingReleaseRound
     )
         internal
+        virtual
         returns (uint256 totalVestingAmount)
     {
         for (uint256 j; j < tokenIds.length;) {
