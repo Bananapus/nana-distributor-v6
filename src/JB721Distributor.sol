@@ -13,8 +13,11 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
+import {mulDiv} from "@prb/math/src/Common.sol";
+
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
 import {JBDistributor} from "./JBDistributor.sol";
+import {JBVestingData} from "./structs/JBVestingData.sol";
 
 /// @notice A singleton distributor that distributes ERC-20 rewards to JB 721 NFT stakers with linear vesting.
 /// @dev Any project can use this distributor by configuring a payout split with
@@ -31,6 +34,19 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JB721Distributor_Unauthorized();
+
+    //*********************************************************************//
+    // ----------------------------- structs ----------------------------- //
+    //*********************************************************************//
+
+    /// @dev Bundles per-round vesting parameters to avoid stack-too-deep.
+    struct VestContext {
+        address hook;
+        IERC20 token;
+        uint256 distributable;
+        uint256 totalStakeAmount;
+        uint256 vestingReleaseRound;
+    }
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -118,6 +134,69 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     }
 
     //*********************************************************************//
+    // ---------------------- internal transactions ---------------------- //
+    //*********************************************************************//
+
+    /// @notice Override vesting to cap each owner's consumed voting power across all their NFTs.
+    /// @dev Prevents an owner with N NFTs of V voting units each from claiming N*V when their pastVotes < N*V.
+    ///      Iterates over all token IDs in the batch, delegating per-token logic to `_vestSingleToken`. A pair of
+    ///      scratch arrays (`owners` and `consumed`) tracks how much voting power each distinct owner has used so far,
+    ///      ensuring the aggregate claim never exceeds the owner's snapshot voting power.
+    ///      Silently skips burned tokens, already-vested tokens, and tokens whose owner had no snapshot voting power.
+    /// @param hook The address of the 721 hook whose stakers are vesting.
+    /// @param tokenIds The NFT token IDs to vest rewards for.
+    /// @param token The ERC-20 reward token being distributed.
+    /// @param distributable The total distributable amount of `token` for this round.
+    /// @param totalStakeAmount The aggregate voting power at the round's snapshot block.
+    /// @param vestingReleaseRound The round number at which the vesting period ends and tokens become fully claimable.
+    /// @return totalVestingAmount The sum of reward tokens that began vesting across all processed token IDs.
+    function _vestTokenIds(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20 token,
+        uint256 distributable,
+        uint256 totalStakeAmount,
+        uint256 vestingReleaseRound
+    )
+        internal
+        override
+        returns (uint256 totalVestingAmount)
+    {
+        // Bundle iteration-constant parameters into a struct to avoid stack-too-deep errors.
+        VestContext memory ctx = VestContext({
+            hook: hook,
+            token: token,
+            distributable: distributable,
+            totalStakeAmount: totalStakeAmount,
+            vestingReleaseRound: vestingReleaseRound
+        });
+
+        // Allocate scratch arrays sized to the maximum possible number of distinct owners (one per token ID).
+        address[] memory owners = new address[](tokenIds.length);
+        uint256[] memory consumed = new uint256[](tokenIds.length);
+
+        // Track how many distinct owners have been recorded in the scratch arrays so far.
+        uint256 uniqueCount;
+
+        // Iterate over every token ID in the batch.
+        for (uint256 j; j < tokenIds.length;) {
+            // Vest the single token, receiving its reward amount and the updated distinct owner count.
+            (uint256 tokenAmount, uint256 newUniqueCount) = _vestSingleToken({
+                ctx: ctx, tokenId: tokenIds[j], owners: owners, consumed: consumed, uniqueCount: uniqueCount
+            });
+
+            // Carry the updated owner count forward so subsequent tokens can reference the same tracking data.
+            uniqueCount = newUniqueCount;
+
+            unchecked {
+                // Accumulate the individual token's reward into the batch-wide total.
+                totalVestingAmount += tokenAmount;
+                ++j;
+            }
+        }
+    }
+
+    //*********************************************************************//
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
@@ -151,14 +230,19 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param tokenId The ID of the token to get the stake weight of.
     /// @return tokenStakeAmount The voting units of the token's tier (or 0 if ineligible).
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
-        uint256 votingUnits = IJB721TiersHook(hook).STORE().tierOfTokenId(hook, tokenId, false).votingUnits;
+        uint256 votingUnits =
+            IJB721TiersHook(hook)
+        .STORE()
+        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false})
+        .votingUnits;
 
         // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
         // If they had no voting power at that time, this token was minted or acquired after the round started
         // and is not eligible for this round's rewards.
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         address owner = IERC721(hook).ownerOf(tokenId);
-        uint256 pastVotes = IVotes(address(checkpoints)).getPastVotes(owner, roundSnapshotBlock[currentRound()]);
+        uint256 pastVotes =
+            IVotes(address(checkpoints)).getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
 
         // If the owner had no voting power at round start, the token is ineligible.
         // slither-disable-next-line incorrect-equality
@@ -179,5 +263,132 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+    }
+
+    //*********************************************************************//
+    // ----------------------- private helpers --------------------------- //
+    //*********************************************************************//
+
+    /// @notice Vest a single NFT token, enforcing a per-owner voting power cap across the batch.
+    /// @dev Returns 0 for burned tokens, already-vested tokens, tokens whose owner had no snapshot voting power,
+    ///      and tokens whose owner has already exhausted their voting power cap within this batch.
+    ///      The `owners` and `consumed` arrays form a compact map that tracks how much voting power each unique
+    ///      owner has consumed so far. `uniqueCount` tracks how many slots are used.
+    /// @param ctx The vesting context containing hook address, reward token, distributable amount, total stake,
+    ///        and release round.
+    /// @param tokenId The NFT token ID to process.
+    /// @param owners A scratch array mapping slot indices to owner addresses for deduplication within this batch.
+    /// @param consumed A scratch array tracking how much voting power each owner (by slot index) has consumed.
+    /// @param uniqueCount The number of distinct owners seen so far in the batch.
+    /// @return tokenAmount The reward amount vested for this token ID (0 if skipped).
+    /// @return newUniqueCount The updated count of distinct owners after processing this token ID.
+    // slither-disable-next-line incorrect-equality
+    function _vestSingleToken(
+        VestContext memory ctx,
+        uint256 tokenId,
+        address[] memory owners,
+        uint256[] memory consumed,
+        uint256 uniqueCount
+    )
+        private
+        returns (uint256 tokenAmount, uint256 newUniqueCount)
+    {
+        // Initialize the return value to the current count of distinct owners.
+        newUniqueCount = uniqueCount;
+
+        // Skip burned tokens — they are excluded from _totalStake, so including them would overbook vesting.
+        if (_tokenBurned({hook: ctx.hook, tokenId: tokenId})) return (0, newUniqueCount);
+
+        // Skip already-vested tokenIds — check if the last vesting entry targets the same release round.
+        {
+            // Load the number of existing vesting entries for this token.
+            uint256 numVesting = vestingDataOf[ctx.hook][tokenId][ctx.token].length;
+
+            // If at least one entry exists and its release round matches, this token was already vested this round.
+            if (
+                numVesting != 0
+                    && vestingDataOf[ctx.hook][tokenId][ctx.token][numVesting - 1].releaseRound
+                        == ctx.vestingReleaseRound
+            ) {
+                return (0, newUniqueCount);
+            }
+        }
+
+        // Look up the NFT's voting units from its tier in the hook's store.
+        uint256 votingUnits =
+            IJB721TiersHook(ctx.hook)
+        .STORE()
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false})
+        .votingUnits;
+
+        // Look up the owner, verify snapshot eligibility, and find or create the owner's tracking slot.
+        uint256 ownerIndex;
+        uint256 pastVotes;
+        {
+            // Get the current owner of the NFT.
+            address owner = IERC721(ctx.hook).ownerOf(tokenId);
+
+            // Query the owner's checkpointed voting power at the round's snapshot block.
+            pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).CHECKPOINTS()))
+                .getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
+
+            // If the owner had no voting power at round start, the token is ineligible for this round.
+            // slither-disable-next-line incorrect-equality
+            if (pastVotes == 0) return (0, newUniqueCount);
+
+            // Search the owners array for an existing slot belonging to this owner.
+            bool found;
+            for (uint256 k; k < newUniqueCount;) {
+                if (owners[k] == owner) {
+                    // Re-use the existing tracking slot for this owner.
+                    ownerIndex = k;
+                    found = true;
+                    break;
+                }
+                unchecked {
+                    ++k;
+                }
+            }
+
+            // If no existing slot was found, allocate a new one at the end of the arrays.
+            if (!found) {
+                ownerIndex = newUniqueCount;
+                owners[newUniqueCount] = owner;
+                unchecked {
+                    ++newUniqueCount;
+                }
+            }
+        }
+
+        // Cap this NFT's effective stake at the owner's remaining voting power budget for this batch.
+        uint256 stake;
+        {
+            // Calculate how much voting power the owner has left after prior tokens in this batch.
+            uint256 remaining = pastVotes > consumed[ownerIndex] ? pastVotes - consumed[ownerIndex] : 0;
+
+            // The effective stake is the lesser of the NFT's voting units and the owner's remaining budget.
+            stake = votingUnits < remaining ? votingUnits : remaining;
+        }
+
+        // Record that this owner has consumed additional voting power from their budget.
+        consumed[ownerIndex] += stake;
+
+        // If the effective stake is zero, the owner's budget is exhausted — skip this token.
+        // slither-disable-next-line incorrect-equality
+        if (stake == 0) return (0, newUniqueCount);
+
+        // Calculate the pro-rata reward amount: (distributable * stake) / totalStakeAmount.
+        tokenAmount = mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
+
+        // Only create a vesting entry and emit an event if there is a non-zero reward.
+        if (tokenAmount > 0) {
+            // Push a new vesting data entry for this token ID, starting with zero shareClaimed.
+            vestingDataOf[ctx.hook][tokenId][ctx.token].push(
+                JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmount, shareClaimed: 0})
+            );
+
+            // Emit the claim event for off-chain indexers.
+            emit Claimed(ctx.hook, tokenId, ctx.token, tokenAmount, ctx.vestingReleaseRound);
+        }
     }
 }

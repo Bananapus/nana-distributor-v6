@@ -273,7 +273,7 @@ contract AuditFixesTest is Test {
         rewardToken.approve(address(distributor), 1000 ether);
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 1000 ether);
 
-        // Round 1: no one has delegated.
+        // Round 1: no one has delegated — zero total stake.
         _advanceToRound(1);
 
         uint256[] memory tokenIds = new uint256[](1);
@@ -281,19 +281,24 @@ contract AuditFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // beginVesting with zero stake — silently returns.
+        // beginVesting with zero stake — silently returns. H-25: eagerly locks round 2 snapshot.
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Now Alice delegates.
+        // Alice delegates (after round 2 snapshot is already locked by H-25 eager fix).
         vm.prank(alice);
         votesToken.delegate(alice);
 
-        // Round 2: Alice has stake now.
+        // Round 2: Alice's delegation not captured (round 2 snapshot precedes her delegation).
+        // Zero stake again — silently returns. H-25: eagerly locks round 3 snapshot (AFTER delegation).
         _advanceToRound(2);
-
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Alice should have claimed her share of the full 1000 ether.
+        // Round 3: Alice IS eligible (round 3 snapshot was set after her delegation).
+        // Funds from rounds 1 and 2 carry over since no vesting was recorded.
+        _advanceToRound(3);
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+
+        // Alice should have claimed her share of the full 1000 ether (700/1000 total supply).
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
         assertEq(aliceClaimed, 700 ether, "Alice should claim 70% of carried-over funds");
@@ -337,5 +342,88 @@ contract AuditFixesTest is Test {
 
         // No snapshot should have been recorded.
         assertEq(distributor.roundSnapshotBlock(1), 0, "Snapshot should not be recorded after empty-array revert");
+    }
+
+    //*********************************************************************//
+    // ------- H-25: Eager Snapshot --------------------------------------- //
+    //*********************************************************************//
+
+    /// @notice Calling poke() in round N should eagerly set the snapshot for round N+1.
+    function test_h25_pokeEagerlySetsFutureSnapshot() public {
+        // Advance to round 1.
+        _advanceToRound(1);
+
+        // poke() in round 1 should set snapshot for round 1 AND eagerly set round 2.
+        distributor.poke();
+
+        assertGt(distributor.roundSnapshotBlock(1), 0, "Round 1 snapshot should be set");
+        assertGt(distributor.roundSnapshotBlock(2), 0, "Round 2 snapshot should be eagerly set by poke()");
+    }
+
+    /// @notice beginVesting locks the next round's snapshot. A later call in round N+1
+    /// should use that same snapshot, not overwrite it with a fresher block.
+    function test_h25_lateJoinerCannotManipulateSnapshot() public {
+        // Alice delegates to self so she has voting power.
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        // Fund the distributor.
+        rewardToken.mint(address(this), 1000 ether);
+        rewardToken.approve(address(distributor), 1000 ether);
+        distributor.fund(address(votesToken), IERC20(address(rewardToken)), 1000 ether);
+
+        // Advance to round 1 and call beginVesting — this locks round 1 AND eagerly locks round 2 snapshot.
+        _advanceToRound(1);
+
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = _tokenId(alice);
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+
+        // Record the eagerly-set round 2 snapshot.
+        uint256 eagerSnapshot = distributor.roundSnapshotBlock(2);
+        assertGt(eagerSnapshot, 0, "Round 2 snapshot should be eagerly set");
+
+        // Advance many blocks (simulating a late joiner trying to push the snapshot forward).
+        vm.roll(block.number + 100);
+
+        // Advance to round 2.
+        _advanceToRound(2);
+
+        // Fund more so beginVesting has something to distribute.
+        rewardToken.mint(address(this), 500 ether);
+        rewardToken.approve(address(distributor), 500 ether);
+        distributor.fund(address(votesToken), IERC20(address(rewardToken)), 500 ether);
+
+        // beginVesting in round 2 should NOT overwrite the eagerly-set snapshot.
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+
+        assertEq(
+            distributor.roundSnapshotBlock(2),
+            eagerSnapshot,
+            "Late joiner should not overwrite eagerly-set round 2 snapshot"
+        );
+    }
+
+    /// @notice Calling poke() twice in the same round should not change the next round's snapshot.
+    function test_h25_eagerSnapshotIdempotent() public {
+        // Advance to round 1.
+        _advanceToRound(1);
+
+        // First poke sets round 1 and eagerly sets round 2 snapshot.
+        distributor.poke();
+        uint256 firstEagerSnapshot = distributor.roundSnapshotBlock(2);
+        assertGt(firstEagerSnapshot, 0, "Round 2 snapshot should be set after first poke");
+
+        // Advance some blocks within round 1.
+        vm.roll(block.number + 50);
+
+        // Second poke in the same round should NOT change the round 2 snapshot.
+        distributor.poke();
+        uint256 secondEagerSnapshot = distributor.roundSnapshotBlock(2);
+
+        assertEq(firstEagerSnapshot, secondEagerSnapshot, "Eager snapshot should be idempotent across multiple pokes");
     }
 }
