@@ -90,16 +90,21 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 // Use balance delta to handle fee-on-transfer tokens correctly.
                 uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
                 IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this))
-                - balanceBefore;
+                uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
+                _balanceOf[hook][IERC20(context.token)] += delta;
+                _accountedBalanceOf[IERC20(context.token)] += delta;
             } else {
-                // Controller-prepaid path: the controller sends tokens directly before calling processSplitWith.
-                // Credit the declared amount since the tokens are already held by this contract.
+                // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
+                uint256 actual = IERC20(context.token).balanceOf(address(this));
+                uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
+                if (unaccounted < context.amount) revert JBDistributor_UnfundedSplitCredit();
+                _accountedBalanceOf[IERC20(context.token)] += context.amount;
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
+            _accountedBalanceOf[IERC20(context.token)] += msg.value;
         }
     }
 
