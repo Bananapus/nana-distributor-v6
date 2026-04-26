@@ -27,6 +27,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when the caller does not have access to the token.
     error JBDistributor_NoAccess();
 
+    /// @notice Thrown when the round duration is zero.
+    error JBDistributor_InvalidRoundDuration();
+
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute();
 
@@ -99,6 +102,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(uint256 roundDuration_, uint256 vestingRounds_) {
+        if (roundDuration_ == 0) revert JBDistributor_InvalidRoundDuration();
         startingTimestamp = block.timestamp;
         roundDuration = roundDuration_;
         vestingRounds = vestingRounds_;
