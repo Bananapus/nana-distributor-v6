@@ -22,7 +22,13 @@ import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBDistributor} from "../../src/JBDistributor.sol";
 
-import {H26MockDirectory, H26MockHook, H26MockRewardToken, H26MockStore, H26MockCheckpoints} from "./H26VotingPowerCap.t.sol";
+import {
+    H26MockDirectory,
+    H26MockHook,
+    H26MockRewardToken,
+    H26MockStore,
+    H26MockCheckpoints
+} from "./H26VotingPowerCap.t.sol";
 
 // =========================================================================
 // Mock contracts for JBTokenDistributor tests (C-6, L-17)
@@ -181,12 +187,7 @@ contract Pass12FixesTest is Test {
         });
 
         return JBSplitHookContext({
-            token: token,
-            amount: amount,
-            decimals: 18,
-            projectId: projectId,
-            groupId: 0,
-            split: split
+            token: token, amount: amount, decimals: 18, projectId: projectId, groupId: 0, split: split
         });
     }
 
@@ -238,11 +239,7 @@ contract Pass12FixesTest is Test {
         );
 
         // Verify the tokens are held by the distributor.
-        assertEq(
-            rewardToken.balanceOf(address(tokenDistributor)),
-            amount,
-            "Tokens should be in the distributor"
-        );
+        assertEq(rewardToken.balanceOf(address(tokenDistributor)), amount, "Tokens should be in the distributor");
     }
 
     // =====================================================================

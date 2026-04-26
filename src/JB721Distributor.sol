@@ -64,8 +64,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @custom:param token The reward token.
     /// @custom:param releaseRound The vesting release round.
     /// @custom:param owner The NFT owner.
-    mapping(address hook => mapping(IERC20 token => mapping(uint256 releaseRound => mapping(address owner => uint256))))
-        internal _consumedVotesOf;
+    mapping(
+        address hook => mapping(IERC20 token => mapping(uint256 releaseRound => mapping(address owner => uint256)))
+    ) internal _consumedVotesOf;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
