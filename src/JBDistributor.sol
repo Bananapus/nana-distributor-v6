@@ -89,14 +89,14 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
 
+    /// @notice The total accounted balance of each token across all hooks.
+    /// @custom:param token The token to check the accounted balance of.
+    mapping(IERC20 token => uint256) internal _accountedBalanceOf;
+
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @custom:param hook The hook whose balance to check.
     /// @custom:param token The token to check the balance of.
     mapping(address hook => mapping(IERC20 token => uint256)) internal _balanceOf;
-
-    /// @notice The total accounted balance of each token across all hooks.
-    /// @custom:param token The token to check the accounted balance of.
-    mapping(IERC20 token => uint256) internal _accountedBalanceOf;
 
     /// @notice The snapshot data of the token information for each round.
     /// @custom:param hook The hook the snapshot is for.
