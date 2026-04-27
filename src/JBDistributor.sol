@@ -33,6 +33,12 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute();
 
+    /// @notice Thrown when a controller-prepaid split credit is not backed by actual token balance.
+    error JBDistributor_UnfundedSplitCredit();
+
+    /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
+    error JBDistributor_UnexpectedNativeValue();
+
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
@@ -82,6 +88,10 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
+
+    /// @notice The total accounted balance of each token across all hooks.
+    /// @custom:param token The token to check the accounted balance of.
+    mapping(IERC20 token => uint256) internal _accountedBalanceOf;
 
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @custom:param hook The hook whose balance to check.
@@ -166,12 +176,14 @@ abstract contract JBDistributor is IJBDistributor {
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
         } else {
+            if (msg.value != 0) revert JBDistributor_UnexpectedNativeValue();
             // Use balance delta to handle fee-on-transfer tokens correctly.
             uint256 balanceBefore = token.balanceOf(address(this));
             token.safeTransferFrom(msg.sender, address(this), amount);
             amount = token.balanceOf(address(this)) - balanceBefore;
         }
         _balanceOf[hook][token] += amount;
+        _accountedBalanceOf[token] += amount;
     }
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
@@ -469,6 +481,7 @@ abstract contract JBDistributor is IJBDistributor {
                 if (ownerClaim) {
                     // Decrement the hook's balance and transfer tokens out.
                     _balanceOf[hook][token] -= totalTokenAmount;
+                    _accountedBalanceOf[token] -= totalTokenAmount;
 
                     if (address(token) == JBConstants.NATIVE_TOKEN) {
                         // slither-disable-next-line arbitrary-send-eth,reentrancy-eth

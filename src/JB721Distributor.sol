@@ -56,6 +56,19 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     IJBDirectory public immutable DIRECTORY;
 
     //*********************************************************************//
+    // -------------------- internal stored properties ------------------- //
+    //*********************************************************************//
+
+    /// @notice Tracks voting power consumed per hook/token/round/owner to prevent cap resets across calls.
+    /// @custom:param hook The hook address.
+    /// @custom:param token The reward token.
+    /// @custom:param releaseRound The vesting release round.
+    /// @custom:param owner The NFT owner.
+    mapping(
+        address hook => mapping(IERC20 token => mapping(uint256 releaseRound => mapping(address owner => uint256)))
+    ) internal _consumedVotesOf;
+
+    //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
@@ -108,16 +121,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 // Use balance delta to handle fee-on-transfer tokens correctly.
                 uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
                 IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                _balanceOf[hook][IERC20(context.token)] += IERC20(context.token).balanceOf(address(this))
-                - balanceBefore;
+                uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
+                _balanceOf[hook][IERC20(context.token)] += delta;
+                _accountedBalanceOf[IERC20(context.token)] += delta;
             } else {
-                // Controller-prepaid path: the controller sends tokens directly before calling processSplitWith.
-                // Credit the declared amount since the tokens are already held by this contract.
+                // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
+                uint256 actual = IERC20(context.token).balanceOf(address(this));
+                uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
+                if (unaccounted < context.amount) revert JBDistributor_UnfundedSplitCredit();
+                _accountedBalanceOf[IERC20(context.token)] += context.amount;
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
+            _accountedBalanceOf[IERC20(context.token)] += msg.value;
         }
     }
 
@@ -192,6 +210,14 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 // Accumulate the individual token's reward into the batch-wide total.
                 totalVestingAmount += tokenAmount;
                 ++j;
+            }
+        }
+
+        // Persist consumed voting power to storage to prevent cap resets across calls.
+        for (uint256 k; k < uniqueCount;) {
+            _consumedVotesOf[hook][token][vestingReleaseRound][owners[k]] = consumed[k];
+            unchecked {
+                ++k;
             }
         }
     }
@@ -354,6 +380,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             if (!found) {
                 ownerIndex = newUniqueCount;
                 owners[newUniqueCount] = owner;
+                // Initialize from persistent storage to prevent cap resets across calls.
+                consumed[newUniqueCount] = _consumedVotesOf[ctx.hook][ctx.token][ctx.vestingReleaseRound][owner];
                 unchecked {
                     ++newUniqueCount;
                 }

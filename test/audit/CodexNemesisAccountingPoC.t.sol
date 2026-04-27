@@ -18,6 +18,7 @@ import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookCont
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
+import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
@@ -180,31 +181,19 @@ contract CodexNemesisAccountingPoCTest is Test {
             split: split
         });
 
+        // C-6 FIX: The malicious controller did not actually transfer tokens, so the
+        // balance-delta check reverts with UnfundedSplitCredit.
         vm.prank(maliciousController);
+        vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
         distributor.processSplitWith(fakeContext);
 
-        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "no additional reward tokens arrived");
+        // The real balance should remain intact — the attack was blocked.
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "balance unchanged after blocked attack");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
-            100_000 ether,
-            "tracked balance was inflated by context.amount"
+            1000 ether,
+            "tracked balance was not inflated"
         );
-
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = uint256(uint160(attacker));
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
-        assertEq(distributor.claimedFor(address(votesToken), tokenIds[0], tokens[0]), 1000 ether);
-
-        vm.warp(distributor.roundStartTimestamp(VESTING_ROUNDS) + 1);
-        vm.roll(block.number + 1);
-        vm.prank(attacker);
-        distributor.collectVestedRewards(address(votesToken), tokenIds, tokens, attacker);
-
-        assertEq(rewardToken.balanceOf(attacker), 1000 ether, "attacker drained the real inventory");
-        assertEq(rewardToken.balanceOf(address(distributor)), 0, "honest claimants are left unfunded");
     }
 
     function test_721LateMintCanUseOwnersPastVotesAndDrainRound() public {
@@ -325,23 +314,26 @@ contract CodexNemesisAccountingPoCTest is Test {
         secondLateMint[0] = 3;
         distributor.beginVesting(address(hook), secondLateMint, tokens);
 
+        // H-24 FIX: With persistent consumed-votes tracking, the second beginVesting sees
+        // that all 100 votes are already consumed, so token 3 gets 0 reward.
         assertEq(distributor.claimedFor(address(hook), 2, tokens[0]), 1000 ether);
-        assertEq(distributor.claimedFor(address(hook), 3, tokens[0]), 1000 ether);
+        assertEq(distributor.claimedFor(address(hook), 3, tokens[0]), 0, "votes already consumed, no double-claim");
         assertEq(
             distributor.totalVestingAmountOf(address(hook), tokens[0]),
-            2000 ether,
-            "same 100 snapshot votes were consumed twice in separate calls"
+            1000 ether,
+            "total vesting capped at funded balance"
         );
-        assertGt(
+        assertLe(
             distributor.totalVestingAmountOf(address(hook), tokens[0]),
             distributor.balanceOf(address(hook), tokens[0]),
-            "vesting obligations exceed funded balance"
+            "vesting obligations do not exceed funded balance"
         );
 
+        // Collection should succeed without underflow.
         vm.warp(distributor.roundStartTimestamp(VESTING_ROUNDS) + 1);
         vm.roll(block.number + 1);
         vm.prank(attacker);
-        vm.expectRevert(stdError.arithmeticError);
         distributor.collectVestedRewards(address(hook), firstLateMint, tokens, attacker);
+        assertEq(rewardToken.balanceOf(attacker), 1000 ether, "attacker gets only their fair share");
     }
 }
