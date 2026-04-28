@@ -265,8 +265,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 votingUnits =
             IJB721TiersHook(hook)
         .STORE()
-        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false})
-        .votingUnits;
+        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
         // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
         // If they had no voting power at that time, this token was minted or acquired after the round started
@@ -349,8 +348,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 votingUnits =
             IJB721TiersHook(ctx.hook)
         .STORE()
-        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false})
-        .votingUnits;
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
         // Look up the owner, verify snapshot eligibility, and find or create the owner's tracking slot.
         uint256 ownerIndex;
