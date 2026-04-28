@@ -6,6 +6,7 @@ import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721Tiers
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -31,6 +32,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
+
+    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
+    error JB721Distributor_TokenMismatch();
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JB721Distributor_Unauthorized();
@@ -133,6 +137,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
+            // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
+            if (context.token != JBConstants.NATIVE_TOKEN) revert JB721Distributor_TokenMismatch();
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
             _accountedBalanceOf[IERC20(context.token)] += msg.value;
@@ -259,16 +265,14 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 votingUnits =
             IJB721TiersHook(hook)
         .STORE()
-        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false})
-        .votingUnits;
+        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
         // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
         // If they had no voting power at that time, this token was minted or acquired after the round started
         // and is not eligible for this round's rewards.
-        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         address owner = IERC721(hook).ownerOf(tokenId);
-        uint256 pastVotes =
-            IVotes(address(checkpoints)).getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
+        uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).CHECKPOINTS()))
+            .getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
 
         // If the owner had no voting power at round start, the token is ineligible.
         // slither-disable-next-line incorrect-equality
@@ -344,8 +348,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 votingUnits =
             IJB721TiersHook(ctx.hook)
         .STORE()
-        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false})
-        .votingUnits;
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
         // Look up the owner, verify snapshot eligibility, and find or create the owner's tracking slot.
         uint256 ownerIndex;

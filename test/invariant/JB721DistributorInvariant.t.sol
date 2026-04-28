@@ -90,6 +90,11 @@ contract InvariantMockStore {
     function numberOfBurnedFor(address, uint256 tierId) external view returns (uint256) {
         return burned[tierId];
     }
+
+    /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
+    function mintBlockOf(address, uint256) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 /// @notice Mock JB directory for invariant testing.

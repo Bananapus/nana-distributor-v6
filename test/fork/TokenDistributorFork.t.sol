@@ -87,7 +87,7 @@ contract TokenDistributorForkTest is Test {
     IPermit2 constant PERMIT2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
 
     function setUp() public {
-        vm.createSelectFork("ethereum");
+        vm.createSelectFork("ethereum", 24_981_600);
 
         // Create labeled addresses and ensure they're clean EOAs (no mainnet code).
         multisig = makeAddr("test_distributor_multisig");
