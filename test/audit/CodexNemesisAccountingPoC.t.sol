@@ -83,11 +83,6 @@ contract CodexNemesisStore {
     function tierOfTokenId(address, uint256 tokenId, bool) external view returns (JB721Tier memory) {
         return tiers[tokenTiers[tokenId]];
     }
-
-    /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
-    function mintBlockOf(address, uint256) external pure returns (uint256) {
-        return 0;
-    }
 }
 
 contract CodexNemesisCheckpoints {

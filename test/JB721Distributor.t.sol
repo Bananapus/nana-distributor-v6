@@ -153,7 +153,6 @@ contract MockStore {
     mapping(uint256 tierId => JB721Tier) public tiers;
     mapping(uint256 tierId => uint256) public burned;
     mapping(uint256 tokenId => uint256 tierId) public tokenTiers;
-    mapping(address hook => mapping(uint256 tokenId => uint256)) public mintBlockOf;
 
     function setMaxTierIdOf(uint256 maxTierId) external {
         maxTier = maxTierId;
@@ -185,10 +184,6 @@ contract MockStore {
 
     function numberOfBurnedFor(address, uint256 tierId) external view returns (uint256) {
         return burned[tierId];
-    }
-
-    function setMintBlock(address hook, uint256 tokenId, uint256 blockNum) external {
-        mintBlockOf[hook][tokenId] = blockNum;
     }
 }
 

@@ -77,11 +77,6 @@ contract CodexNemesis721Store {
         tier.votingUnits = votingUnits;
         tier.initialSupply = 100;
     }
-
-    /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
-    function mintBlockOf(address, uint256) external pure returns (uint256) {
-        return 0;
-    }
 }
 
 contract CodexNemesis721Checkpoints {
