@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -29,6 +30,9 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
     error JBTokenDistributor_InvalidTokenId();
+
+    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
+    error JBTokenDistributor_TokenMismatch();
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JBTokenDistributor_Unauthorized();
@@ -102,6 +106,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
+            // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
+            if (context.token != JBConstants.NATIVE_TOKEN) revert JBTokenDistributor_TokenMismatch();
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
             _accountedBalanceOf[IERC20(context.token)] += msg.value;
