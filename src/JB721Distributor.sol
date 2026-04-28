@@ -268,19 +268,12 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false})
         .votingUnits;
 
-        // Verify the token was minted at or before the round's snapshot block.
-        uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
-        {
-            uint256 mintBlock = IJB721TiersHook(hook).STORE().mintBlockOf({hook: hook, tokenId: tokenId});
-            if (mintBlock != 0 && mintBlock > snapshotBlock) return 0;
-        }
-
         // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
         // If they had no voting power at that time, this token was minted or acquired after the round started
         // and is not eligible for this round's rewards.
         address owner = IERC721(hook).ownerOf(tokenId);
         uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).CHECKPOINTS()))
-            .getPastVotes({account: owner, timepoint: snapshotBlock});
+            .getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
 
         // If the owner had no voting power at round start, the token is ineligible.
         // slither-disable-next-line incorrect-equality
@@ -358,17 +351,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         .STORE()
         .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false})
         .votingUnits;
-
-        // Verify the token was minted at or before the round's snapshot block.
-        // Without this check, an attacker who holds a legitimate NFT could mint a new NFT after the snapshot
-        // and vest the new token — it would pass the pastVotes check using the attacker's historical voting power
-        // from their legitimate NFT, effectively stealing rewards from other stakers.
-        {
-            uint256 mintBlock = IJB721TiersHook(ctx.hook).STORE().mintBlockOf({hook: ctx.hook, tokenId: tokenId});
-            // mintBlock == 0 means the token was minted before the store started tracking mint blocks.
-            // In that case, we allow vesting (backward compatible).
-            if (mintBlock != 0 && mintBlock > roundSnapshotBlock[currentRound()]) return (0, newUniqueCount);
-        }
 
         // Look up the owner, verify snapshot eligibility, and find or create the owner's tracking slot.
         uint256 ownerIndex;
