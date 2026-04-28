@@ -88,6 +88,7 @@ contract TokenDistributorForkTest is Test {
 
     function setUp() public {
         vm.createSelectFork("ethereum");
+        vm.rollFork(block.number - 5);
 
         // Create labeled addresses and ensure they're clean EOAs (no mainnet code).
         multisig = makeAddr("test_distributor_multisig");
