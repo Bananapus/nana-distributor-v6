@@ -17,7 +17,7 @@ import {JBDistributor} from "../../src/JBDistributor.sol";
 
 // --- Mocks ---------------------------------------------------------------
 
-contract PSMockDirectory {
+contract VPCapMockDirectory {
     mapping(uint256 => mapping(address => bool)) public terminals;
 
     function setTerminal(uint256 projectId, address terminal, bool isTerminal) external {
@@ -33,7 +33,7 @@ contract PSMockDirectory {
     }
 }
 
-contract PSMockToken is ERC20 {
+contract VPCapMockToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -41,12 +41,11 @@ contract PSMockToken is ERC20 {
     }
 }
 
-contract PSMockStore {
+contract VPCapMockStore {
     uint256 public maxTier;
     mapping(uint256 => JB721Tier) public tiers;
     mapping(uint256 => uint256) public burned;
     mapping(uint256 => uint256) public tokenTiers;
-    mapping(address => mapping(uint256 => uint256)) public mintBlockOf;
 
     function setMaxTierIdOf(uint256 v) external {
         maxTier = v;
@@ -79,23 +78,18 @@ contract PSMockStore {
     function numberOfBurnedFor(address, uint256 tierId) external view returns (uint256) {
         return burned[tierId];
     }
-
-    function setMintBlock(address hook, uint256 tokenId, uint256 blockNum) external {
-        mintBlockOf[hook][tokenId] = blockNum;
-    }
 }
 
-contract PSMockCheckpoints {
-    PSMockStore public store;
+contract VPCapMockCheckpoints {
+    VPCapMockStore public store;
     address public hookAddr;
 
-    /// @dev If non-zero, getPastTotalSupply returns this value instead of computing from store.
     uint256 public totalSupplyOverride;
 
     mapping(address => uint256) public votesOverride;
     mapping(address => bool) public votesOverrideSet;
 
-    constructor(PSMockStore _store, address _hook) {
+    constructor(VPCapMockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
     }
@@ -123,27 +117,27 @@ contract PSMockCheckpoints {
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
         if (votesOverrideSet[account]) return votesOverride[account];
-        return type(uint256).max;
+        return 0; // Default: no historical votes (realistic behavior).
     }
 }
 
-contract PSMockHook {
-    PSMockStore public immutable _store;
-    PSMockCheckpoints public _checkpoints;
+contract VPCapMockHook {
+    VPCapMockStore public immutable _store;
+    VPCapMockCheckpoints public _checkpoints;
     mapping(uint256 => address) public owners;
 
-    constructor(PSMockStore s) {
+    constructor(VPCapMockStore s) {
         _store = s;
-        _checkpoints = new PSMockCheckpoints(s, address(this));
+        _checkpoints = new VPCapMockCheckpoints(s, address(this));
     }
 
     // solhint-disable-next-line func-name-mixedcase
-    function STORE() external view returns (PSMockStore) {
+    function STORE() external view returns (VPCapMockStore) {
         return _store;
     }
 
     // solhint-disable-next-line func-name-mixedcase
-    function CHECKPOINTS() external view returns (PSMockCheckpoints) {
+    function CHECKPOINTS() external view returns (VPCapMockCheckpoints) {
         return _checkpoints;
     }
 
@@ -160,42 +154,40 @@ contract PSMockHook {
 
 // --- Tests ---------------------------------------------------------------
 
-/// @title PostSnapshotMintTheft
-/// @notice Proves the post-snapshot NFT mint reward theft vulnerability and its fix.
+/// @title VotingPowerCapSufficiencyTest
+/// @notice Proves that the `_consumedVotesOf` tracking against `getPastVotes` is sufficient
+/// to prevent post-snapshot minted NFTs from extracting excess rewards — no `mintBlockOf`
+/// storage on the 721 hook is needed.
 ///
-/// Setup: Tier 1 has votingUnits=100, initialSupply=10, remainingSupply=8 (2 minted).
-///   - Token 1 -> alice, Token 2 -> bob. Total snapshot stake = 200.
-///
-/// Attack: Alice mints token 3 AFTER the snapshot. Without the mintBlockOf check,
-///   Alice can vest token 3 and steal 50% of rewards using her historical voting power.
-///   With the fix, token 3 is silently skipped since its mintBlock > snapshotBlock.
-contract PostSnapshotMintTheftTest is Test {
+/// Key invariant: an owner's total vested rewards are bounded by their historical voting
+/// power at the snapshot block, regardless of which specific tokens they vest.
+contract VotingPowerCapSufficiencyTest is Test {
     JB721Distributor distributor;
-    PSMockToken rewardToken;
-    PSMockHook hook;
-    PSMockStore store;
-    PSMockDirectory directory;
+    VPCapMockToken rewardToken;
+    VPCapMockHook hook;
+    VPCapMockStore store;
+    VPCapMockDirectory directory;
 
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
+    address charlie = makeAddr("charlie");
 
     uint256 constant ROUND_DURATION = 100;
     uint256 constant VESTING_ROUNDS = 4;
 
     function setUp() public {
-        store = new PSMockStore();
-        hook = new PSMockHook(store);
-        directory = new PSMockDirectory();
+        store = new VPCapMockStore();
+        hook = new VPCapMockHook(store);
+        directory = new VPCapMockDirectory();
         distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
 
         directory.setTerminal(1, address(this), true);
-        rewardToken = new PSMockToken();
+        rewardToken = new VPCapMockToken();
 
         JB721TierFlags memory flags;
         store.setMaxTierIdOf(1);
 
-        // Tier 1: 2 minted (initialSupply=10, remainingSupply=8), votingUnits=100.
-        // Total snapshot stake = 2 * 100 = 200.
+        // Tier 1: votingUnits=100, 2 minted (initialSupply=10, remainingSupply=8).
         store.setTier(
             1,
             JB721Tier({
@@ -221,8 +213,12 @@ contract PostSnapshotMintTheftTest is Test {
         store.setTokenTier(2, 1);
         hook.setOwner(2, bob);
 
-        // Fix the total supply at 200 (the snapshot-time value) so it does not change
-        // when we modify the tier's remainingSupply in individual tests.
+        // Set realistic historical voting power: each holder had 100 at snapshot.
+        hook._checkpoints().setVotesOverride(alice, 100);
+        hook._checkpoints().setVotesOverride(bob, 100);
+        // Charlie has 0 voting power at snapshot (default).
+
+        // Fix total supply at 200 so post-snapshot mints don't inflate denominator.
         hook._checkpoints().setTotalSupplyOverride(200);
     }
 
@@ -238,112 +234,20 @@ contract PostSnapshotMintTheftTest is Test {
         distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
-    /// @notice Demonstrates the bug: when mintBlockOf is not tracked (returns 0),
-    /// a post-snapshot minted NFT can steal rewards using the owner's historical voting power
-    /// from a different, pre-snapshot NFT.
-    function test_bug_postSnapshotMint_stealsRewards_whenMintBlockNotTracked() public {
-        _fundHook(1000 ether);
-        _advanceToRound(1);
-
-        // Lock the snapshot.
-        distributor.poke();
-
-        // AFTER the snapshot: Alice mints tokenId 3, but we do NOT set mintBlockOf
-        // (simulates pre-fix behavior where mint blocks were not tracked).
-        vm.roll(block.number + 5);
-        store.setTokenTier(3, 1);
-        hook.setOwner(3, alice);
-        // mintBlockOf NOT set -> returns 0 -> backward-compatible path -> allows vesting.
-
-        // Alice vests ONLY token 3 (the post-snapshot mint).
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 3;
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        // The post-snapshot token successfully vested and stole rewards.
-        // Token 3 stake = min(100, maxUint) = 100. Reward = 1000 * 100 / 200 = 500.
-        uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(claimed, 500 ether, "BUG: post-snapshot token stole 50% when mintBlock not tracked");
-    }
-
-    /// @notice Proves the fix: when mintBlockOf is set to a block after the snapshot,
-    /// the post-snapshot minted NFT is silently skipped and gets zero rewards.
-    function test_fix_postSnapshotMint_rejected_whenMintBlockTracked() public {
-        _fundHook(1000 ether);
-        _advanceToRound(1);
-        distributor.poke();
-
-        // AFTER the snapshot: Alice mints tokenId 3.
-        uint256 mintBlock = block.number + 5;
-        vm.roll(mintBlock);
-        store.setTokenTier(3, 1);
-        hook.setOwner(3, alice);
-        store.setMintBlock(address(hook), 3, mintBlock);
-
-        // Alice tries to vest token 3.
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 3;
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        // Token 3 should get ZERO rewards.
-        uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(claimed, 0, "FIX: post-snapshot token should get zero rewards");
-        assertEq(
-            distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))),
-            0,
-            "No rewards should be vesting for post-snapshot token"
-        );
-    }
-
-    /// @notice Pre-snapshot tokens still vest correctly with mintBlockOf tracking.
-    function test_fix_preSnapshotMint_stillVestsCorrectly() public {
-        // Set mint blocks for pre-existing tokens (before snapshot).
-        uint256 preMintBlock = block.number;
-        store.setMintBlock(address(hook), 1, preMintBlock);
-        store.setMintBlock(address(hook), 2, preMintBlock);
-
-        _fundHook(1000 ether);
-        _advanceToRound(1);
-
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = 1;
-        tokenIds[1] = 2;
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        uint256 aliceClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
-        uint256 bobClaimed = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));
-
-        assertEq(aliceClaimed, 500 ether, "Pre-snapshot token 1 should get 50%");
-        assertEq(bobClaimed, 500 ether, "Pre-snapshot token 2 should get 50%");
-    }
-
-    /// @notice In a mixed batch, the post-snapshot token is skipped while the pre-snapshot token vests.
-    function test_fix_mixedBatch_postSnapshotTokenSkipped() public {
-        uint256 preMintBlock = block.number;
-        store.setMintBlock(address(hook), 1, preMintBlock);
-        store.setMintBlock(address(hook), 2, preMintBlock);
-
+    /// @notice Post-snapshot mint cannot extract more than the owner's historical voting power.
+    /// Alice has 100 votes at snapshot. She mints token 3 after snapshot and vests both.
+    /// Total extraction: 500 ether (capped at 100/200 of pool), NOT 1000 ether.
+    function test_votingPowerCap_preventsOverExtraction() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
 
         // AFTER snapshot: Alice mints token 3.
-        uint256 mintBlock = block.number + 5;
-        vm.roll(mintBlock);
+        vm.roll(block.number + 5);
         store.setTokenTier(3, 1);
         hook.setOwner(3, alice);
-        store.setMintBlock(address(hook), 3, mintBlock);
 
-        // Vest token 1 (pre-snapshot, alice) and token 3 (post-snapshot, alice) in one batch.
+        // Alice vests both tokens 1 (pre-snapshot) and 3 (post-snapshot).
         uint256[] memory tokenIds = new uint256[](2);
         tokenIds[0] = 1;
         tokenIds[1] = 3;
@@ -352,63 +256,28 @@ contract PostSnapshotMintTheftTest is Test {
 
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // Token 1 (pre-snapshot) should vest: 1000 * 100 / 200 = 500.
+        // Token 1 consumed all 100 votes. Token 3 gets 0 (budget exhausted).
         uint256 token1Claimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
-        assertEq(token1Claimed, 500 ether, "Pre-snapshot token should get 50%");
-
-        // Token 3 (post-snapshot) should get ZERO.
         uint256 token3Claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(token3Claimed, 0, "Post-snapshot token should get zero");
+
+        assertEq(token1Claimed, 500 ether, "Token 1 gets full share (100/200)");
+        assertEq(token3Claimed, 0, "Token 3 gets 0 (voting power budget exhausted)");
     }
 
-    /// @notice Token minted at exactly the snapshot block is eligible.
-    function test_fix_tokenMintedAtSnapshotBlock_isEligible() public {
-        _fundHook(1000 ether);
-        _advanceToRound(1);
-        distributor.poke();
-        uint256 snapshotBlock = distributor.roundSnapshotBlock(distributor.currentRound());
-
-        // Set mint blocks to exactly the snapshot block.
-        store.setMintBlock(address(hook), 1, snapshotBlock);
-        store.setMintBlock(address(hook), 2, snapshotBlock);
-
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = 1;
-        tokenIds[1] = 2;
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        uint256 aliceClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
-        uint256 bobClaimed = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));
-
-        assertEq(aliceClaimed, 500 ether, "Token at snapshot block should be eligible");
-        assertEq(bobClaimed, 500 ether, "Token at snapshot block should be eligible");
-    }
-
-    /// @notice Post-snapshot token cannot steal rewards even when the attacker has
-    /// legitimate voting power from other tokens.
-    function test_fix_attackerWithLegitVotingPower_cannotStealViaNewToken() public {
-        // Alice has legit voting power of 100 from token 1.
-        hook._checkpoints().setVotesOverride(alice, 100);
-
-        uint256 preMintBlock = block.number;
-        store.setMintBlock(address(hook), 1, preMintBlock);
-        store.setMintBlock(address(hook), 2, preMintBlock);
-
+    /// @notice Vesting only a post-snapshot token still capped by historical votes.
+    /// Alice skips token 1, vests only token 3 (post-snapshot). Gets 500 ether through it.
+    /// Then token 1 gets 0 because the budget is spent. Total: still 500.
+    function test_votingPowerCap_postSnapshotOnlyToken_sameTotal() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
 
-        // After snapshot: Alice mints token 3.
-        uint256 mintBlock = block.number + 5;
-        vm.roll(mintBlock);
+        // AFTER snapshot: Alice mints token 3.
+        vm.roll(block.number + 5);
         store.setTokenTier(3, 1);
         hook.setOwner(3, alice);
-        store.setMintBlock(address(hook), 3, mintBlock);
 
-        // Alice tries to vest only token 3 (post-snapshot).
+        // Alice vests ONLY token 3 (post-snapshot).
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = 3;
         IERC20[] memory tokens = new IERC20[](1);
@@ -416,8 +285,129 @@ contract PostSnapshotMintTheftTest is Test {
 
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // Token 3 should get ZERO despite Alice having legitimate pastVotes.
         uint256 token3Claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(token3Claimed, 0, "Post-snapshot token should get zero even with legit pastVotes");
+        assertEq(token3Claimed, 500 ether, "Token 3 vests using Alice's historical 100 votes");
+
+        // Now vest token 1. Alice's budget is already consumed.
+        tokenIds[0] = 1;
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        uint256 token1Claimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
+        assertEq(token1Claimed, 0, "Token 1 gets 0 (budget spent on token 3)");
+
+        // Total: 500 ether — exactly what Alice is entitled to.
+        assertEq(token3Claimed + token1Claimed, 500 ether, "Total extraction bounded by historical votes");
+    }
+
+    /// @notice No historical voting power → zero rewards, even with a valid NFT.
+    function test_votingPowerCap_noHistoricalVotes_zeroRewards() public {
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+        distributor.poke();
+
+        // AFTER snapshot: Charlie (0 votes at snapshot) mints token 3.
+        vm.roll(block.number + 5);
+        store.setTokenTier(3, 1);
+        hook.setOwner(3, charlie);
+
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = 3;
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
+        assertEq(claimed, 0, "No historical votes = no rewards");
+    }
+
+    /// @notice Multiple post-snapshot tokens still bounded by historical voting power.
+    /// Alice mints 3 new tokens after snapshot. Total extraction: still 500 ether.
+    function test_votingPowerCap_multiplePostSnapshotTokens_bounded() public {
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+        distributor.poke();
+
+        // AFTER snapshot: Alice mints tokens 3, 4, 5.
+        vm.roll(block.number + 5);
+        for (uint256 i = 3; i <= 5; i++) {
+            store.setTokenTier(i, 1);
+            hook.setOwner(i, alice);
+        }
+
+        // Alice vests all her tokens (1 pre-snapshot + 3 post-snapshot).
+        uint256[] memory tokenIds = new uint256[](4);
+        tokenIds[0] = 1;
+        tokenIds[1] = 3;
+        tokenIds[2] = 4;
+        tokenIds[3] = 5;
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        uint256 total;
+        for (uint256 i; i < tokenIds.length; i++) {
+            total += distributor.claimedFor(address(hook), tokenIds[i], IERC20(address(rewardToken)));
+        }
+
+        assertEq(total, 500 ether, "4 tokens but still capped at 100/200 of pool");
+    }
+
+    /// @notice Burn-and-remint: Alice burns pre-snapshot token, mints replacement after.
+    /// Total extraction: still 500 ether (same as if she kept the original).
+    function test_votingPowerCap_burnAndRemint_bounded() public {
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+        distributor.poke();
+
+        // Simulate burn of token 1 (ownerOf reverts for burned tokens).
+        hook.setOwner(1, address(0));
+
+        // AFTER snapshot: Alice mints token 3 as replacement.
+        vm.roll(block.number + 5);
+        store.setTokenTier(3, 1);
+        hook.setOwner(3, alice);
+
+        // Vest token 3 only (token 1 is burned).
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = 3;
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
+        assertEq(claimed, 500 ether, "Replacement token capped at Alice's historical 100 votes");
+    }
+
+    /// @notice Cross-owner isolation: Alice's post-snapshot mint doesn't affect Bob's rewards.
+    function test_votingPowerCap_crossOwnerIsolation() public {
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+        distributor.poke();
+
+        // AFTER snapshot: Alice mints token 3.
+        vm.roll(block.number + 5);
+        store.setTokenTier(3, 1);
+        hook.setOwner(3, alice);
+
+        // Vest all three tokens.
+        uint256[] memory tokenIds = new uint256[](3);
+        tokenIds[0] = 1; // alice
+        tokenIds[1] = 2; // bob
+        tokenIds[2] = 3; // alice (post-snapshot)
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        uint256 aliceTotal = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)))
+            + distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
+        uint256 bobTotal = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));
+
+        assertEq(aliceTotal, 500 ether, "Alice gets exactly her 100/200 share");
+        assertEq(bobTotal, 500 ether, "Bob gets exactly his 100/200 share");
+        assertEq(aliceTotal + bobTotal, 1000 ether, "Full pool distributed, no over-extraction");
     }
 }
