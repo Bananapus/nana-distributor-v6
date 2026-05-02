@@ -138,6 +138,12 @@ contract MockHook {
         return owner;
     }
 
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        uint256 mintBlock = _store.mintBlockOf(address(this), tokenId);
+        if (mintBlock != 0 && mintBlock > blockNumber) return address(0);
+        return owners[tokenId];
+    }
+
     function setOwner(uint256 tokenId, address owner) external {
         owners[tokenId] = owner;
     }

@@ -43,6 +43,10 @@ contract InvariantMockHook {
         return owner;
     }
 
+    function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
+        return owners[tokenId];
+    }
+
     function setOwner(uint256 tokenId, address owner) external {
         owners[tokenId] = owner;
     }
