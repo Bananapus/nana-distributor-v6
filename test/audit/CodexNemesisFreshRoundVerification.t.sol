@@ -66,6 +66,11 @@ contract CodexNemesisFresh721Store {
 contract CodexNemesisFresh721Checkpoints {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
+    address public hook;
+
+    function setHook(address hook_) external {
+        hook = hook_;
+    }
 
     function setVotes(address account, uint256 votes) external {
         votesOf[account] = votes;
@@ -81,6 +86,10 @@ contract CodexNemesisFresh721Checkpoints {
 
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
+    }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return CodexNemesisFresh721Hook(hook).ownerOfAt(tokenId, blockNumber);
     }
 }
 
@@ -120,6 +129,7 @@ contract CodexNemesisFreshRoundVerificationTest is Test {
         CodexNemesisFresh721Store store = new CodexNemesisFresh721Store();
         CodexNemesisFresh721Checkpoints checkpoints = new CodexNemesisFresh721Checkpoints();
         CodexNemesisFresh721Hook hook = new CodexNemesisFresh721Hook(store, checkpoints);
+        checkpoints.setHook(address(hook));
 
         reward.mint(address(this), 100 ether);
         reward.approve(address(distributor), 100 ether);

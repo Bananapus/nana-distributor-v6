@@ -430,7 +430,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         }
     }
 
-    /// @notice Returns the token owner at the round snapshot block, or zero if the hook cannot prove it.
+    /// @notice Returns the token owner at the round snapshot block, or zero if the checkpoint module cannot prove it.
     function _snapshotOwnerOf(
         address hook,
         uint256 tokenId,
@@ -440,8 +440,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         view
         returns (address owner)
     {
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
         (bool success, bytes memory data) =
-            hook.staticcall(abi.encodeCall(IJB721HistoricalOwner.ownerOfAt, (tokenId, snapshotBlock)));
+            address(checkpoints).staticcall(abi.encodeCall(IJB721HistoricalOwner.ownerOfAt, (tokenId, snapshotBlock)));
         if (!success || data.length < 32) return address(0);
         owner = abi.decode(data, (address));
     }

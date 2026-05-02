@@ -119,6 +119,10 @@ contract VPCapMockCheckpoints {
         if (votesOverrideSet[account]) return votesOverride[account];
         return 0; // Default: no historical votes (realistic behavior).
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return VPCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 contract VPCapMockHook {

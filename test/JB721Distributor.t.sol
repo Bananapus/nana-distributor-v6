@@ -110,6 +110,10 @@ contract MockCheckpoints {
         // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
         return type(uint256).max;
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 /// @notice Mock 721 tiers hook for testing.

@@ -87,6 +87,11 @@ contract CodexNemesis721Store {
 contract CodexNemesis721Checkpoints {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
+    address public hook;
+
+    function setHook(address hook_) external {
+        hook = hook_;
+    }
 
     function setVotes(address account, uint256 votes) external {
         votesOf[account] = votes;
@@ -103,6 +108,10 @@ contract CodexNemesis721Checkpoints {
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return CodexNemesis721Hook(hook).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 contract CodexNemesis721Hook {
@@ -115,6 +124,7 @@ contract CodexNemesis721Hook {
     constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints) {
         STORE = store;
         CHECKPOINTS = checkpoints;
+        CHECKPOINTS.setHook(address(this));
     }
 
     function mint(address owner, uint256 tokenId) external {

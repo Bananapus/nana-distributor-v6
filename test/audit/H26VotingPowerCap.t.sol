@@ -142,6 +142,10 @@ contract H26MockCheckpoints {
         // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
         return type(uint256).max;
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return H26MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 /// @notice Mock 721 hook for H-26 tests.
