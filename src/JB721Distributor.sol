@@ -17,7 +17,6 @@ import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
-import {IJB721HistoricalOwner} from "./interfaces/IJB721HistoricalOwner.sol";
 import {JBDistributor} from "./JBDistributor.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
@@ -325,7 +324,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Use staticcall so older hooks without `ownerOfAt` fail closed instead of reverting the whole distribution.
         (bool success, bytes memory data) =
-            address(checkpoints).staticcall(abi.encodeCall(IJB721HistoricalOwner.ownerOfAt, (tokenId, snapshotBlock)));
+            address(checkpoints).staticcall(abi.encodeCall(IJB721Checkpoints.ownerOfAt, (tokenId, snapshotBlock)));
         if (!success || data.length < 32) return address(0);
 
         // A zero owner means the token was not owned at the snapshot block and is not eligible this round.
