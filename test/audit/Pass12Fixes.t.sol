@@ -170,6 +170,8 @@ contract Pass12FixesTest is Test {
 
     function _advanceToRound(uint256 round, JBDistributor dist) internal {
         uint256 targetTimestamp = dist.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }
@@ -224,7 +226,7 @@ contract Pass12FixesTest is Test {
         // Controller transfers tokens to the distributor first.
         rewardToken.mint(controller, amount);
         vm.prank(controller);
-        rewardToken.transfer(address(tokenDistributor), amount);
+        require(rewardToken.transfer(address(tokenDistributor), amount));
 
         // Now the controller calls processSplitWith — should succeed because the unaccounted
         // balance covers the declared amount.

@@ -17,12 +17,9 @@ import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
+import {IJB721HistoricalOwner} from "./interfaces/IJB721HistoricalOwner.sol";
 import {JBDistributor} from "./JBDistributor.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
-
-interface IJB721HistoricalOwner {
-    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address);
-}
 
 /// @notice A singleton distributor that distributes ERC-20 rewards to JB 721 NFT stakers with linear vesting.
 /// @dev Any project can use this distributor by configuring a payout split with
@@ -271,6 +268,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         .STORE()
         .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
+        // Stake eligibility is fixed at the round snapshot block, not the caller's current block.
         uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
         address owner = _snapshotOwnerOf({hook: hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
         if (owner == address(0)) return 0;
@@ -304,6 +302,35 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // ----------------------- private helpers --------------------------- //
     //*********************************************************************//
+
+    /// @notice Returns the token owner at the round snapshot block.
+    /// @dev Returns zero if the hook has no checkpoint module, the module does not support historical ownership, the
+    /// call fails, or the token was not owned at `snapshotBlock`. Treating all of these as ineligible prevents late
+    /// mints and current-owner transfers from claiming rewards for a snapshot they did not participate in.
+    /// @param hook The 721 hook whose checkpoint module is queried.
+    /// @param tokenId The token ID to query.
+    /// @param snapshotBlock The round snapshot block to prove ownership at.
+    /// @return owner The historical token owner, or zero if ownership cannot be proven.
+    function _snapshotOwnerOf(
+        address hook,
+        uint256 tokenId,
+        uint256 snapshotBlock
+    )
+        private
+        view
+        returns (address owner)
+    {
+        // The 721 hook owns the checkpoint module; the distributor only trusts that module's historical proof.
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+
+        // Use staticcall so older hooks without `ownerOfAt` fail closed instead of reverting the whole distribution.
+        (bool success, bytes memory data) =
+            address(checkpoints).staticcall(abi.encodeCall(IJB721HistoricalOwner.ownerOfAt, (tokenId, snapshotBlock)));
+        if (!success || data.length < 32) return address(0);
+
+        // A zero owner means the token was not owned at the snapshot block and is not eligible this round.
+        owner = abi.decode(data, (address));
+    }
 
     /// @notice Vest a single NFT token, enforcing a per-owner voting power cap across the batch.
     /// @dev Returns 0 for burned tokens, already-vested tokens, tokens whose owner had no snapshot voting power,
@@ -360,6 +387,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 ownerIndex;
         uint256 pastVotes;
         {
+            // Reuse the same round snapshot block for every token in this vesting batch.
             uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
             address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
             if (owner == address(0)) return (0, newUniqueCount);
@@ -428,22 +456,5 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             // Emit the claim event for off-chain indexers.
             emit Claimed(ctx.hook, tokenId, ctx.token, tokenAmount, ctx.vestingReleaseRound);
         }
-    }
-
-    /// @notice Returns the token owner at the round snapshot block, or zero if the checkpoint module cannot prove it.
-    function _snapshotOwnerOf(
-        address hook,
-        uint256 tokenId,
-        uint256 snapshotBlock
-    )
-        private
-        view
-        returns (address owner)
-    {
-        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
-        (bool success, bytes memory data) =
-            address(checkpoints).staticcall(abi.encodeCall(IJB721HistoricalOwner.ownerOfAt, (tokenId, snapshotBlock)));
-        if (!success || data.length < 32) return address(0);
-        owner = abi.decode(data, (address));
     }
 }
