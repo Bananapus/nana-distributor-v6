@@ -1,11 +1,20 @@
 {
   "name": "@bananapus/distributor-v6",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Bananapus/nana-distributor-v6"
   },
+  "files": [
+    "CHANGELOG.md",
+    "foundry.lock",
+    "foundry.toml",
+    "references/",
+    "remappings.txt",
+    "script/",
+    "src/"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
@@ -17,13 +26,13 @@
     "deploy:testnets": "source ./.env && npx sphinx propose ./script/Deploy.s.sol --networks testnets"
   },
   "dependencies": {
-    "@bananapus/721-hook-v6": "^0.0.38",
-    "@bananapus/core-v6": "^0.0.36",
-    "@bananapus/permission-ids-v6": "^0.0.19",
-    "@openzeppelin/contracts": "^5.6.1",
-    "@prb/math": "^4.1.0"
+    "@bananapus/721-hook-v6": "0.0.43",
+    "@bananapus/core-v6": "0.0.39",
+    "@bananapus/permission-ids-v6": "0.0.22",
+    "@openzeppelin/contracts": "5.6.1",
+    "@prb/math": "4.1.1"
   },
   "devDependencies": {
-    "@sphinx-labs/plugins": "^0.33.2"
+    "@sphinx-labs/plugins": "0.33.3"
   }
 }

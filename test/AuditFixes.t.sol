@@ -107,6 +107,8 @@ contract AuditFixesTest is Test {
     /// @notice Advance to 1 second after the start of the given round.
     function _advanceToRound(uint256 round) internal {
         uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }
@@ -163,7 +165,7 @@ contract AuditFixesTest is Test {
         // Controller transfers tokens directly to the distributor (no approval).
         rewardToken.mint(controller, amount);
         vm.prank(controller);
-        rewardToken.transfer(address(distributor), amount);
+        require(rewardToken.transfer(address(distributor), amount));
 
         // Controller calls processSplitWith WITHOUT granting an allowance.
         vm.prank(controller);
@@ -191,7 +193,7 @@ contract AuditFixesTest is Test {
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
         rewardToken.mint(controller, amount);
         vm.prank(controller);
-        rewardToken.transfer(address(distributor), amount);
+        require(rewardToken.transfer(address(distributor), amount));
         vm.prank(controller);
         distributor.processSplitWith(context);
 

@@ -119,6 +119,10 @@ contract VPCapMockCheckpoints {
         if (votesOverrideSet[account]) return votesOverride[account];
         return 0; // Default: no historical votes (realistic behavior).
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return VPCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 contract VPCapMockHook {
@@ -145,6 +149,10 @@ contract VPCapMockHook {
         address o = owners[tokenId];
         require(o != address(0), "ERC721: invalid token ID");
         return o;
+    }
+
+    function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
+        return owners[tokenId];
     }
 
     function setOwner(uint256 tokenId, address owner) external {
@@ -224,6 +232,8 @@ contract VotingPowerCapSufficiencyTest is Test {
 
     function _advanceToRound(uint256 round) internal {
         uint256 target = distributor.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < target) vm.warp(target);
         vm.roll(block.number + 1);
     }

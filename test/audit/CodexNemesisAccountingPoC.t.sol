@@ -93,6 +93,11 @@ contract CodexNemesisStore {
 contract CodexNemesisCheckpoints {
     uint256 public totalSupplyAtSnapshot;
     mapping(address account => uint256 votes) public votesAtSnapshot;
+    address public hook;
+
+    function setHook(address hook_) external {
+        hook = hook_;
+    }
 
     function setTotalSupply(uint256 totalSupply) external {
         totalSupplyAtSnapshot = totalSupply;
@@ -109,6 +114,10 @@ contract CodexNemesisCheckpoints {
     function getPastVotes(address account, uint256) external view returns (uint256) {
         return votesAtSnapshot[account];
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return CodexNemesisHook(hook).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 contract CodexNemesisHook {
@@ -116,10 +125,12 @@ contract CodexNemesisHook {
     CodexNemesisCheckpoints public immutable CHECKPOINTS;
 
     mapping(uint256 tokenId => address owner) public owners;
+    mapping(uint256 tokenId => address owner) public snapshotOwners;
 
     constructor(CodexNemesisStore store, CodexNemesisCheckpoints checkpoints) {
         STORE = store;
         CHECKPOINTS = checkpoints;
+        CHECKPOINTS.setHook(address(this));
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {
@@ -128,8 +139,16 @@ contract CodexNemesisHook {
         return owner;
     }
 
+    function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
+        return snapshotOwners[tokenId];
+    }
+
     function setOwner(uint256 tokenId, address owner) external {
         owners[tokenId] = owner;
+    }
+
+    function setSnapshotOwner(uint256 tokenId, address owner) external {
+        snapshotOwners[tokenId] = owner;
     }
 }
 
@@ -201,7 +220,7 @@ contract CodexNemesisAccountingPoCTest is Test {
         );
     }
 
-    function test_721LateMintCanUseOwnersPastVotesAndDrainRound() public {
+    function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         CodexNemesisStore store = new CodexNemesisStore();
@@ -250,23 +269,16 @@ contract CodexNemesisAccountingPoCTest is Test {
         firstLateMint[0] = 2;
         distributor.beginVesting(address(hook), firstLateMint, tokens);
 
-        assertEq(distributor.claimedFor(address(hook), 2, tokens[0]), 1000 ether);
+        assertEq(distributor.claimedFor(address(hook), 2, tokens[0]), 0);
         assertEq(
             distributor.totalVestingAmountOf(address(hook), tokens[0]),
-            distributor.balanceOf(address(hook), tokens[0]),
-            "one post-snapshot token consumed the whole snapshot"
+            0,
+            "post-snapshot token without ownerOfAt eligibility cannot consume the snapshot"
         );
-
-        vm.warp(distributor.roundStartTimestamp(VESTING_ROUNDS) + 1);
-        vm.roll(block.number + 1);
-        vm.prank(attacker);
-        distributor.collectVestedRewards(address(hook), firstLateMint, tokens, attacker);
-
-        assertEq(rewardToken.balanceOf(attacker), 1000 ether, "one late-minted token drained the funded balance");
-        assertEq(rewardToken.balanceOf(address(distributor)), 0, "honest snapshot stake is left unfunded");
+        assertEq(distributor.balanceOf(address(hook), tokens[0]), 1000 ether, "funded balance remains available");
     }
 
-    function test_721SnapshotVotesCanBeReusedAcrossSeparateLateMintClaims() public {
+    function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         CodexNemesisStore store = new CodexNemesisStore();
@@ -300,6 +312,8 @@ contract CodexNemesisAccountingPoCTest is Test {
         hook.setOwner(1, attacker);
         hook.setOwner(2, attacker);
         hook.setOwner(3, attacker);
+        hook.setSnapshotOwner(2, attacker);
+        hook.setSnapshotOwner(3, attacker);
 
         checkpoints.setTotalSupply(100);
         checkpoints.setVotes(attacker, 100);

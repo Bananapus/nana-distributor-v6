@@ -256,8 +256,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice The stake weight of a given NFT token ID based on its tier's voting units, validated against historical
     /// state.
-    /// @dev Returns 0 if the token's current owner had no checkpointed voting power at the round's snapshot block,
-    /// preventing late mints from capturing pro-rata rewards within the current round.
+    /// @dev Returns 0 if the token was not owned at the round's snapshot block or if its snapshot owner had no
+    /// checkpointed voting power, preventing late mints from capturing pro-rata rewards within the current round.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The ID of the token to get the stake weight of.
     /// @return tokenStakeAmount The voting units of the token's tier (or 0 if ineligible).
@@ -267,12 +267,15 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         .STORE()
         .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
-        // Use the checkpoints module to verify the token's owner had voting power at the round's snapshot block.
-        // If they had no voting power at that time, this token was minted or acquired after the round started
-        // and is not eligible for this round's rewards.
-        address owner = IERC721(hook).ownerOf(tokenId);
+        // Stake eligibility is fixed at the round snapshot block, not the caller's current block.
+        uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
+        address owner = _snapshotOwnerOf({hook: hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
+        if (owner == address(0)) return 0;
+
+        // Use the checkpoints module to verify the token's snapshot owner had voting power at the round's snapshot
+        // block. If the token did not exist then, ownerOfAt returns zero above and the token is not eligible.
         uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).CHECKPOINTS()))
-            .getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
+            .getPastVotes({account: owner, timepoint: snapshotBlock});
 
         // If the owner had no voting power at round start, the token is ineligible.
         // slither-disable-next-line incorrect-equality
@@ -298,6 +301,35 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // ----------------------- private helpers --------------------------- //
     //*********************************************************************//
+
+    /// @notice Returns the token owner at the round snapshot block.
+    /// @dev Returns zero if the hook has no checkpoint module, the module does not support historical ownership, the
+    /// call fails, or the token was not owned at `snapshotBlock`. Treating all of these as ineligible prevents late
+    /// mints and current-owner transfers from claiming rewards for a snapshot they did not participate in.
+    /// @param hook The 721 hook whose checkpoint module is queried.
+    /// @param tokenId The token ID to query.
+    /// @param snapshotBlock The round snapshot block to prove ownership at.
+    /// @return owner The historical token owner, or zero if ownership cannot be proven.
+    function _snapshotOwnerOf(
+        address hook,
+        uint256 tokenId,
+        uint256 snapshotBlock
+    )
+        private
+        view
+        returns (address owner)
+    {
+        // The 721 hook owns the checkpoint module; the distributor only trusts that module's historical proof.
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+
+        // Use staticcall so older hooks without `ownerOfAt` fail closed instead of reverting the whole distribution.
+        (bool success, bytes memory data) =
+            address(checkpoints).staticcall(abi.encodeCall(IJB721Checkpoints.ownerOfAt, (tokenId, snapshotBlock)));
+        if (!success || data.length < 32) return address(0);
+
+        // A zero owner means the token was not owned at the snapshot block and is not eligible this round.
+        owner = abi.decode(data, (address));
+    }
 
     /// @notice Vest a single NFT token, enforcing a per-owner voting power cap across the batch.
     /// @dev Returns 0 for burned tokens, already-vested tokens, tokens whose owner had no snapshot voting power,
@@ -350,18 +382,20 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         .STORE()
         .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
-        // Look up the owner, verify snapshot eligibility, and find or create the owner's tracking slot.
+        // Look up the snapshot owner, verify snapshot eligibility, and find or create the owner's tracking slot.
         uint256 ownerIndex;
         uint256 pastVotes;
         {
-            // Get the current owner of the NFT.
-            address owner = IERC721(ctx.hook).ownerOf(tokenId);
+            // Reuse the same round snapshot block for every token in this vesting batch.
+            uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
+            address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
+            if (owner == address(0)) return (0, newUniqueCount);
 
             // Query the owner's checkpointed voting power at the round's snapshot block.
             pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).CHECKPOINTS()))
-                .getPastVotes({account: owner, timepoint: roundSnapshotBlock[currentRound()]});
+                .getPastVotes({account: owner, timepoint: snapshotBlock});
 
-            // If the owner had no voting power at round start, the token is ineligible for this round.
+            // If the snapshot owner had no voting power at round start, the token is ineligible for this round.
             // slither-disable-next-line incorrect-equality
             if (pastVotes == 0) return (0, newUniqueCount);
 

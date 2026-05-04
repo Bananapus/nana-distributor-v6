@@ -26,15 +26,21 @@ contract InvariantToken is ERC20 {
 /// @notice Mock 721 tiers hook for invariant testing.
 contract InvariantMockHook {
     InvariantMockStore public immutable _store;
+    InvariantMockCheckpoints public immutable _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
 
     constructor(InvariantMockStore store) {
         _store = store;
+        _checkpoints = new InvariantMockCheckpoints(store, address(this));
     }
 
     function STORE() external view returns (InvariantMockStore) {
         return _store;
+    }
+
+    function CHECKPOINTS() external view returns (InvariantMockCheckpoints) {
+        return _checkpoints;
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {
@@ -43,12 +49,45 @@ contract InvariantMockHook {
         return owner;
     }
 
+    function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
+        return owners[tokenId];
+    }
+
     function setOwner(uint256 tokenId, address owner) external {
         owners[tokenId] = owner;
     }
 
     function burn(uint256 tokenId) external {
         delete owners[tokenId];
+    }
+}
+
+contract InvariantMockCheckpoints {
+    InvariantMockStore public immutable store;
+    address public immutable hookAddr;
+
+    constructor(InvariantMockStore store_, address hookAddr_) {
+        store = store_;
+        hookAddr = hookAddr_;
+    }
+
+    function getPastTotalSupply(uint256) external view returns (uint256 total) {
+        uint256 maxTier = store.maxTier();
+        for (uint256 i = 1; i <= maxTier; i++) {
+            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
+            if (tier.id == 0 || tier.initialSupply == 0) continue;
+            uint256 burned = store.burned(i);
+            uint256 held = tier.initialSupply - tier.remainingSupply - burned;
+            total += held * tier.votingUnits;
+        }
+    }
+
+    function getPastVotes(address, uint256) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return InvariantMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
     }
 }
 

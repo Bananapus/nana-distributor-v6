@@ -80,8 +80,8 @@ npm install @bananapus/distributor-v6
 
 ```bash
 npm install
-forge build
-forge test
+forge build --deny notes
+forge test --deny notes
 ```
 
 Useful scripts:

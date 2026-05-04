@@ -139,6 +139,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     function _canClaim(address hook, uint256 tokenId, address account) internal pure override returns (bool canClaim) {
         hook; // Silence unused variable warning.
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
+        // The high bits were checked above, so this cast recovers the encoded address.
+        // forge-lint: disable-next-line(unsafe-typecast)
         canClaim = address(uint160(tokenId)) == account;
     }
 
@@ -162,6 +164,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @return tokenStakeAmount The delegated voting power at the round's snapshot block.
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
+        // The high bits were checked above, so this cast recovers the encoded address.
+        // forge-lint: disable-next-line(unsafe-typecast)
         tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundSnapshotBlock[currentRound()]);
     }
 

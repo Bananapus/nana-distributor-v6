@@ -105,6 +105,8 @@ contract JBTokenDistributorTest is Test {
     /// @notice Advance to 1 second after the start of the given round, and advance block number too.
     function _advanceToRound(uint256 round) internal {
         uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }

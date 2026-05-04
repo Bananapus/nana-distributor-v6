@@ -110,6 +110,10 @@ contract MockCheckpoints {
         // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
         return type(uint256).max;
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 /// @notice Mock 721 tiers hook for testing.
@@ -136,6 +140,12 @@ contract MockHook {
         address owner = owners[tokenId];
         require(owner != address(0), "ERC721: invalid token ID");
         return owner;
+    }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        uint256 mintBlock = _store.mintBlockOf(address(this), tokenId);
+        if (mintBlock != 0 && mintBlock > blockNumber) return address(0);
+        return owners[tokenId];
     }
 
     function setOwner(uint256 tokenId, address owner) external {
@@ -285,6 +295,8 @@ contract JB721DistributorTest is Test {
     /// @notice Advance to 1 second after the start of the given round, and advance block number too.
     function _advanceToRound(uint256 round) internal {
         uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }

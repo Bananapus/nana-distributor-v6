@@ -48,5 +48,5 @@ The concrete variants only change how stake and claimant authority are measured.
 ## Verification
 
 - `npm install`
-- `forge build`
-- `forge test`
+- `forge build --deny notes`
+- `forge test --deny notes`

@@ -142,6 +142,10 @@ contract H26MockCheckpoints {
         // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
         return type(uint256).max;
     }
+
+    function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        return H26MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
 }
 
 /// @notice Mock 721 hook for H-26 tests.
@@ -168,6 +172,10 @@ contract H26MockHook {
         address owner = owners[tokenId];
         require(owner != address(0), "ERC721: invalid token ID");
         return owner;
+    }
+
+    function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
+        return owners[tokenId];
     }
 
     function setOwner(uint256 tokenId, address owner) external {
@@ -247,6 +255,8 @@ contract H26VotingPowerCapTest is Test {
 
     function _advanceToRound(uint256 round) internal {
         uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        // Test helper only moves time forward to the requested round boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }
