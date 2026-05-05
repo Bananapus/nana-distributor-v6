@@ -72,7 +72,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice The index within `vestingDataOf` of the latest vest.
     /// @custom:param hook The hook the tokenId belongs to.
     /// @custom:param tokenId The ID of the token to which the vests belong.
-    /// @custom:param token The address of the token being vested.
+    /// @custom:param token The address of the token vested.
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public latestVestedIndexOf;
 
     /// @notice The block number recorded as the snapshot point for each round.
@@ -87,7 +87,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice All vesting data of a tokenId for any number of vesting tokens.
     /// @custom:param hook The hook the tokenId belongs to.
     /// @custom:param tokenId The ID of the token to which the vests belong.
-    /// @custom:param token The address of the token being vested.
+    /// @custom:param token The address of the token vested.
     // slither-disable-next-line uninitialized-state
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => JBVestingData[]))) public vestingDataOf;
 
@@ -106,7 +106,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The snapshot data of the token information for each round.
     /// @custom:param hook The hook the snapshot is for.
-    /// @custom:param token The address of the token being claimed and vested.
+    /// @custom:param token The address of the token claimed and vested.
     /// @custom:param round The round to which the data applies.
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => JBTokenSnapshotData snapshot))) internal
         _snapshotAtRoundOf;
@@ -321,7 +321,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The snapshot data of the token information for each round.
     /// @param hook The hook the snapshot is for.
-    /// @param token The address of the token being claimed and vested.
+    /// @param token The address of the token claimed and vested.
     /// @param round The round to which the data applies.
     function snapshotAtRoundOf(
         address hook,
@@ -466,7 +466,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Unlocks rewards for the given token IDs and tokens, either for collection or forfeiture.
     /// @param hook The hook the tokens belong to.
     /// @param tokenIds The IDs of the tokens to unlock rewards for.
-    /// @param tokens The address of the tokens being unlocked.
+    /// @param tokens The addresses of the tokens to unlock.
     /// @param beneficiary The recipient of the unlocked tokens.
     /// @param ownerClaim Whether this is a claim by the owner (true) or a forfeiture release (false).
     function _unlockRewards(
@@ -521,7 +521,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Unlocks rewards for a set of token IDs for a single reward token.
     /// @param hook The hook the tokens belong to.
     /// @param tokenIds The IDs of the tokens to unlock rewards for.
-    /// @param token The reward token being unlocked.
+    /// @param token The reward token to unlock.
     /// @param round The current round.
     /// @return totalTokenAmount The total amount of reward tokens unlocked.
     function _unlockTokenIds(
