@@ -10,7 +10,13 @@ import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
-/// @notice A contract managing distributions of tokens to be claimed and vested by stakers of any other token.
+/// @notice Abstract base for reward distributors. Manages round-based distribution of ERC-20 tokens (or native ETH)
+/// to stakers with linear vesting. Each round, a snapshot is taken of the distributable balance, and stakers can
+/// claim their pro-rata share based on their stake weight at the snapshot block. Claimed tokens vest linearly over
+/// `vestingRounds` rounds and can be collected as they unlock.
+/// @dev Subclasses define how stake is measured (`_tokenStake`, `_totalStake`), who can claim (`_canClaim`), and
+/// what "burned" means (`_tokenBurned`). Two concrete implementations exist: `JBTokenDistributor` (IVotes tokens)
+/// and `JB721Distributor` (Juicebox 721 NFTs).
 abstract contract JBDistributor is IJBDistributor {
     using SafeERC20 for IERC20;
 
@@ -122,10 +128,12 @@ abstract contract JBDistributor is IJBDistributor {
     // ---------------------- external transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice Claims tokens and begins vesting.
-    /// @param hook The hook whose stakers are vesting.
-    /// @param tokenIds The IDs to claim rewards for.
-    /// @param tokens The tokens to claim.
+    /// @notice Snapshot the current round's distributable balance and begin vesting for the specified token IDs.
+    /// Each token ID's share is proportional to its stake weight relative to the total stake at the snapshot block.
+    /// Vesting completes after `vestingRounds` rounds. Reverts if there's nothing to distribute.
+    /// @param hook The hook (IVotes token or 721 hook) whose stakers are vesting.
+    /// @param tokenIds The staker token IDs to claim rewards for.
+    /// @param tokens The reward tokens to begin vesting.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds();
@@ -167,11 +175,13 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Fund the distributor for a specific hook by pulling tokens from the caller.
-    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token.
-    /// @param hook The hook to fund.
+    /// @notice Directly fund the distributor for a specific hook by pulling tokens from the caller. An alternative
+    /// to split-based funding — useful for one-off deposits or external reward sources.
+    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
+    /// delta to handle fee-on-transfer tokens correctly.
+    /// @param hook The hook to fund (determines which staker pool receives the tokens).
     /// @param token The token to fund with.
-    /// @param amount The amount to fund.
+    /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
     function fund(address hook, IERC20 token, uint256 amount) external payable override {
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
@@ -186,16 +196,19 @@ abstract contract JBDistributor is IJBDistributor {
         _accountedBalanceOf[token] += amount;
     }
 
-    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
+    /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
+    /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
     function poke() external override {
         _ensureSnapshotBlock(currentRound());
     }
 
-    /// @notice Release vested rewards in the case that a token was burned.
+    /// @notice Release unvested rewards tied to burned tokens. When an NFT is burned, its pending vesting entries
+    /// become stranded — this function unlocks them and returns them to the hook's distributable pool (they are NOT
+    /// sent to the beneficiary). Anyone can call this for burned tokens.
     /// @param hook The hook whose tokens were burned.
-    /// @param tokenIds The IDs of the burned tokens.
-    /// @param tokens The address of the tokens being released.
-    /// @param beneficiary The recipient of the released tokens.
+    /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
+    /// @param tokens The reward tokens to release.
+    /// @param beneficiary Unused for forfeiture — tokens return to the pool. Kept for interface compatibility.
     function releaseForfeitedRewards(
         address hook,
         uint256[] calldata tokenIds,
@@ -228,11 +241,12 @@ abstract contract JBDistributor is IJBDistributor {
         return _balanceOf[hook][token];
     }
 
-    /// @notice Calculate how much of the token has been claimed for the given tokenId.
+    /// @notice Calculate the total amount of a reward token that has been claimed (began vesting) for a given
+    /// staker token ID but has not yet been collected. Includes both locked (still vesting) and unlocked amounts.
     /// @param hook The hook the tokenId belongs to.
-    /// @param tokenId The ID of the token to calculate the token amount for.
-    /// @param token The address of the token being claimed.
-    /// @return tokenAmount The amount of tokens that can be claimed once they have vested.
+    /// @param tokenId The ID of the staker token to calculate for.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The total uncollected amount (vesting + vested-but-uncollected).
     function claimedFor(
         address hook,
         uint256 tokenId,
@@ -261,11 +275,12 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId.
+    /// @notice Calculate how much of a reward token is currently unlocked and ready to be collected for a given
+    /// staker token ID. Only includes the vested portion — excludes amounts still locked in vesting.
     /// @param hook The hook the tokenId belongs to.
-    /// @param tokenId The ID of the token to calculate the token amount for.
-    /// @param token The address of the token being claimed.
-    /// @return tokenAmount The amount of tokens that can be claimed right now.
+    /// @param tokenId The ID of the staker token to calculate for.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The amount of tokens that can be collected right now via `collectVestedRewards`.
     function collectableFor(
         address hook,
         uint256 tokenId,
@@ -340,10 +355,12 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- public transactions ----------------------- //
     //*********************************************************************//
 
-    /// @notice Collect vested tokens. Auto-vests for the current round if not already vested.
+    /// @notice Collect tokens that have vested (partially or fully) and transfer them to the beneficiary. Also
+    /// auto-vests for the current round if rewards haven't been claimed yet — so callers don't need to separately
+    /// call `beginVesting`. Only the token owner (verified via `_canClaim`) can collect.
     /// @param hook The hook whose stakers are collecting.
-    /// @param tokenIds The IDs of the tokens to collect for.
-    /// @param tokens The address of the tokens being claimed.
+    /// @param tokenIds The IDs of the tokens to collect for (caller must own all of them).
+    /// @param tokens The reward tokens to collect vested amounts of.
     /// @param beneficiary The recipient of the collected tokens.
     function collectVestedRewards(
         address hook,
@@ -633,28 +650,33 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
-    /// @notice A flag indicating if an account can currently claim their tokens.
+    /// @notice Check whether an account is authorized to collect vested rewards for the given token ID. For 721
+    /// distributors this is ownership; for token distributors this is address-encoding match.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The ID of the token to check.
-    /// @param account The account to check if it can claim.
-    /// @return canClaim A flag indicating if claiming is allowed.
+    /// @param account The account to check authorization for.
+    /// @return canClaim True if the account can collect rewards for this token ID.
     function _canClaim(address hook, uint256 tokenId, address account) internal view virtual returns (bool canClaim);
 
-    /// @notice Checks if the given token was burned or not.
+    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations
+    /// and their unvested rewards can be released via `releaseForfeitedRewards`.
     /// @param hook The hook the token belongs to.
-    /// @param tokenId The tokenId to check.
-    /// @return tokenWasBurned A boolean that is true if the token was burned.
+    /// @param tokenId The token ID to check.
+    /// @return tokenWasBurned True if the token has been burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view virtual returns (bool tokenWasBurned);
 
-    /// @notice The amount of tokens staked for the given token ID.
+    /// @notice The stake weight of a specific token ID, used to calculate its pro-rata share of distributions.
+    /// For 721 distributors this is the tier's voting units; for token distributors this is delegated voting power.
     /// @param hook The hook the token belongs to.
-    /// @param tokenId The ID of the token to get the staked value of.
-    /// @return tokenStakeAmount The amount of staked tokens that is being represented by the token.
+    /// @param tokenId The ID of the token to get the stake weight of.
+    /// @return tokenStakeAmount The stake weight represented by this token ID.
     function _tokenStake(address hook, uint256 tokenId) internal view virtual returns (uint256 tokenStakeAmount);
 
-    /// @notice The total amount staked at the given block.
+    /// @notice The total stake across all token IDs at a given block. Used as the denominator when calculating each
+    /// token ID's pro-rata share. For 721 distributors this is `getPastTotalSupply` from the checkpoints module;
+    /// for token distributors this is `getPastTotalSupply` from the IVotes token.
     /// @param hook The hook to get the total stake for.
-    /// @param blockNumber The block number to get the total staked amount at.
-    /// @return totalStakedAmount The total amount staked at a block number.
+    /// @param blockNumber The block number to query (must be strictly in the past).
+    /// @return totalStakedAmount The total stake at the given block.
     function _totalStake(address hook, uint256 blockNumber) internal view virtual returns (uint256 totalStakedAmount);
 }
