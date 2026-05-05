@@ -169,7 +169,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     ///      Silently skips burned tokens, already-vested tokens, and tokens whose owner had no snapshot voting power.
     /// @param hook The address of the 721 hook whose stakers are vesting.
     /// @param tokenIds The NFT token IDs to vest rewards for.
-    /// @param token The ERC-20 reward token being distributed.
+    /// @param token The ERC-20 reward token to distribute.
     /// @param distributable The total distributable amount of `token` for this round.
     /// @param totalStakeAmount The aggregate voting power at the round's snapshot block.
     /// @param vestingReleaseRound The round number at which the vesting period ends and tokens become fully claimable.
