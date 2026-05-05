@@ -5,7 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {JBTokenSnapshotData} from "../structs/JBTokenSnapshotData.sol";
 
-/// @notice A contract managing distributions of tokens to be claimed and vested by stakers of any other token.
+/// @notice Interface for round-based reward distributors with linear vesting. Stakers claim their share of a
+/// distributable balance each round, and claimed amounts vest linearly over a configurable number of rounds.
+/// Two implementations exist: `JBTokenDistributor` (IVotes token stakers) and `JB721Distributor` (NFT holders).
 interface IJBDistributor {
     //*********************************************************************//
     // -------------------------------- events --------------------------- //
