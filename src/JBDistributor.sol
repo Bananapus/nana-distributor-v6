@@ -559,10 +559,10 @@ abstract contract JBDistributor is IJBDistributor {
 
                 uint256 claimAmount = mulDiv(vesting.amount, MAX_SHARE - vesting.shareClaimed - lockedShare, MAX_SHARE);
 
-                // Update to reflect the amount claimed.
-                vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
-
                 if (claimAmount != 0) {
+                    // Only update the claimed share when a nonzero transfer will occur.
+                    // This keeps dust entries unconsumed so future claims can accumulate enough for a nonzero amount.
+                    vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
                     totalTokenAmount += claimAmount;
                     emit Collected(hook, tokenId, token, claimAmount, vesting.releaseRound);
                 }
