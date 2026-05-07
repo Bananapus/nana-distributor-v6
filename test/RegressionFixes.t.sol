@@ -316,7 +316,7 @@ contract RegressionFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
     }
 
@@ -326,7 +326,7 @@ contract RegressionFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.collectVestedRewards(address(votesToken), tokenIds, tokens, alice);
     }
 
@@ -339,7 +339,7 @@ contract RegressionFixesTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         // beginVesting reverts before _ensureSnapshotBlock is called.
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
         // No snapshot should have been recorded.
