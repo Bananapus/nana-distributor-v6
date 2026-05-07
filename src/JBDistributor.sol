@@ -25,25 +25,25 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
 
     /// @notice Thrown when an empty tokenIds array is passed.
-    error JBDistributor_EmptyTokenIds();
+    error JBDistributor_EmptyTokenIds(uint256 tokenIdCount);
 
     /// @notice Thrown when a native ETH transfer fails.
-    error JBDistributor_NativeTransferFailed();
+    error JBDistributor_NativeTransferFailed(address beneficiary, uint256 amount);
 
     /// @notice Thrown when the caller does not have access to the token.
-    error JBDistributor_NoAccess();
+    error JBDistributor_NoAccess(address hook, uint256 tokenId, address account);
 
     /// @notice Thrown when the round duration is zero.
-    error JBDistributor_InvalidRoundDuration();
+    error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
 
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
-    error JBDistributor_NothingToDistribute();
+    error JBDistributor_NothingToDistribute(address hook, address token, uint256 round);
 
     /// @notice Thrown when a controller-prepaid split credit is not backed by actual token balance.
-    error JBDistributor_UnfundedSplitCredit();
+    error JBDistributor_UnfundedSplitCredit(address token, uint256 expectedAmount, uint256 unaccountedAmount);
 
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
-    error JBDistributor_UnexpectedNativeValue();
+    error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
@@ -88,7 +88,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param hook The hook the tokenId belongs to.
     /// @custom:param tokenId The ID of the token to which the vests belong.
     /// @custom:param token The address of the token vested.
-    // slither-disable-next-line uninitialized-state
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => JBVestingData[]))) public vestingDataOf;
 
     //*********************************************************************//
@@ -118,7 +117,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param roundDuration_ The duration of each round, specified in seconds.
     /// @param vestingRounds_ The number of rounds until tokens are fully vested.
     constructor(uint256 roundDuration_, uint256 vestingRounds_) {
-        if (roundDuration_ == 0) revert JBDistributor_InvalidRoundDuration();
+        if (roundDuration_ == 0) revert JBDistributor_InvalidRoundDuration({roundDuration: roundDuration_});
         startingTimestamp = block.timestamp;
         roundDuration = roundDuration_;
         vestingRounds = vestingRounds_;
@@ -136,7 +135,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param tokens The reward tokens to begin vesting.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
         // Revert if no token IDs are provided.
-        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds();
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
         // Keep a reference to the current round.
         uint256 round = currentRound();
@@ -145,10 +144,9 @@ abstract contract JBDistributor is IJBDistributor {
         _ensureSnapshotBlock(round);
 
         // Keep a reference to the total staked amount at the snapshot block.
-        uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
+        uint256 totalStakeAmount = _totalStake({hook: hook, blockNumber: roundSnapshotBlock[round]});
 
         // Skip vesting when there are no stakers — funds carry over to the next round.
-        // slither-disable-next-line incorrect-equality
         if (totalStakeAmount == 0) return;
 
         // Loop through each token for which vesting is beginning.
@@ -156,15 +154,23 @@ abstract contract JBDistributor is IJBDistributor {
             IERC20 token = tokens[i];
 
             // Take a snapshot of the token balance if it hasn't been taken already.
-            JBTokenSnapshotData memory snapshot = _takeSnapshotOf(hook, token);
+            JBTokenSnapshotData memory snapshot = _takeSnapshotOf({hook: hook, token: token});
             uint256 distributable = snapshot.balance - snapshot.vestingAmount;
 
             // Revert if there is nothing to distribute for this token.
-            if (distributable == 0) revert JBDistributor_NothingToDistribute();
+            if (distributable == 0) {
+                revert JBDistributor_NothingToDistribute({hook: hook, token: address(token), round: round});
+            }
 
             // Vest each token ID and get the total amount vested.
-            uint256 totalVestingAmount =
-                _vestTokenIds(hook, tokenIds, token, distributable, totalStakeAmount, round + vestingRounds);
+            uint256 totalVestingAmount = _vestTokenIds({
+                hook: hook,
+                tokenIds: tokenIds,
+                token: token,
+                distributable: distributable,
+                totalStakeAmount: totalStakeAmount,
+                vestingReleaseRound: round + vestingRounds
+            });
 
             unchecked {
                 // Store the updated total claimed amount now vesting.
@@ -186,7 +192,9 @@ abstract contract JBDistributor is IJBDistributor {
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
         } else {
-            if (msg.value != 0) revert JBDistributor_UnexpectedNativeValue();
+            if (msg.value != 0) {
+                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
+            }
             // Use balance delta to handle fee-on-transfer tokens correctly.
             uint256 balanceBefore = token.balanceOf(address(this));
             token.safeTransferFrom(msg.sender, address(this), amount);
@@ -220,14 +228,16 @@ abstract contract JBDistributor is IJBDistributor {
     {
         // Make sure that all tokens are burned.
         for (uint256 i; i < tokenIds.length;) {
-            if (!_tokenBurned(hook, tokenIds[i])) revert JBDistributor_NoAccess();
+            if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+            }
             unchecked {
                 ++i;
             }
         }
 
         // Unlock the rewards and send them to the beneficiary.
-        _unlockRewards(hook, tokenIds, tokens, beneficiary, false);
+        _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: false});
     }
 
     //*********************************************************************//
@@ -372,11 +382,13 @@ abstract contract JBDistributor is IJBDistributor {
         override
     {
         // Revert if no token IDs are provided.
-        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds();
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
         // Make sure that all tokens can be claimed by this sender.
         for (uint256 i; i < tokenIds.length;) {
-            if (!_canClaim(hook, tokenIds[i], msg.sender)) revert JBDistributor_NoAccess();
+            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+            }
             unchecked {
                 ++i;
             }
@@ -389,20 +401,26 @@ abstract contract JBDistributor is IJBDistributor {
         _ensureSnapshotBlock(round);
 
         // Keep a reference to the total staked amount at the snapshot block.
-        uint256 totalStakeAmount = _totalStake(hook, roundSnapshotBlock[round]);
+        uint256 totalStakeAmount = _totalStake({hook: hook, blockNumber: roundSnapshotBlock[round]});
 
         // Loop through each token and auto-vest if there's something distributable.
         for (uint256 i; i < tokens.length;) {
             IERC20 token = tokens[i];
 
             // Take a snapshot of the token balance if it hasn't been taken already.
-            JBTokenSnapshotData memory snapshot = _takeSnapshotOf(hook, token);
+            JBTokenSnapshotData memory snapshot = _takeSnapshotOf({hook: hook, token: token});
             uint256 distributable = snapshot.balance - snapshot.vestingAmount;
 
             // Only auto-vest if there's something to distribute and there's stake.
             if (distributable > 0 && totalStakeAmount > 0) {
-                uint256 totalVestingAmount =
-                    _vestTokenIds(hook, tokenIds, token, distributable, totalStakeAmount, round + vestingRounds);
+                uint256 totalVestingAmount = _vestTokenIds({
+                    hook: hook,
+                    tokenIds: tokenIds,
+                    token: token,
+                    distributable: distributable,
+                    totalStakeAmount: totalStakeAmount,
+                    vestingReleaseRound: round + vestingRounds
+                });
 
                 unchecked {
                     totalVestingAmountOf[hook][token] += totalVestingAmount;
@@ -415,7 +433,7 @@ abstract contract JBDistributor is IJBDistributor {
         }
 
         // Unlock the rewards and send them to the beneficiary.
-        _unlockRewards(hook, tokenIds, tokens, beneficiary, true);
+        _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true});
     }
 
     //*********************************************************************//
@@ -426,13 +444,11 @@ abstract contract JBDistributor is IJBDistributor {
     /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
     /// @param round The round to ensure a snapshot block for.
     function _ensureSnapshotBlock(uint256 round) internal {
-        // slither-disable-next-line incorrect-equality
         if (roundSnapshotBlock[round] == 0) {
             roundSnapshotBlock[round] = block.number - 1;
             emit RoundSnapshotRecorded(round, block.number - 1);
         }
         // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
-        // slither-disable-next-line incorrect-equality
         if (roundSnapshotBlock[round + 1] == 0) {
             roundSnapshotBlock[round + 1] = block.number - 1;
             emit RoundSnapshotRecorded(round + 1, block.number - 1);
@@ -485,7 +501,7 @@ abstract contract JBDistributor is IJBDistributor {
             IERC20 token = tokens[i];
 
             // Process all token IDs for this reward token.
-            uint256 totalTokenAmount = _unlockTokenIds(hook, tokenIds, token, round);
+            uint256 totalTokenAmount = _unlockTokenIds({hook: hook, tokenIds: tokenIds, token: token, round: round});
 
             // Perform the transfer.
             if (totalTokenAmount != 0) {
@@ -501,9 +517,12 @@ abstract contract JBDistributor is IJBDistributor {
                     _accountedBalanceOf[token] -= totalTokenAmount;
 
                     if (address(token) == JBConstants.NATIVE_TOKEN) {
-                        // slither-disable-next-line arbitrary-send-eth,reentrancy-eth
                         (bool success,) = beneficiary.call{value: totalTokenAmount}("");
-                        if (!success) revert JBDistributor_NativeTransferFailed();
+                        if (!success) {
+                            revert JBDistributor_NativeTransferFailed({
+                                beneficiary: beneficiary, amount: totalTokenAmount
+                            });
+                        }
                     } else {
                         token.safeTransfer(beneficiary, totalTokenAmount);
                     }
@@ -571,7 +590,6 @@ abstract contract JBDistributor is IJBDistributor {
                     ++vestedIndex;
 
                     // Only advance the latest-vested index contiguously past fully exhausted entries.
-                    // slither-disable-next-line incorrect-equality
                     if (lockedShare == 0 && vestedIndex == newLatestVestedIndex + 1) {
                         ++newLatestVestedIndex;
                     }
@@ -611,7 +629,7 @@ abstract contract JBDistributor is IJBDistributor {
             uint256 tokenId = tokenIds[j];
 
             // Skip burned tokens — they are excluded from _totalStake, so including them would overbook vesting.
-            if (_tokenBurned(hook, tokenId)) {
+            if (_tokenBurned({hook: hook, tokenId: tokenId})) {
                 unchecked {
                     ++j;
                 }
@@ -623,7 +641,6 @@ abstract contract JBDistributor is IJBDistributor {
 
             // Skip if this token has already been vested for this round (same releaseRound).
             uint256 numVesting = vestings.length;
-            // slither-disable-next-line incorrect-equality
             if (numVesting != 0 && vestings[numVesting - 1].releaseRound == vestingReleaseRound) {
                 unchecked {
                     ++j;
@@ -632,7 +649,7 @@ abstract contract JBDistributor is IJBDistributor {
             }
 
             // Keep a reference to the amount of tokens being claimed.
-            uint256 tokenAmount = mulDiv(distributable, _tokenStake(hook, tokenId), totalStakeAmount);
+            uint256 tokenAmount = mulDiv(distributable, _tokenStake({hook: hook, tokenId: tokenId}), totalStakeAmount);
 
             // Add to the list of vesting data.
             vestings.push(JBVestingData({releaseRound: vestingReleaseRound, amount: tokenAmount, shareClaimed: 0}));

@@ -9,7 +9,7 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 - teams funding a distributor from a split or post-mint allocation
 - token holders or NFT holders collecting vested rewards
 - operators configuring round timing and deployment shape
-- auditors reviewing snapshot timing and stake-accounting correctness
+- reviewers reviewing snapshot timing and stake-accounting correctness
 
 ## Key Surfaces
 

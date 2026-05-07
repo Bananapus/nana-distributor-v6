@@ -16,7 +16,7 @@ import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract CodexNemesisToken is ERC20 {
+contract RegressionToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function decimals() public pure override returns (uint8) {
@@ -28,7 +28,7 @@ contract CodexNemesisToken is ERC20 {
     }
 }
 
-contract CodexNemesisDirectory {
+contract RegressionDirectory {
     address public terminal;
     IERC165 public controller;
 
@@ -49,7 +49,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesisVotes {
+contract RegressionVotes {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
 
@@ -70,7 +70,7 @@ contract CodexNemesisVotes {
     }
 }
 
-contract CodexNemesis721Store {
+contract Regression721Store {
     uint104 public votingUnits = 100;
 
     function tierOfTokenId(address, uint256, bool) external view returns (JB721Tier memory tier) {
@@ -84,7 +84,7 @@ contract CodexNemesis721Store {
     }
 }
 
-contract CodexNemesis721Checkpoints {
+contract Regression721Checkpoints {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
     address public hook;
@@ -110,18 +110,18 @@ contract CodexNemesis721Checkpoints {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
-        return CodexNemesis721Hook(hook).ownerOfAt(tokenId, blockNumber);
+        return Regression721Hook(hook).ownerOfAt(tokenId, blockNumber);
     }
 }
 
-contract CodexNemesis721Hook {
-    CodexNemesis721Store public immutable STORE;
-    CodexNemesis721Checkpoints public immutable CHECKPOINTS;
+contract Regression721Hook {
+    Regression721Store public immutable STORE;
+    Regression721Checkpoints public immutable CHECKPOINTS;
     mapping(uint256 tokenId => address owner) public ownerOf;
     mapping(uint256 tokenId => uint256[] blocks) internal _ownerCheckpointBlocksOf;
     mapping(uint256 tokenId => mapping(uint256 blockNumber => address owner)) internal _ownerAtBlock;
 
-    constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints) {
+    constructor(Regression721Store store, Regression721Checkpoints checkpoints) {
         STORE = store;
         CHECKPOINTS = checkpoints;
         CHECKPOINTS.setHook(address(this));
@@ -161,7 +161,7 @@ contract CodexNemesis721Hook {
     }
 }
 
-contract CodexNemesisFreshVerificationTest is Test {
+contract RegressionFreshVerificationTest is Test {
     uint256 internal constant PROJECT_ID = 1;
     uint256 internal constant ROUND_DURATION = 1 days;
     uint256 internal constant VESTING_ROUNDS = 1;
@@ -173,13 +173,13 @@ contract CodexNemesisFreshVerificationTest is Test {
         address victimHook = makeAddr("victimHook");
         uint256 rewardAmount = 100_000_000; // 100 units of a 6-decimal token.
 
-        CodexNemesisDirectory directory = new CodexNemesisDirectory();
+        RegressionDirectory directory = new RegressionDirectory();
         directory.setTerminal(address(this));
 
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisToken reward = new CodexNemesisToken();
-        CodexNemesisVotes stake = new CodexNemesisVotes();
+        RegressionToken reward = new RegressionToken();
+        RegressionVotes stake = new RegressionVotes();
         stake.setVotes(attacker, 1 ether);
         stake.setTotalSupply(1 ether);
 
@@ -204,7 +204,7 @@ contract CodexNemesisFreshVerificationTest is Test {
             split: split
         });
 
-        // FIX VERIFIED: The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
+        // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
         vm.deal(address(this), rewardAmount);
         vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
         distributor.processSplitWith{value: rewardAmount}(context);
@@ -217,13 +217,13 @@ contract CodexNemesisFreshVerificationTest is Test {
     function test_721LateMintedTokenCannotClaimRoundSnapshotRewardsFromOwnersPastVotes() public {
         address alice = makeAddr("alice");
 
-        CodexNemesisDirectory directory = new CodexNemesisDirectory();
+        RegressionDirectory directory = new RegressionDirectory();
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisToken reward = new CodexNemesisToken();
-        CodexNemesis721Store store = new CodexNemesis721Store();
-        CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();
-        CodexNemesis721Hook hook = new CodexNemesis721Hook(store, checkpoints);
+        RegressionToken reward = new RegressionToken();
+        Regression721Store store = new Regression721Store();
+        Regression721Checkpoints checkpoints = new Regression721Checkpoints();
+        Regression721Hook hook = new Regression721Hook(store, checkpoints);
 
         reward.mint(address(this), 100 ether);
         reward.approve(address(distributor), 100 ether);
@@ -258,13 +258,13 @@ contract CodexNemesisFreshVerificationTest is Test {
         address seller = makeAddr("seller");
         address buyer = makeAddr("buyer");
 
-        CodexNemesisDirectory directory = new CodexNemesisDirectory();
+        RegressionDirectory directory = new RegressionDirectory();
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisToken reward = new CodexNemesisToken();
-        CodexNemesis721Store store = new CodexNemesis721Store();
-        CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();
-        CodexNemesis721Hook hook = new CodexNemesis721Hook(store, checkpoints);
+        RegressionToken reward = new RegressionToken();
+        Regression721Store store = new Regression721Store();
+        Regression721Checkpoints checkpoints = new Regression721Checkpoints();
+        Regression721Hook hook = new Regression721Hook(store, checkpoints);
 
         reward.mint(address(this), 100 ether);
         reward.approve(address(distributor), 100 ether);

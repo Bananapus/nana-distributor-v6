@@ -22,7 +22,7 @@ import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract CodexNemesisDirectory {
+contract RegressionDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -43,7 +43,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesisRewardToken is ERC20 {
+contract RegressionRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -51,7 +51,7 @@ contract CodexNemesisRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesisVotesToken is ERC20, ERC20Votes {
+contract RegressionVotesToken is ERC20, ERC20Votes {
     constructor() ERC20("Votes", "VOTE") EIP712("Votes", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -63,7 +63,7 @@ contract CodexNemesisVotesToken is ERC20, ERC20Votes {
     }
 }
 
-contract CodexNemesisStore {
+contract RegressionStore {
     uint256 public maxTier;
     mapping(uint256 tierId => JB721Tier) public tiers;
     mapping(uint256 tokenId => uint256 tierId) public tokenTiers;
@@ -90,7 +90,7 @@ contract CodexNemesisStore {
     }
 }
 
-contract CodexNemesisCheckpoints {
+contract RegressionCheckpoints {
     uint256 public totalSupplyAtSnapshot;
     mapping(address account => uint256 votes) public votesAtSnapshot;
     address public hook;
@@ -116,18 +116,18 @@ contract CodexNemesisCheckpoints {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
-        return CodexNemesisHook(hook).ownerOfAt(tokenId, blockNumber);
+        return RegressionHook(hook).ownerOfAt(tokenId, blockNumber);
     }
 }
 
-contract CodexNemesisHook {
-    CodexNemesisStore public immutable STORE;
-    CodexNemesisCheckpoints public immutable CHECKPOINTS;
+contract RegressionHook {
+    RegressionStore public immutable STORE;
+    RegressionCheckpoints public immutable CHECKPOINTS;
 
     mapping(uint256 tokenId => address owner) public owners;
     mapping(uint256 tokenId => address owner) public snapshotOwners;
 
-    constructor(CodexNemesisStore store, CodexNemesisCheckpoints checkpoints) {
+    constructor(RegressionStore store, RegressionCheckpoints checkpoints) {
         STORE = store;
         CHECKPOINTS = checkpoints;
         CHECKPOINTS.setHook(address(this));
@@ -152,7 +152,7 @@ contract CodexNemesisHook {
     }
 }
 
-contract CodexNemesisAccountingPoCTest is Test {
+contract RegressionAccountingTest is Test {
     uint256 internal constant PROJECT_ID = 1;
     uint256 internal constant ROUND_DURATION = 100;
     uint256 internal constant VESTING_ROUNDS = 4;
@@ -161,19 +161,19 @@ contract CodexNemesisAccountingPoCTest is Test {
     address internal honest = makeAddr("honest");
     address internal maliciousController = makeAddr("maliciousController");
 
-    CodexNemesisDirectory internal directory;
-    CodexNemesisRewardToken internal rewardToken;
+    RegressionDirectory internal directory;
+    RegressionRewardToken internal rewardToken;
 
     function setUp() public {
-        directory = new CodexNemesisDirectory();
-        rewardToken = new CodexNemesisRewardToken();
+        directory = new RegressionDirectory();
+        rewardToken = new RegressionRewardToken();
         directory.setController(PROJECT_ID, maliciousController);
     }
 
     function test_controllerCanCreditUndeliveredTokensAndDrainRealInventory() public {
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisVotesToken votesToken = new CodexNemesisVotesToken();
+        RegressionVotesToken votesToken = new RegressionVotesToken();
 
         votesToken.mint(attacker, 10 ether);
         votesToken.mint(honest, 990 ether);
@@ -205,7 +205,7 @@ contract CodexNemesisAccountingPoCTest is Test {
             split: split
         });
 
-        // C-6 FIX: The malicious controller did not actually transfer tokens, so the
+        // FIX: The malicious controller did not actually transfer tokens, so the
         // balance-delta check reverts with UnfundedSplitCredit.
         vm.prank(maliciousController);
         vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
@@ -223,9 +223,9 @@ contract CodexNemesisAccountingPoCTest is Test {
     function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisStore store = new CodexNemesisStore();
-        CodexNemesisCheckpoints checkpoints = new CodexNemesisCheckpoints();
-        CodexNemesisHook hook = new CodexNemesisHook(store, checkpoints);
+        RegressionStore store = new RegressionStore();
+        RegressionCheckpoints checkpoints = new RegressionCheckpoints();
+        RegressionHook hook = new RegressionHook(store, checkpoints);
 
         JB721TierFlags memory flags;
         store.setMaxTierIdOf(1);
@@ -281,9 +281,9 @@ contract CodexNemesisAccountingPoCTest is Test {
     function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisStore store = new CodexNemesisStore();
-        CodexNemesisCheckpoints checkpoints = new CodexNemesisCheckpoints();
-        CodexNemesisHook hook = new CodexNemesisHook(store, checkpoints);
+        RegressionStore store = new RegressionStore();
+        RegressionCheckpoints checkpoints = new RegressionCheckpoints();
+        RegressionHook hook = new RegressionHook(store, checkpoints);
 
         JB721TierFlags memory flags;
         store.setMaxTierIdOf(1);
@@ -333,7 +333,7 @@ contract CodexNemesisAccountingPoCTest is Test {
         secondLateMint[0] = 3;
         distributor.beginVesting(address(hook), secondLateMint, tokens);
 
-        // H-24 FIX: With persistent consumed-votes tracking, the second beginVesting sees
+        // FIX: With persistent consumed-votes tracking, the second beginVesting sees
         // that all 100 votes are already consumed, so token 3 gets 0 reward.
         assertEq(distributor.claimedFor(address(hook), 2, tokens[0]), 1000 ether);
         assertEq(distributor.claimedFor(address(hook), 3, tokens[0]), 0, "votes already consumed, no double-claim");

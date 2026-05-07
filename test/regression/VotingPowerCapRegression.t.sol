@@ -19,8 +19,8 @@ import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBDistributor} from "../../src/JBDistributor.sol";
 import {IJBDistributor} from "../../src/interfaces/IJBDistributor.sol";
 
-/// @notice Mock JB directory for H-26 tests.
-contract H26MockDirectory {
+/// @notice Mock JB directory for tests.
+contract VotingCapMockDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -41,8 +41,8 @@ contract H26MockDirectory {
     }
 }
 
-/// @notice Simple ERC20 reward token for H-26 tests.
-contract H26MockRewardToken is ERC20 {
+/// @notice Simple ERC20 reward token for tests.
+contract VotingCapMockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -51,7 +51,7 @@ contract H26MockRewardToken is ERC20 {
 }
 
 /// @notice Mock store that tracks tiers and token-to-tier mappings.
-contract H26MockStore {
+contract VotingCapMockStore {
     uint256 public maxTier;
     mapping(uint256 tierId => JB721Tier) public tiers;
     mapping(uint256 tierId => uint256) public burned;
@@ -95,10 +95,10 @@ contract H26MockStore {
     }
 }
 
-/// @notice Mock checkpoints with explicit per-address vote overrides for H-26 testing.
+/// @notice Mock checkpoints with explicit per-address vote overrides for testing.
 /// @dev getPastTotalSupply computes from the store; getPastVotes uses explicit overrides.
-contract H26MockCheckpoints {
-    H26MockStore public store;
+contract VotingCapMockCheckpoints {
+    VotingCapMockStore public store;
     address public hookAddr;
 
     /// @dev Override: if non-zero, getPastTotalSupply returns this instead of computing from store.
@@ -110,7 +110,7 @@ contract H26MockCheckpoints {
     /// @dev Tracks whether a per-address override was explicitly set (to allow setting 0).
     mapping(address => bool) public votesOverrideSet;
 
-    constructor(H26MockStore _store, address _hook) {
+    constructor(VotingCapMockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
     }
@@ -144,27 +144,27 @@ contract H26MockCheckpoints {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
-        return H26MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+        return VotingCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
     }
 }
 
-/// @notice Mock 721 hook for H-26 tests.
-contract H26MockHook {
-    H26MockStore public immutable _store;
-    H26MockCheckpoints public _checkpoints;
+/// @notice Mock 721 hook for tests.
+contract VotingCapMockHook {
+    VotingCapMockStore public immutable _store;
+    VotingCapMockCheckpoints public _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
 
-    constructor(H26MockStore store_) {
+    constructor(VotingCapMockStore store_) {
         _store = store_;
-        _checkpoints = new H26MockCheckpoints(store_, address(this));
+        _checkpoints = new VotingCapMockCheckpoints(store_, address(this));
     }
 
-    function STORE() external view returns (H26MockStore) {
+    function STORE() external view returns (VotingCapMockStore) {
         return _store;
     }
 
-    function CHECKPOINTS() external view returns (H26MockCheckpoints) {
+    function CHECKPOINTS() external view returns (VotingCapMockCheckpoints) {
         return _checkpoints;
     }
 
@@ -187,16 +187,16 @@ contract H26MockHook {
     }
 }
 
-/// @notice Tests for H-26: per-owner voting power cap in JB721Distributor.
+/// @notice Tests for per-owner voting power cap in JB721Distributor.
 /// @dev Verifies that an owner holding multiple NFTs cannot claim more rewards than their
 /// historical voting power allows. The `_vestTokenIds` override in JB721Distributor
 /// tracks consumed voting power per owner and caps each NFT's effective stake.
-contract H26VotingPowerCapTest is Test {
+contract VotingPowerCapRegressionTest is Test {
     JB721Distributor distributor;
-    H26MockRewardToken rewardToken;
-    H26MockHook hook;
-    H26MockStore store;
-    H26MockDirectory directory;
+    VotingCapMockRewardToken rewardToken;
+    VotingCapMockHook hook;
+    VotingCapMockStore store;
+    VotingCapMockDirectory directory;
 
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
@@ -206,16 +206,16 @@ contract H26VotingPowerCapTest is Test {
     uint256 constant VESTING_ROUNDS = 4;
 
     function setUp() public {
-        store = new H26MockStore();
-        hook = new H26MockHook(store);
-        directory = new H26MockDirectory();
+        store = new VotingCapMockStore();
+        hook = new VotingCapMockHook(store);
+        directory = new VotingCapMockDirectory();
 
         distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
         directory.setTerminal(PROJECT_ID, address(this), true);
 
-        rewardToken = new H26MockRewardToken();
+        rewardToken = new VotingCapMockRewardToken();
 
         JB721TierFlags memory flags;
 
@@ -270,7 +270,7 @@ contract H26VotingPowerCapTest is Test {
     }
 
     // =====================================================================
-    // H-26 Tests
+    // Tests
     // =====================================================================
 
     /// @notice Owner has 3 NFTs (50 voting units each = 150 total) but only 100 past votes.

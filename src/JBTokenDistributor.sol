@@ -29,13 +29,13 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
-    error JBTokenDistributor_InvalidTokenId();
+    error JBTokenDistributor_InvalidTokenId(uint256 tokenId);
 
     /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
-    error JBTokenDistributor_TokenMismatch();
+    error JBTokenDistributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
-    error JBTokenDistributor_Unauthorized();
+    error JBTokenDistributor_Unauthorized(uint256 projectId, address caller);
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -81,7 +81,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         if (
             !DIRECTORY.isTerminalOf(context.projectId, IJBTerminal(msg.sender))
                 && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)
-        ) revert JBTokenDistributor_Unauthorized();
+        ) revert JBTokenDistributor_Unauthorized({projectId: context.projectId, caller: msg.sender});
 
         // The target hook is the split's beneficiary (the IVotes token address).
         address hook = address(context.split.beneficiary);
@@ -101,13 +101,21 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
                 uint256 actual = IERC20(context.token).balanceOf(address(this));
                 uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
-                if (unaccounted < context.amount) revert JBDistributor_UnfundedSplitCredit();
+                if (unaccounted < context.amount) {
+                    revert JBDistributor_UnfundedSplitCredit({
+                        token: context.token, expectedAmount: context.amount, unaccountedAmount: unaccounted
+                    });
+                }
                 _accountedBalanceOf[IERC20(context.token)] += context.amount;
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
             // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
-            if (context.token != JBConstants.NATIVE_TOKEN) revert JBTokenDistributor_TokenMismatch();
+            if (context.token != JBConstants.NATIVE_TOKEN) {
+                revert JBTokenDistributor_TokenMismatch({
+                    token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value
+                });
+            }
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
             _accountedBalanceOf[IERC20(context.token)] += msg.value;
@@ -138,7 +146,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @return canClaim True if the account matches the encoded address.
     function _canClaim(address hook, uint256 tokenId, address account) internal pure override returns (bool canClaim) {
         hook; // Silence unused variable warning.
-        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
+        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});
         // The high bits were checked above, so this cast recovers the encoded address.
         // forge-lint: disable-next-line(unsafe-typecast)
         canClaim = address(uint160(tokenId)) == account;
@@ -163,7 +171,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
     /// @return tokenStakeAmount The delegated voting power at the round's snapshot block.
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
-        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId();
+        if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});
         // The high bits were checked above, so this cast recovers the encoded address.
         // forge-lint: disable-next-line(unsafe-typecast)
         tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundSnapshotBlock[currentRound()]);
