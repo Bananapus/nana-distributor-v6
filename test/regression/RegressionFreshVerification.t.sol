@@ -11,6 +11,7 @@ import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
@@ -206,7 +207,14 @@ contract RegressionFreshVerificationTest is Test {
 
         // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
         vm.deal(address(this), rewardAmount);
-        vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                address(reward),
+                JBConstants.NATIVE_TOKEN,
+                rewardAmount
+            )
+        );
         distributor.processSplitWith{value: rewardAmount}(context);
 
         // Victim's balance remains intact — attack blocked.

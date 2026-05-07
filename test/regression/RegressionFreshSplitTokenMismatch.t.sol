@@ -9,6 +9,7 @@ import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
@@ -124,7 +125,14 @@ contract RegressionDirectory is IJBDirectory {
 
             // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
             vm.prank(attackerTerminal);
-            vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                    address(reward),
+                    JBConstants.NATIVE_TOKEN,
+                    50 ether
+                )
+            );
             distributor.processSplitWith{value: 50 ether}(context);
 
             // Victim's balance remains intact.
