@@ -1,8 +1,8 @@
-# Review Guide
+# Audit Instructions
 
-This repo is a shared vesting engine plus two concrete distributor variants. Review it as payout logic whose main risks are snapshot timing, stake measurement, and funding assumptions.
+This repo is a shared vesting engine plus two concrete distributor variants. Audit it as payout logic whose main risks are snapshot timing, stake measurement, and funding assumptions.
 
-## Review Objective
+## Audit Objective
 
 Find issues that:
 
