@@ -185,7 +185,11 @@ contract DistributorRegressionTest is Test {
         // FIX: The malicious controller did not actually transfer tokens, so the
         // balance-delta check should revert with UnfundedSplitCredit.
         vm.prank(maliciousController);
-        vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), 1000 ether, 0
+            )
+        );
         distributor.processSplitWith(context);
 
         // The victim hook's balance should remain intact.
