@@ -268,7 +268,11 @@ contract JBTokenDistributorTest is Test {
         });
 
         // Unauthorized caller should revert.
-        vm.expectRevert(JBTokenDistributor.JBTokenDistributor_Unauthorized.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_Unauthorized.selector, projectId, address(this)
+            )
+        );
         distributor.processSplitWith(context);
 
         // Authorized terminal should succeed.
@@ -301,7 +305,11 @@ contract JBTokenDistributorTest is Test {
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
         // Attempt to release forfeited rewards — should revert with NoAccess.
-        vm.expectRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_NoAccess.selector, address(votesToken), _tokenId(alice), address(this)
+            )
+        );
         distributor.releaseForfeitedRewards(address(votesToken), tokenIds, tokens, alice);
     }
 
@@ -379,7 +387,11 @@ contract JBTokenDistributorTest is Test {
 
         // Bob tries to collect Alice's rewards — should revert.
         vm.prank(bob);
-        vm.expectRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_NoAccess.selector, address(votesToken), _tokenId(alice), bob
+            )
+        );
         distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, bob);
     }
 
