@@ -446,12 +446,12 @@ abstract contract JBDistributor is IJBDistributor {
     function _ensureSnapshotBlock(uint256 round) internal {
         if (roundSnapshotBlock[round] == 0) {
             roundSnapshotBlock[round] = block.number - 1;
-            emit RoundSnapshotRecorded(round, block.number - 1);
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: block.number - 1});
         }
         // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
         if (roundSnapshotBlock[round + 1] == 0) {
             roundSnapshotBlock[round + 1] = block.number - 1;
-            emit RoundSnapshotRecorded(round + 1, block.number - 1);
+            emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
         }
     }
 
@@ -476,7 +476,9 @@ abstract contract JBDistributor is IJBDistributor {
         // Store the snapshot.
         _snapshotAtRoundOf[hook][token][round] = snapshot;
 
-        emit SnapshotCreated(hook, round, token, snapshot.balance, snapshot.vestingAmount);
+        emit SnapshotCreated({
+            hook: hook, round: round, token: token, balance: snapshot.balance, vestingAmount: snapshot.vestingAmount
+        });
     }
 
     /// @notice Unlocks rewards for the given token IDs and tokens, either for collection or forfeiture.
@@ -583,7 +585,13 @@ abstract contract JBDistributor is IJBDistributor {
                     // This keeps dust entries unconsumed so future claims can accumulate enough for a nonzero amount.
                     vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
                     totalTokenAmount += claimAmount;
-                    emit Collected(hook, tokenId, token, claimAmount, vesting.releaseRound);
+                    emit Collected({
+                        hook: hook,
+                        tokenId: tokenId,
+                        token: token,
+                        amount: claimAmount,
+                        vestingReleaseRound: vesting.releaseRound
+                    });
                 }
 
                 unchecked {
@@ -654,7 +662,13 @@ abstract contract JBDistributor is IJBDistributor {
             // Add to the list of vesting data.
             vestings.push(JBVestingData({releaseRound: vestingReleaseRound, amount: tokenAmount, shareClaimed: 0}));
 
-            emit Claimed(hook, tokenId, token, tokenAmount, vestingReleaseRound);
+            emit Claimed({
+                hook: hook,
+                tokenId: tokenId,
+                token: token,
+                amount: tokenAmount,
+                vestingReleaseRound: vestingReleaseRound
+            });
 
             unchecked {
                 totalVestingAmount += tokenAmount;
