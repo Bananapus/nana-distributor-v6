@@ -9,6 +9,7 @@ import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
@@ -17,7 +18,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract NemesisRewardToken is ERC20 {
+contract RegressionRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -25,7 +26,7 @@ contract NemesisRewardToken is ERC20 {
     }
 }
 
-contract NemesisStakeToken is ERC20, ERC20Votes {
+contract RegressionStakeToken is ERC20, ERC20Votes {
     constructor() ERC20("Stake", "STK") EIP712("Stake", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -37,7 +38,7 @@ contract NemesisStakeToken is ERC20, ERC20Votes {
     }
 }
 
-contract NemesisDirectory is IJBDirectory {
+contract RegressionDirectory is IJBDirectory {
     mapping(uint256 projectId => IJBTerminal terminal) public terminalOf;
     mapping(uint256 projectId => IERC165 controller) public override controllerOf;
 
@@ -72,21 +73,21 @@ contract NemesisDirectory is IJBDirectory {
     function setTerminalsOf(uint256, IJBTerminal[] calldata) external {}
 }
 
-    contract CodexNemesisFreshSplitTokenMismatchTest is Test {
+    contract RegressionFreshSplitTokenMismatchTest is Test {
         JBTokenDistributor distributor;
-        NemesisDirectory directory;
-        NemesisRewardToken reward;
-        NemesisStakeToken stake;
+        RegressionDirectory directory;
+        RegressionRewardToken reward;
+        RegressionStakeToken stake;
 
         address attacker = address(0xA11CE);
         address attackerTerminal = address(0xBEEF);
         address victimHook = address(0xCAFE);
 
         function setUp() public {
-            directory = new NemesisDirectory();
+            directory = new RegressionDirectory();
             distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 1);
-            reward = new NemesisRewardToken();
-            stake = new NemesisStakeToken();
+            reward = new RegressionRewardToken();
+            stake = new RegressionStakeToken();
 
             directory.setTerminal(1, IJBTerminal(attackerTerminal));
 
@@ -122,9 +123,16 @@ contract NemesisDirectory is IJBDirectory {
                 split: split
             });
 
-            // FIX VERIFIED: The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
+            // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
             vm.prank(attackerTerminal);
-            vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                    address(reward),
+                    JBConstants.NATIVE_TOKEN,
+                    50 ether
+                )
+            );
             distributor.processSplitWith{value: 50 ether}(context);
 
             // Victim's balance remains intact.

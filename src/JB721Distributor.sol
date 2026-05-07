@@ -34,10 +34,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
-    error JB721Distributor_TokenMismatch();
+    error JB721Distributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
-    error JB721Distributor_Unauthorized();
+    error JB721Distributor_Unauthorized(uint256 projectId, address caller);
 
     //*********************************************************************//
     // ----------------------------- structs ----------------------------- //
@@ -112,7 +112,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         if (
             !DIRECTORY.isTerminalOf(context.projectId, IJBTerminal(msg.sender))
                 && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)
-        ) revert JB721Distributor_Unauthorized();
+        ) revert JB721Distributor_Unauthorized({projectId: context.projectId, caller: msg.sender});
 
         // The target hook is the split's beneficiary.
         address hook = address(context.split.beneficiary);
@@ -132,13 +132,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
                 uint256 actual = IERC20(context.token).balanceOf(address(this));
                 uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
-                if (unaccounted < context.amount) revert JBDistributor_UnfundedSplitCredit();
+                if (unaccounted < context.amount) {
+                    revert JBDistributor_UnfundedSplitCredit({
+                        token: context.token, expectedAmount: context.amount, unaccountedAmount: unaccounted
+                    });
+                }
                 _accountedBalanceOf[IERC20(context.token)] += context.amount;
                 _balanceOf[hook][IERC20(context.token)] += context.amount;
             }
         } else if (msg.value != 0) {
             // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
-            if (context.token != JBConstants.NATIVE_TOKEN) revert JB721Distributor_TokenMismatch();
+            if (context.token != JBConstants.NATIVE_TOKEN) {
+                revert JB721Distributor_TokenMismatch({
+                    token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value
+                });
+            }
             // Native ETH: credit actual value received.
             _balanceOf[hook][IERC20(context.token)] += msg.value;
             _accountedBalanceOf[IERC20(context.token)] += msg.value;
@@ -246,7 +254,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param tokenId The tokenId to check.
     /// @return tokenWasBurned True if the token was burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {
-        // slither-disable-next-line unused-return
         try IERC721(hook).ownerOf(tokenId) returns (address) {
             tokenWasBurned = false;
         } catch {
@@ -278,7 +285,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             .getPastVotes({account: owner, timepoint: snapshotBlock});
 
         // If the owner had no voting power at round start, the token is ineligible.
-        // slither-disable-next-line incorrect-equality
         if (pastVotes == 0) return 0;
 
         // Cap at the token's tier voting units — the owner's past votes may cover multiple tokens,
@@ -344,7 +350,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param uniqueCount The number of distinct owners seen so far in the batch.
     /// @return tokenAmount The reward amount vested for this token ID (0 if skipped).
     /// @return newUniqueCount The updated count of distinct owners after processing this token ID.
-    // slither-disable-next-line incorrect-equality
     function _vestSingleToken(
         VestContext memory ctx,
         uint256 tokenId,
@@ -396,7 +401,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 .getPastVotes({account: owner, timepoint: snapshotBlock});
 
             // If the snapshot owner had no voting power at round start, the token is ineligible for this round.
-            // slither-disable-next-line incorrect-equality
             if (pastVotes == 0) return (0, newUniqueCount);
 
             // Search the owners array for an existing slot belonging to this owner.
@@ -439,7 +443,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         consumed[ownerIndex] += stake;
 
         // If the effective stake is zero, the owner's budget is exhausted — skip this token.
-        // slither-disable-next-line incorrect-equality
         if (stake == 0) return (0, newUniqueCount);
 
         // Calculate the pro-rata reward amount: (distributable * stake) / totalStakeAmount.

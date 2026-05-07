@@ -13,7 +13,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract CodexNemesisFreshRewardToken is ERC20 {
+contract RegressionFreshRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -21,7 +21,7 @@ contract CodexNemesisFreshRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesisFreshDirectory {
+contract RegressionFreshDirectory {
     function isTerminalOf(uint256, IJBTerminal) external pure returns (bool) {
         return false;
     }
@@ -31,7 +31,7 @@ contract CodexNemesisFreshDirectory {
     }
 }
 
-contract CodexNemesisFreshVotes {
+contract RegressionFreshVotes {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
 
@@ -52,7 +52,7 @@ contract CodexNemesisFreshVotes {
     }
 }
 
-contract CodexNemesisFresh721Store {
+contract RegressionFresh721Store {
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier.votingUnits = 100;
         tier.initialSupply = 100;
@@ -63,7 +63,7 @@ contract CodexNemesisFresh721Store {
     }
 }
 
-contract CodexNemesisFresh721Checkpoints {
+contract RegressionFresh721Checkpoints {
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
     address public hook;
@@ -89,16 +89,16 @@ contract CodexNemesisFresh721Checkpoints {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
-        return CodexNemesisFresh721Hook(hook).ownerOfAt(tokenId, blockNumber);
+        return RegressionFresh721Hook(hook).ownerOfAt(tokenId, blockNumber);
     }
 }
 
-contract CodexNemesisFresh721Hook {
-    CodexNemesisFresh721Store public immutable STORE;
-    CodexNemesisFresh721Checkpoints public immutable CHECKPOINTS;
+contract RegressionFresh721Hook {
+    RegressionFresh721Store public immutable STORE;
+    RegressionFresh721Checkpoints public immutable CHECKPOINTS;
     mapping(uint256 tokenId => address owner) public owners;
 
-    constructor(CodexNemesisFresh721Store store, CodexNemesisFresh721Checkpoints checkpoints) {
+    constructor(RegressionFresh721Store store, RegressionFresh721Checkpoints checkpoints) {
         STORE = store;
         CHECKPOINTS = checkpoints;
     }
@@ -120,15 +120,15 @@ contract CodexNemesisFresh721Hook {
     }
 }
 
-contract CodexNemesisFreshRoundVerificationTest is Test {
+contract RegressionFreshRoundVerificationTest is Test {
     function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierVotes() public {
         address alice = makeAddr("alice");
-        CodexNemesisFreshDirectory directory = new CodexNemesisFreshDirectory();
+        RegressionFreshDirectory directory = new RegressionFreshDirectory();
         JB721Distributor distributor = new JB721Distributor(IJBDirectory(address(directory)), 1 days, 1);
-        CodexNemesisFreshRewardToken reward = new CodexNemesisFreshRewardToken();
-        CodexNemesisFresh721Store store = new CodexNemesisFresh721Store();
-        CodexNemesisFresh721Checkpoints checkpoints = new CodexNemesisFresh721Checkpoints();
-        CodexNemesisFresh721Hook hook = new CodexNemesisFresh721Hook(store, checkpoints);
+        RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
+        RegressionFresh721Store store = new RegressionFresh721Store();
+        RegressionFresh721Checkpoints checkpoints = new RegressionFresh721Checkpoints();
+        RegressionFresh721Hook hook = new RegressionFresh721Hook(store, checkpoints);
         checkpoints.setHook(address(hook));
 
         reward.mint(address(this), 100 ether);
@@ -161,10 +161,10 @@ contract CodexNemesisFreshRoundVerificationTest is Test {
 
     function test_zeroVestingRoundsMakesRewardsImmediatelyCollectable() public {
         address alice = makeAddr("alice");
-        CodexNemesisFreshDirectory directory = new CodexNemesisFreshDirectory();
+        RegressionFreshDirectory directory = new RegressionFreshDirectory();
         JBTokenDistributor distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 0);
-        CodexNemesisFreshRewardToken reward = new CodexNemesisFreshRewardToken();
-        CodexNemesisFreshVotes votes = new CodexNemesisFreshVotes();
+        RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
+        RegressionFreshVotes votes = new RegressionFreshVotes();
 
         votes.setVotes(alice, 1 ether);
         votes.setTotalSupply(1 ether);

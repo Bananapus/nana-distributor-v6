@@ -19,8 +19,8 @@ import {JBTokenDistributor} from "../src/JBTokenDistributor.sol";
 import {JBDistributor} from "../src/JBDistributor.sol";
 import {IJBTokenDistributor} from "../src/interfaces/IJBTokenDistributor.sol";
 
-/// @notice Mock JB directory for audit fix tests.
-contract AuditFixMockDirectory {
+/// @notice Mock JB directory for regression fix tests.
+contract RegressionFixMockDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -42,7 +42,7 @@ contract AuditFixMockDirectory {
 }
 
 /// @notice Simple ERC20 token for reward payouts.
-contract AuditFixMockRewardToken is ERC20 {
+contract RegressionFixMockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -51,7 +51,7 @@ contract AuditFixMockRewardToken is ERC20 {
 }
 
 /// @notice ERC20Votes token for staking.
-contract AuditFixMockVotesToken is ERC20, ERC20Votes {
+contract RegressionFixMockVotesToken is ERC20, ERC20Votes {
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -65,10 +65,10 @@ contract AuditFixMockVotesToken is ERC20, ERC20Votes {
 
 /// @notice Tests for controller-prepaid split funds, zero-stake vesting, and empty claim array handling in
 /// JBTokenDistributor / JBDistributor.
-contract AuditFixesTest is Test {
-    AuditFixMockDirectory directory;
-    AuditFixMockRewardToken rewardToken;
-    AuditFixMockVotesToken votesToken;
+contract RegressionFixesTest is Test {
+    RegressionFixMockDirectory directory;
+    RegressionFixMockRewardToken rewardToken;
+    RegressionFixMockVotesToken votesToken;
     JBTokenDistributor distributor;
 
     address alice = makeAddr("alice");
@@ -81,9 +81,9 @@ contract AuditFixesTest is Test {
     uint256 constant VESTING_ROUNDS = 4;
 
     function setUp() public {
-        directory = new AuditFixMockDirectory();
-        rewardToken = new AuditFixMockRewardToken();
-        votesToken = new AuditFixMockVotesToken();
+        directory = new RegressionFixMockDirectory();
+        rewardToken = new RegressionFixMockRewardToken();
+        votesToken = new RegressionFixMockVotesToken();
 
         directory.setTerminal(projectId, terminal, true);
         directory.setController(projectId, controller);
@@ -283,15 +283,15 @@ contract AuditFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // beginVesting with zero stake — silently returns. H-25: eagerly locks round 2 snapshot.
+        // beginVesting with zero stake — silently returns. eagerly locks round 2 snapshot.
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Alice delegates (after round 2 snapshot is already locked by H-25 eager fix).
+        // Alice delegates (after round 2 snapshot is already locked by eager fix).
         vm.prank(alice);
         votesToken.delegate(alice);
 
         // Round 2: Alice's delegation not captured (round 2 snapshot precedes her delegation).
-        // Zero stake again — silently returns. H-25: eagerly locks round 3 snapshot (AFTER delegation).
+        // Zero stake again — silently returns. eagerly locks round 3 snapshot (AFTER delegation).
         _advanceToRound(2);
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
@@ -316,7 +316,7 @@ contract AuditFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
     }
 
@@ -326,7 +326,7 @@ contract AuditFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.collectVestedRewards(address(votesToken), tokenIds, tokens, alice);
     }
 
@@ -339,7 +339,7 @@ contract AuditFixesTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         // beginVesting reverts before _ensureSnapshotBlock is called.
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_EmptyTokenIds.selector, 0));
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
         // No snapshot should have been recorded.
@@ -347,7 +347,7 @@ contract AuditFixesTest is Test {
     }
 
     //*********************************************************************//
-    // ------- H-25: Eager Snapshot --------------------------------------- //
+    // ------- Eager Snapshot --------------------------------------- //
     //*********************************************************************//
 
     /// @notice Calling poke() in round N should eagerly set the snapshot for round N+1.

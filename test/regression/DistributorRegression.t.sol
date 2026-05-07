@@ -21,9 +21,14 @@ import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-import {H26MockDirectory, H26MockHook, H26MockRewardToken, H26MockStore} from "./H26VotingPowerCap.t.sol";
+import {
+    VotingCapMockDirectory,
+    VotingCapMockHook,
+    VotingCapMockRewardToken,
+    VotingCapMockStore
+} from "./VotingPowerCapRegression.t.sol";
 
-contract CodexNemesisDirectory {
+contract RegressionDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -44,7 +49,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesisRewardToken is ERC20 {
+contract RegressionRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -52,7 +57,7 @@ contract CodexNemesisRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesisVotesToken is ERC20, ERC20Votes {
+contract RegressionVotesToken is ERC20, ERC20Votes {
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -64,17 +69,17 @@ contract CodexNemesisVotesToken is ERC20, ERC20Votes {
     }
 }
 
-contract CodexNemesisPoCTest is Test {
+contract DistributorRegressionTest is Test {
     uint256 constant ROUND_DURATION = 100;
     uint256 constant VESTING_ROUNDS = 1;
 
     function test_721OwnerVotingCapResetsAcrossBeginVestingCalls() public {
-        H26MockStore store = new H26MockStore();
-        H26MockHook hook = new H26MockHook(store);
-        H26MockDirectory directory = new H26MockDirectory();
+        VotingCapMockStore store = new VotingCapMockStore();
+        VotingCapMockHook hook = new VotingCapMockHook(store);
+        VotingCapMockDirectory directory = new VotingCapMockDirectory();
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        H26MockRewardToken rewardToken = new H26MockRewardToken();
+        VotingCapMockRewardToken rewardToken = new VotingCapMockRewardToken();
 
         address alice = makeAddr("alice");
 
@@ -131,18 +136,18 @@ contract CodexNemesisPoCTest is Test {
         uint256 claimed2 = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));
         uint256 claimed3 = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
 
-        // H-24 FIX: With persistent consumed-votes tracking, the total claimed is now correctly
+        // FIX: With persistent consumed-votes tracking, the total claimed is now correctly
         // capped at the owner's voting power (100 votes / 150 total stake * 1500 = 1000 ether).
         assertEq(claimed1 + claimed2 + claimed3, 1000 ether);
         assertLe(claimed1 + claimed2 + claimed3, 1000 ether);
     }
 
     function test_processSplitWithControllerPathCanCreditUnfundedBalanceAndDrainOtherHook() public {
-        CodexNemesisDirectory directory = new CodexNemesisDirectory();
+        RegressionDirectory directory = new RegressionDirectory();
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-        CodexNemesisRewardToken rewardToken = new CodexNemesisRewardToken();
-        CodexNemesisVotesToken attackerVotes = new CodexNemesisVotesToken();
+        RegressionRewardToken rewardToken = new RegressionRewardToken();
+        RegressionVotesToken attackerVotes = new RegressionVotesToken();
 
         address attacker = makeAddr("attacker");
         address maliciousController = makeAddr("maliciousController");
@@ -177,10 +182,14 @@ contract CodexNemesisPoCTest is Test {
             split: split
         });
 
-        // C-6 FIX: The malicious controller did not actually transfer tokens, so the
+        // FIX: The malicious controller did not actually transfer tokens, so the
         // balance-delta check should revert with UnfundedSplitCredit.
         vm.prank(maliciousController);
-        vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), 1000 ether, 0
+            )
+        );
         distributor.processSplitWith(context);
 
         // The victim hook's balance should remain intact.

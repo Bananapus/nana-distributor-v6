@@ -130,7 +130,14 @@ contract TokenMismatchTokenDistributorTest is Test {
 
         // The attack should now revert with TokenMismatch.
         vm.prank(terminal);
-        vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                address(victimToken),
+                JBConstants.NATIVE_TOKEN,
+                1 ether
+            )
+        );
         distributor.processSplitWith{value: 1 ether}(context);
     }
 
@@ -178,7 +185,14 @@ contract TokenMismatchTokenDistributorTest is Test {
 
         vm.deal(terminal, 10 ether);
         vm.prank(terminal);
-        vm.expectRevert(JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                address(victimToken),
+                JBConstants.NATIVE_TOKEN,
+                1 ether
+            )
+        );
         distributor.processSplitWith{value: 1 ether}(attackContext);
 
         // Balance remains unchanged — attack blocked.
@@ -239,7 +253,14 @@ contract TokenMismatch721DistributorTest is Test {
         vm.deal(terminal, 10 ether);
 
         vm.prank(terminal);
-        vm.expectRevert(JB721Distributor.JB721Distributor_TokenMismatch.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JB721Distributor.JB721Distributor_TokenMismatch.selector,
+                address(victimToken),
+                JBConstants.NATIVE_TOKEN,
+                1 ether
+            )
+        );
         distributor.processSplitWith{value: 1 ether}(context);
     }
 
@@ -282,7 +303,14 @@ contract TokenMismatch721DistributorTest is Test {
 
         vm.deal(terminal, 10 ether);
         vm.prank(terminal);
-        vm.expectRevert(JB721Distributor.JB721Distributor_TokenMismatch.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JB721Distributor.JB721Distributor_TokenMismatch.selector,
+                address(victimToken),
+                JBConstants.NATIVE_TOKEN,
+                1 ether
+            )
+        );
         distributor.processSplitWith{value: 1 ether}(attackContext);
 
         // Balance unaffected.

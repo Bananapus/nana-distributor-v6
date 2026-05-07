@@ -15,7 +15,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract CodexNemesisDirectory {
+contract RegressionDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -36,7 +36,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesisReward is ERC20 {
+contract RegressionReward is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -44,7 +44,7 @@ contract CodexNemesisReward is ERC20 {
     }
 }
 
-contract CodexNemesisVotes is ERC20, ERC20Votes {
+contract RegressionVotes is ERC20, ERC20Votes {
     constructor() ERC20("Stake", "STK") EIP712("Stake", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -56,10 +56,10 @@ contract CodexNemesisVotes is ERC20, ERC20Votes {
     }
 }
 
-contract CodexNemesis20260505Test is Test {
-    CodexNemesisDirectory internal directory;
-    CodexNemesisReward internal reward;
-    CodexNemesisVotes internal votes;
+contract Regression20260505Test is Test {
+    RegressionDirectory internal directory;
+    RegressionReward internal reward;
+    RegressionVotes internal votes;
     JBTokenDistributor internal distributor;
 
     address internal alice = makeAddr("alice");
@@ -67,9 +67,9 @@ contract CodexNemesis20260505Test is Test {
     uint256 internal constant PROJECT_ID = 1;
 
     function setUp() public {
-        directory = new CodexNemesisDirectory();
-        reward = new CodexNemesisReward();
-        votes = new CodexNemesisVotes();
+        directory = new RegressionDirectory();
+        reward = new RegressionReward();
+        votes = new RegressionVotes();
         distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1, 3);
 
         directory.setController(PROJECT_ID, address(this));

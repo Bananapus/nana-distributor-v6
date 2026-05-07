@@ -23,19 +23,19 @@ import {JB721Distributor} from "../../src/JB721Distributor.sol";
 import {JBDistributor} from "../../src/JBDistributor.sol";
 
 import {
-    H26MockDirectory,
-    H26MockHook,
-    H26MockRewardToken,
-    H26MockStore,
-    H26MockCheckpoints
-} from "./H26VotingPowerCap.t.sol";
+    VotingCapMockDirectory,
+    VotingCapMockHook,
+    VotingCapMockRewardToken,
+    VotingCapMockStore,
+    VotingCapMockCheckpoints
+} from "./VotingPowerCapRegression.t.sol";
 
 // =========================================================================
-// Mock contracts for JBTokenDistributor tests (C-6, L-17)
+// Mock contracts for JBTokenDistributor tests ()
 // =========================================================================
 
-/// @notice Mock JB directory for Pass12 tests.
-contract P12MockDirectory {
+/// @notice Mock JB directory for distributor regression tests.
+contract DistributorMockDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
     mapping(uint256 projectId => address controller) public controllers;
 
@@ -56,8 +56,8 @@ contract P12MockDirectory {
     }
 }
 
-/// @notice Simple ERC20 reward token for Pass12 tests.
-contract P12MockRewardToken is ERC20 {
+/// @notice Simple ERC20 reward token for distributor regression tests.
+contract DistributorMockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -65,8 +65,8 @@ contract P12MockRewardToken is ERC20 {
     }
 }
 
-/// @notice ERC20Votes token for staking in Pass12 tests.
-contract P12MockVotesToken is ERC20, ERC20Votes {
+/// @notice ERC20Votes token for staking in distributor regression tests.
+contract DistributorMockVotesToken is ERC20, ERC20Votes {
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -82,19 +82,19 @@ contract P12MockVotesToken is ERC20, ERC20Votes {
 // Test contract
 // =========================================================================
 
-/// @notice Tests for Pass 12 audit fixes: C-6, H-24, and L-17.
-contract Pass12FixesTest is Test {
-    // --- Token Distributor setup (C-6, L-17) ---
-    P12MockDirectory tokenDirectory;
-    P12MockRewardToken rewardToken;
-    P12MockVotesToken votesToken;
+/// @notice Tests for distributor regression fixes.
+contract DistributorRegressionFixesTest is Test {
+    // --- Token Distributor setup () ---
+    DistributorMockDirectory tokenDirectory;
+    DistributorMockRewardToken rewardToken;
+    DistributorMockVotesToken votesToken;
     JBTokenDistributor tokenDistributor;
 
-    // --- 721 Distributor setup (H-24) ---
-    H26MockStore store;
-    H26MockHook hook;
-    H26MockDirectory nftDirectory;
-    H26MockRewardToken nftRewardToken;
+    // --- 721 Distributor setup () ---
+    VotingCapMockStore store;
+    VotingCapMockHook hook;
+    VotingCapMockDirectory nftDirectory;
+    VotingCapMockRewardToken nftRewardToken;
     JB721Distributor nftDistributor;
 
     address alice = makeAddr("alice");
@@ -108,9 +108,9 @@ contract Pass12FixesTest is Test {
 
     function setUp() public {
         // --- Token Distributor ---
-        tokenDirectory = new P12MockDirectory();
-        rewardToken = new P12MockRewardToken();
-        votesToken = new P12MockVotesToken();
+        tokenDirectory = new DistributorMockDirectory();
+        rewardToken = new DistributorMockRewardToken();
+        votesToken = new DistributorMockVotesToken();
 
         tokenDirectory.setTerminal(projectId, terminal, true);
         tokenDirectory.setController(projectId, controller);
@@ -122,15 +122,15 @@ contract Pass12FixesTest is Test {
         votesToken.delegate(alice);
 
         // --- 721 Distributor ---
-        store = new H26MockStore();
-        hook = new H26MockHook(store);
-        nftDirectory = new H26MockDirectory();
+        store = new VotingCapMockStore();
+        hook = new VotingCapMockHook(store);
+        nftDirectory = new VotingCapMockDirectory();
 
         nftDistributor = new JB721Distributor(IJBDirectory(address(nftDirectory)), ROUND_DURATION, VESTING_ROUNDS);
 
         nftDirectory.setTerminal(projectId, address(this), true);
 
-        nftRewardToken = new H26MockRewardToken();
+        nftRewardToken = new VotingCapMockRewardToken();
 
         JB721TierFlags memory flags;
 
@@ -194,7 +194,7 @@ contract Pass12FixesTest is Test {
     }
 
     // =====================================================================
-    // C-6: Unbacked split credits
+    // Unbacked split credits
     // =====================================================================
 
     /// @notice A controller calls processSplitWith without transferring tokens first.
@@ -206,7 +206,11 @@ contract Pass12FixesTest is Test {
         // Controller calls processSplitWith WITHOUT transferring any tokens to the distributor.
         // The controller has no allowance either, so it falls into the "else" (controller-prepaid) branch.
         vm.prank(controller);
-        vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), amount, 0
+            )
+        );
         tokenDistributor.processSplitWith(context);
 
         // Verify no balance was credited.
@@ -245,7 +249,7 @@ contract Pass12FixesTest is Test {
     }
 
     // =====================================================================
-    // H-24: Voting cap reset across calls
+    // Voting cap reset across calls
     // =====================================================================
 
     /// @notice Calling beginVesting multiple times in the same round for the same owner's
@@ -264,7 +268,7 @@ contract Pass12FixesTest is Test {
         tokens[0] = IERC20(address(nftRewardToken));
 
         // Call beginVesting THREE TIMES, each with a single token ID.
-        // Without the H-24 fix, each call resets the consumed voting power to 0,
+        // Without the fix, each call resets the consumed voting power to 0,
         // allowing Alice to claim 50 voting units per call = 150 total (bypassing the 100 cap).
         // With the fix, consumed votes persist in storage across calls.
         uint256[] memory singleId = new uint256[](1);
@@ -297,23 +301,27 @@ contract Pass12FixesTest is Test {
     }
 
     // =====================================================================
-    // L-17: fund() ETH trap
+    // fund() ETH trap
     // =====================================================================
 
     /// @notice Sending ETH with an ERC-20 token in fund() should revert.
-    function test_L17_fix_reverts_unexpected_eth() public {
+    function test_unexpectedEthReverts() public {
         uint256 erc20Amount = 100 ether;
         rewardToken.mint(address(this), erc20Amount);
         rewardToken.approve(address(tokenDistributor), erc20Amount);
 
         // Call fund() with an ERC-20 token but also send msg.value.
         // This should revert with JBDistributor_UnexpectedNativeValue.
-        vm.expectRevert(JBDistributor.JBDistributor_UnexpectedNativeValue.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnexpectedNativeValue.selector, 1 ether, address(rewardToken)
+            )
+        );
         tokenDistributor.fund{value: 1 ether}(address(votesToken), IERC20(address(rewardToken)), erc20Amount);
     }
 
     /// @notice fund() with native token and msg.value should still work normally.
-    function test_L17_fund_native_token_still_works() public {
+    function test_fundNativeTokenStillWorks() public {
         vm.deal(address(this), 5 ether);
 
         tokenDistributor.fund{value: 5 ether}(
@@ -330,7 +338,7 @@ contract Pass12FixesTest is Test {
     }
 
     /// @notice fund() with ERC-20 and no ETH should still work normally.
-    function test_L17_fund_erc20_no_eth_still_works() public {
+    function test_fundErc20WithoutEthStillWorks() public {
         uint256 amount = 200 ether;
         rewardToken.mint(address(this), amount);
         rewardToken.approve(address(tokenDistributor), amount);
