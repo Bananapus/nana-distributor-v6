@@ -206,7 +206,11 @@ contract DistributorRegressionFixesTest is Test {
         // Controller calls processSplitWith WITHOUT transferring any tokens to the distributor.
         // The controller has no allowance either, so it falls into the "else" (controller-prepaid) branch.
         vm.prank(controller);
-        vm.expectRevert(JBDistributor.JBDistributor_UnfundedSplitCredit.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), amount, 0
+            )
+        );
         tokenDistributor.processSplitWith(context);
 
         // Verify no balance was credited.
@@ -308,7 +312,11 @@ contract DistributorRegressionFixesTest is Test {
 
         // Call fund() with an ERC-20 token but also send msg.value.
         // This should revert with JBDistributor_UnexpectedNativeValue.
-        vm.expectRevert(JBDistributor.JBDistributor_UnexpectedNativeValue.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_UnexpectedNativeValue.selector, 1 ether, address(rewardToken)
+            )
+        );
         tokenDistributor.fund{value: 1 ether}(address(votesToken), IERC20(address(rewardToken)), erc20Amount);
     }
 
