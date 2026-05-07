@@ -456,7 +456,13 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             );
 
             // Emit the claim event for off-chain indexers.
-            emit Claimed(ctx.hook, tokenId, ctx.token, tokenAmount, ctx.vestingReleaseRound);
+            emit Claimed({
+                hook: ctx.hook,
+                tokenId: tokenId,
+                token: ctx.token,
+                amount: tokenAmount,
+                vestingReleaseRound: ctx.vestingReleaseRound
+            });
         }
     }
 }
