@@ -770,7 +770,7 @@ contract JB721DistributorTest is Test {
         _advanceToRound(VESTING_ROUNDS);
 
         vm.prank(bob);
-        vm.expectRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, bob);
     }
 
@@ -949,7 +949,7 @@ contract JB721DistributorTest is Test {
 
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        vm.expectRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, alice);
     }
 
@@ -1296,7 +1296,7 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         // Should revert when no token IDs are provided.
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
         distributor.beginVesting(address(hook), tokenIds, tokens);
     }
 
@@ -1314,7 +1314,7 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](0);
 
         // Should revert when no token IDs are provided.
-        vm.expectRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_EmptyTokenIds.selector);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
     }
 
@@ -1366,7 +1366,7 @@ contract JB721DistributorTest is Test {
 
         // Alice can no longer collect.
         vm.prank(alice);
-        vm.expectRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
         // Charlie can collect.
@@ -2012,7 +2012,7 @@ contract JB721DistributorTest is Test {
         vm.startPrank(unauthorized);
         rewardToken.approve(address(distributor), amount);
 
-        vm.expectRevert(JB721Distributor.JB721Distributor_Unauthorized.selector);
+        vm.expectPartialRevert(JB721Distributor.JB721Distributor_Unauthorized.selector);
         distributor.processSplitWith(_splitContext(address(rewardToken), amount));
         vm.stopPrank();
     }
