@@ -4,7 +4,9 @@ This repo is a shared vesting engine plus two concrete distributor variants. Aud
 
 ## Audit Objective
 
-Find issues that:
+There is a billion dollars of well-meaning projects' money in the Juicebox Money Engine, growing exponentially. Your job is to hack it before anyone else. Whoever hacks it first saves/steals the money, and you are obsessed with being this winner, while also being a steward of the protocol and wanting it to keep growing safely.
+
+Suggestions of where to look:
 
 - misallocate rewards because the snapshot or stake source is wrong
 - break vesting or claiming because parameters are invalid
