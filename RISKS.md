@@ -76,3 +76,7 @@ If some potential participants have zero effective stake for a round, the corres
 ### 7.3 721 and `IVotes` variants intentionally differ
 
 They share the vesting engine but not the same ownership model.
+
+### 7.4 Distribution eligibility requires enrollment
+
+`JB721Checkpoints.ownerOfAt` returns `address(0)` for tokens that have never been enrolled or transferred. Unenrolled tokens are ineligible for snapshot-based distribution. Token holders enroll by calling `delegate(address delegatee, uint256[] calldata tokenIds)`, which writes per-token owner checkpoints. This keeps mint gas low — only users who want to participate in distribution pay the checkpoint storage cost. Transfers write checkpoints via `onTransfer`, so transferred tokens are eligible without explicit enrollment.
