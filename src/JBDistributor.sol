@@ -39,9 +39,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute(address hook, address token, uint256 round);
 
-    /// @notice Thrown when a controller-prepaid split credit is not backed by actual token balance.
-    error JBDistributor_UnfundedSplitCredit(address token, uint256 expectedAmount, uint256 unaccountedAmount);
-
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
@@ -277,7 +274,8 @@ abstract contract JBDistributor is IJBDistributor {
             // Keep a reference to the vested data being iterated on.
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
-            tokenAmount += mulDiv(vesting.amount, MAX_SHARE - vesting.shareClaimed, MAX_SHARE);
+            // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
+            tokenAmount += vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
 
             unchecked {
                 ++vestedIndex;
@@ -321,7 +319,15 @@ abstract contract JBDistributor is IJBDistributor {
                 lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
             }
 
-            tokenAmount += mulDiv(vesting.amount, MAX_SHARE - vesting.shareClaimed - lockedShare, MAX_SHARE);
+            if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
+                // Final unlock: compute remaining as `original - alreadyPaid` to include dust.
+                tokenAmount += vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
+            } else {
+                uint256 newShareClaimed = MAX_SHARE - lockedShare;
+                if (newShareClaimed > vesting.shareClaimed) {
+                    tokenAmount += mulDiv(vesting.amount, newShareClaimed - vesting.shareClaimed, MAX_SHARE);
+                }
+            }
 
             unchecked {
                 ++vestedIndex;
@@ -568,21 +574,26 @@ abstract contract JBDistributor is IJBDistributor {
             uint256 newLatestVestedIndex = vestedIndex;
 
             while (vestedIndex < numberOfVestingRounds) {
-                uint256 lockedShare;
-
                 // Keep a reference to the vested data being iterated on.
                 JBVestingData memory vesting = vestings[vestedIndex];
 
                 // Calculate the share amount that is locked.
+                uint256 lockedShare;
                 if (vesting.releaseRound > round) {
                     lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
                 }
 
-                uint256 claimAmount = mulDiv(vesting.amount, MAX_SHARE - vesting.shareClaimed - lockedShare, MAX_SHARE);
+                uint256 claimAmount;
+
+                if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
+                    // Final unlock: compute remaining amount as `original - alreadyPaid` to force
+                    // rounding dust out so nothing is stranded in the entry.
+                    claimAmount = vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
+                } else if (MAX_SHARE - lockedShare > vesting.shareClaimed) {
+                    claimAmount = mulDiv(vesting.amount, MAX_SHARE - lockedShare - vesting.shareClaimed, MAX_SHARE);
+                }
 
                 if (claimAmount != 0) {
-                    // Only update the claimed share when a nonzero transfer will occur.
-                    // This keeps dust entries unconsumed so future claims can accumulate enough for a nonzero amount.
                     vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
                     totalTokenAmount += claimAmount;
                     emit Collected({
@@ -598,7 +609,11 @@ abstract contract JBDistributor is IJBDistributor {
                     ++vestedIndex;
 
                     // Only advance the latest-vested index contiguously past fully exhausted entries.
-                    if (lockedShare == 0 && vestedIndex == newLatestVestedIndex + 1) {
+                    // An entry is exhausted only when its entire share has been claimed (lockedShare == 0).
+                    if (
+                        lockedShare == 0 && vestings[vestedIndex - 1].shareClaimed == MAX_SHARE
+                            && vestedIndex == newLatestVestedIndex + 1
+                    ) {
                         ++newLatestVestedIndex;
                     }
                 }

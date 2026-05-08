@@ -88,27 +88,15 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
         // If it's not a native-token transfer, credit the ERC-20 amount.
         if (msg.value == 0 && context.amount != 0) {
-            uint256 allowance = IERC20(context.token).allowance(msg.sender, address(this));
-            if (allowance >= context.amount) {
-                // Terminal path: the caller granted an allowance — pull tokens via transferFrom.
-                // Use balance delta to handle fee-on-transfer tokens correctly.
-                uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-                IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
-                _balanceOf[hook][IERC20(context.token)] += delta;
-                _accountedBalanceOf[IERC20(context.token)] += delta;
-            } else {
-                // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
-                uint256 actual = IERC20(context.token).balanceOf(address(this));
-                uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
-                if (unaccounted < context.amount) {
-                    revert JBDistributor_UnfundedSplitCredit({
-                        token: context.token, expectedAmount: context.amount, unaccountedAmount: unaccounted
-                    });
-                }
-                _accountedBalanceOf[IERC20(context.token)] += context.amount;
-                _balanceOf[hook][IERC20(context.token)] += context.amount;
-            }
+            // Pull tokens via transferFrom. The caller (terminal or controller) must grant
+            // an ERC-20 allowance before calling. Using balance delta handles fee-on-transfer
+            // tokens correctly and eliminates the stale-sweep vector where stray transfers
+            // could satisfy an unrelated controller's prepaid proof.
+            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
+            IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
+            uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
+            _balanceOf[hook][IERC20(context.token)] += delta;
+            _accountedBalanceOf[IERC20(context.token)] += delta;
         } else if (msg.value != 0) {
             // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
             if (context.token != JBConstants.NATIVE_TOKEN) {

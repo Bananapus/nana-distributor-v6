@@ -80,7 +80,10 @@ contract Regression20260505Test is Test {
         vm.roll(block.number + 1);
     }
 
+    /// @notice AE-1 fix: stray transfers cannot be swept via processSplitWith without allowance.
+    ///         The controller must grant an ERC-20 allowance, not rely on unaccounted balance.
     function test_unaccountedPrepaidCreditCanBeSweptByController() public {
+        // A victim accidentally sends tokens directly to the distributor.
         reward.mint(victim, 100 ether);
         vm.prank(victim);
         assertTrue(reward.transfer(address(distributor), 100 ether));
@@ -88,6 +91,33 @@ contract Regression20260505Test is Test {
         assertEq(reward.balanceOf(address(distributor)), 100 ether);
         assertEq(distributor.balanceOf(address(votes), IERC20(address(reward))), 0);
 
+        // The controller tries to claim the stray tokens via processSplitWith, but the
+        // implicit prepaid branch was removed. Without allowance, safeTransferFrom reverts.
+        vm.expectRevert();
+        distributor.processSplitWith(
+            JBSplitHookContext({
+                token: address(reward),
+                amount: 100 ether,
+                decimals: 18,
+                projectId: PROJECT_ID,
+                groupId: uint256(uint160(address(reward))),
+                split: JBSplit({
+                    percent: 0,
+                    projectId: 0,
+                    beneficiary: payable(address(votes)),
+                    preferAddToBalance: false,
+                    lockedUntil: 0,
+                    hook: distributor
+                })
+            })
+        );
+
+        // No balance was credited: the stray transfer was not captured.
+        assertEq(distributor.balanceOf(address(votes), IERC20(address(reward))), 0);
+
+        // The correct approach: controller grants allowance, then calls processSplitWith.
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
         distributor.processSplitWith(
             JBSplitHookContext({
                 token: address(reward),

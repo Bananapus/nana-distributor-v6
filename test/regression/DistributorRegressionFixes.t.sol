@@ -197,43 +197,38 @@ contract DistributorRegressionFixesTest is Test {
     // Unbacked split credits
     // =====================================================================
 
-    /// @notice A controller calls processSplitWith without transferring tokens first.
-    ///         Should revert with JBDistributor_UnfundedSplitCredit.
+    /// @notice A controller calls processSplitWith without granting allowance first.
+    ///         Should revert because the implicit prepaid branch was removed (AE-1 fix).
     function test_C6_fix_reverts_unfunded_credit() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildTokenContext(address(rewardToken), amount);
 
-        // Controller calls processSplitWith WITHOUT transferring any tokens to the distributor.
-        // The controller has no allowance either, so it falls into the "else" (controller-prepaid) branch.
+        // Controller calls processSplitWith WITHOUT granting allowance.
+        // The prepaid branch was removed, so safeTransferFrom reverts.
         vm.prank(controller);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), amount, 0
-            )
-        );
+        vm.expectRevert();
         tokenDistributor.processSplitWith(context);
 
         // Verify no balance was credited.
         assertEq(
             tokenDistributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             0,
-            "No balance should be credited without actual token transfer"
+            "No balance should be credited without allowance"
         );
     }
 
-    /// @notice A controller that actually transfers tokens before calling processSplitWith
-    ///         should still work correctly.
+    /// @notice A controller that grants allowance before calling processSplitWith
+    ///         should work correctly (AE-1: prepaid branch removed, controllers must use allowance).
     function test_C6_legitimate_prepaid_still_works() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildTokenContext(address(rewardToken), amount);
 
-        // Controller transfers tokens to the distributor first.
+        // Controller mints tokens and grants allowance to the distributor.
         rewardToken.mint(controller, amount);
         vm.prank(controller);
-        require(rewardToken.transfer(address(tokenDistributor), amount));
+        rewardToken.approve(address(tokenDistributor), amount);
 
-        // Now the controller calls processSplitWith — should succeed because the unaccounted
-        // balance covers the declared amount.
+        // Now the controller calls processSplitWith — should succeed via transferFrom.
         vm.prank(controller);
         tokenDistributor.processSplitWith(context);
 
@@ -241,7 +236,7 @@ contract DistributorRegressionFixesTest is Test {
         assertEq(
             tokenDistributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             amount,
-            "Balance should be credited when tokens were actually transferred"
+            "Balance should be credited when allowance was granted"
         );
 
         // Verify the tokens are held by the distributor.

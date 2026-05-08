@@ -205,14 +205,10 @@ contract RegressionAccountingTest is Test {
             split: split
         });
 
-        // FIX: The malicious controller did not actually transfer tokens, so the
-        // balance-delta check reverts with UnfundedSplitCredit.
+        // FIX (AE-1): The implicit prepaid branch was removed. Without allowance,
+        // safeTransferFrom reverts.
         vm.prank(maliciousController);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), 99_000 ether, 0
-            )
-        );
+        vm.expectRevert();
         distributor.processSplitWith(fakeContext);
 
         // The real balance should remain intact — the attack was blocked.

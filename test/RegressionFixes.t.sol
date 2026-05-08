@@ -157,29 +157,29 @@ contract RegressionFixesTest is Test {
         assertEq(rewardToken.balanceOf(address(distributor)), amount, "Tokens should be in the distributor");
     }
 
-    /// @notice Controller-prepaid path: ERC20 credited when tokens are sent before processSplitWith.
+    /// @notice Controller path: ERC20 credited via allowance + transferFrom (AE-1 fix removed prepaid branch).
     function test_controllerPrepaidSplits_processSplitWith_controllerPrepaidPath_creditsDirectly() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
 
-        // Controller transfers tokens directly to the distributor (no approval).
+        // Controller mints tokens and grants allowance to the distributor.
         rewardToken.mint(controller, amount);
         vm.prank(controller);
-        require(rewardToken.transfer(address(distributor), amount));
+        rewardToken.approve(address(distributor), amount);
 
-        // Controller calls processSplitWith WITHOUT granting an allowance.
+        // Controller calls processSplitWith with allowance granted.
         vm.prank(controller);
         distributor.processSplitWith(context);
 
-        // Balance should be credited via the controller-prepaid path.
+        // Balance should be credited via transferFrom.
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             amount,
-            "Controller-prepaid path: balance should be credited directly"
+            "Controller path: balance should be credited via allowance"
         );
     }
 
-    /// @notice Verifies that the controller-prepaid path allows end-to-end vesting and collection.
+    /// @notice Verifies that the controller allowance path allows end-to-end vesting and collection.
     function test_controllerPrepaidSplits_controllerPrepaidPath_endToEndVestAndCollect() public {
         uint256 amount = 1000 ether;
 
@@ -189,13 +189,13 @@ contract RegressionFixesTest is Test {
         vm.prank(bob);
         votesToken.delegate(bob);
 
-        // Controller sends tokens directly and calls processSplitWith.
+        // Controller mints tokens, grants allowance, and calls processSplitWith.
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
         rewardToken.mint(controller, amount);
-        vm.prank(controller);
-        require(rewardToken.transfer(address(distributor), amount));
-        vm.prank(controller);
+        vm.startPrank(controller);
+        rewardToken.approve(address(distributor), amount);
         distributor.processSplitWith(context);
+        vm.stopPrank();
 
         // Advance to round 1 and begin vesting.
         _advanceToRound(1);
