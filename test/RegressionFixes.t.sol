@@ -63,7 +63,7 @@ contract RegressionFixMockVotesToken is ERC20, ERC20Votes {
     }
 }
 
-/// @notice Tests for controller-prepaid split funds, zero-stake vesting, and empty claim array handling in
+/// @notice Tests for controller split funding, zero-stake vesting, and empty claim array handling in
 /// JBTokenDistributor / JBDistributor.
 contract RegressionFixesTest is Test {
     RegressionFixMockDirectory directory;
@@ -132,7 +132,7 @@ contract RegressionFixesTest is Test {
     }
 
     //*********************************************************************//
-    // ------- Controller-Prepaid ERC20 Split Funds ---------------------- //
+    // ------- Controller ERC20 Split Funds ------------------------------ //
     //*********************************************************************//
 
     /// @notice Terminal path: ERC20 credited via allowance + transferFrom.
@@ -157,30 +157,30 @@ contract RegressionFixesTest is Test {
         assertEq(rewardToken.balanceOf(address(distributor)), amount, "Tokens should be in the distributor");
     }
 
-    /// @notice Controller path: ERC20 credited via allowance + transferFrom (AE-1 fix removed prepaid branch).
-    function test_controllerPrepaidSplits_processSplitWith_controllerPrepaidPath_creditsDirectly() public {
+    /// @notice Controller path: ERC20 credited via allowance + transferFrom (same as terminal).
+    function test_controllerSplit_processSplitWith_controllerPath_creditsViaAllowance() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
 
-        // Controller mints tokens and grants allowance to the distributor.
+        // Controller mints tokens and approves the distributor before calling.
         rewardToken.mint(controller, amount);
-        vm.prank(controller);
+        vm.startPrank(controller);
         rewardToken.approve(address(distributor), amount);
-
-        // Controller calls processSplitWith with allowance granted.
-        vm.prank(controller);
         distributor.processSplitWith(context);
+        vm.stopPrank();
 
         // Balance should be credited via transferFrom.
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             amount,
-            "Controller path: balance should be credited via allowance"
+            "Controller path: balance should be credited via transferFrom"
         );
+        // Tokens should be held by the distributor.
+        assertEq(rewardToken.balanceOf(address(distributor)), amount, "Tokens should be in the distributor");
     }
 
     /// @notice Verifies that the controller allowance path allows end-to-end vesting and collection.
-    function test_controllerPrepaidSplits_controllerPrepaidPath_endToEndVestAndCollect() public {
+    function test_controllerSplit_controllerPath_endToEndVestAndCollect() public {
         uint256 amount = 1000 ether;
 
         // Alice delegates to self so she has voting power.
@@ -189,7 +189,7 @@ contract RegressionFixesTest is Test {
         vm.prank(bob);
         votesToken.delegate(bob);
 
-        // Controller mints tokens, grants allowance, and calls processSplitWith.
+        // Controller approves and calls processSplitWith.
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
         rewardToken.mint(controller, amount);
         vm.startPrank(controller);
@@ -216,14 +216,14 @@ contract RegressionFixesTest is Test {
         aliceIds[0] = _tokenId(alice);
         vm.prank(alice);
         distributor.collectVestedRewards(address(votesToken), aliceIds, tokens, alice);
-        assertEq(rewardToken.balanceOf(alice), 700 ether, "Alice should collect 70% of controller-prepaid funds");
+        assertEq(rewardToken.balanceOf(alice), 700 ether, "Alice should collect 70% of controller funds");
 
         // Bob collects his 30%.
         uint256[] memory bobIds = new uint256[](1);
         bobIds[0] = _tokenId(bob);
         vm.prank(bob);
         distributor.collectVestedRewards(address(votesToken), bobIds, tokens, bob);
-        assertEq(rewardToken.balanceOf(bob), 300 ether, "Bob should collect 30% of controller-prepaid funds");
+        assertEq(rewardToken.balanceOf(bob), 300 ether, "Bob should collect 30% of controller funds");
     }
 
     //*********************************************************************//

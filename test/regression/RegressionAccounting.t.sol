@@ -170,7 +170,7 @@ contract RegressionAccountingTest is Test {
         directory.setController(PROJECT_ID, maliciousController);
     }
 
-    function test_controllerCanCreditUndeliveredTokensAndDrainRealInventory() public {
+    function test_controllerCannotCreditUndeliveredTokens() public {
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         RegressionVotesToken votesToken = new RegressionVotesToken();
@@ -205,8 +205,8 @@ contract RegressionAccountingTest is Test {
             split: split
         });
 
-        // FIX (AE-1): The implicit prepaid branch was removed. Without allowance,
-        // safeTransferFrom reverts.
+        // FIX: The distributor now always pulls via transferFrom. A malicious controller
+        // without tokens or allowance cannot inflate balances — the transfer reverts.
         vm.prank(maliciousController);
         vm.expectRevert();
         distributor.processSplitWith(fakeContext);

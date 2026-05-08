@@ -103,8 +103,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Receives tokens from a Juicebox payout split.
     /// @dev Only callable by a terminal or controller for the project in the context.
     /// @dev The hook address is read from `context.split.beneficiary`.
-    /// @dev The terminal grants an ERC-20 allowance before calling — we pull via `transferFrom`.
-    /// The controller sends tokens directly before calling — nothing to pull.
+    /// @dev Both terminals and controllers grant an ERC-20 allowance before calling — we pull via `transferFrom`.
     /// For native ETH, the terminal sends the amount as `msg.value`.
     /// @param context The split hook context from the terminal or controller.
     function processSplitWith(JBSplitHookContext calldata context) external payable override {
@@ -119,12 +118,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // If it's not a native-token transfer, credit the ERC-20 amount.
         if (msg.value == 0 && context.amount != 0) {
-            // Pull tokens via transferFrom. The caller (terminal or controller) must grant
-            // an ERC-20 allowance before calling. Using balance delta handles fee-on-transfer
-            // tokens correctly and eliminates the stale-sweep vector where stray transfers
-            // could satisfy an unrelated controller's prepaid proof.
+            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
+            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
             uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-            IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
+            IERC20(context.token).safeTransferFrom({from: msg.sender, to: address(this), value: context.amount});
             uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
             _balanceOf[hook][IERC20(context.token)] += delta;
             _accountedBalanceOf[IERC20(context.token)] += delta;

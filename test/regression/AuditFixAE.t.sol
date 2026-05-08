@@ -7,19 +7,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
-import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
-import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
-import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
-import {JB721Distributor} from "../../src/JB721Distributor.sol";
 
 // =========================================================================
 // Mock contracts
@@ -27,22 +22,18 @@ import {JB721Distributor} from "../../src/JB721Distributor.sol";
 
 contract AEDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
-    mapping(uint256 projectId => address controller) public controllers;
 
     function setTerminal(uint256 projectId, address terminal, bool isTerminal) external {
         terminals[projectId][terminal] = isTerminal;
-    }
-
-    function setController(uint256 projectId, address controller) external {
-        controllers[projectId] = controller;
     }
 
     function isTerminalOf(uint256 projectId, IJBTerminal terminal) external view returns (bool) {
         return terminals[projectId][address(terminal)];
     }
 
-    function controllerOf(uint256 projectId) external view returns (IERC165) {
-        return IERC165(controllers[projectId]);
+    // forge-lint: disable-next-line(unused-argument)
+    function controllerOf(uint256) external pure returns (address) {
+        return address(0);
     }
 }
 
@@ -63,127 +54,6 @@ contract AEVotesToken is ERC20, ERC20Votes {
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
-    }
-}
-
-// =========================================================================
-// AE-1: Stale ERC-20 sweep in processSplitWith
-// =========================================================================
-
-contract AuditFixAE1Test is Test {
-    AEDirectory internal directory;
-    AERewardToken internal rewardToken;
-    AEVotesToken internal votesToken;
-    JBTokenDistributor internal distributor;
-
-    address internal alice = makeAddr("alice");
-    address internal controllerA = makeAddr("controllerA");
-    address internal controllerB = makeAddr("controllerB");
-    address internal terminal = makeAddr("terminal");
-    uint256 internal constant PROJECT_A = 1;
-    uint256 internal constant PROJECT_B = 2;
-    uint256 internal constant ROUND_DURATION = 100;
-    uint256 internal constant VESTING_ROUNDS = 4;
-
-    function setUp() public {
-        directory = new AEDirectory();
-        rewardToken = new AERewardToken();
-        votesToken = new AEVotesToken();
-
-        directory.setTerminal(PROJECT_A, terminal, true);
-        directory.setController(PROJECT_A, controllerA);
-        directory.setController(PROJECT_B, controllerB);
-
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
-    }
-
-    function _buildContext(
-        uint256 projectId,
-        address token,
-        uint256 amount
-    )
-        internal
-        view
-        returns (JBSplitHookContext memory)
-    {
-        return JBSplitHookContext({
-            token: token,
-            amount: amount,
-            decimals: 18,
-            projectId: projectId,
-            groupId: 0,
-            split: JBSplit({
-                percent: 1_000_000_000,
-                projectId: 0,
-                beneficiary: payable(address(votesToken)),
-                preferAddToBalance: false,
-                lockedUntil: 0,
-                hook: IJBSplitHook(address(distributor))
-            })
-        });
-    }
-
-    /// @notice Stray ERC-20 transfers can no longer satisfy a controller's processSplitWith call.
-    function test_AE1_strayTransferCannotBeSwepted() public {
-        // Simulate a stray transfer (e.g., accidental send or another controller's prepay).
-        rewardToken.mint(address(this), 1000 ether);
-        rewardToken.transfer(address(distributor), 1000 ether);
-
-        JBSplitHookContext memory ctx = _buildContext(PROJECT_A, address(rewardToken), 1000 ether);
-
-        // Controller A tries to claim the stray tokens. Without allowance, it reverts.
-        vm.prank(controllerA);
-        vm.expectRevert();
-        distributor.processSplitWith(ctx);
-
-        // No balance was credited.
-        assertEq(
-            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
-            0,
-            "Stray transfer should not be capturable"
-        );
-    }
-
-    /// @notice Controller with proper allowance succeeds.
-    function test_AE1_controllerWithAllowanceSucceeds() public {
-        uint256 amount = 500 ether;
-        JBSplitHookContext memory ctx = _buildContext(PROJECT_A, address(rewardToken), amount);
-
-        rewardToken.mint(controllerA, amount);
-        vm.startPrank(controllerA);
-        rewardToken.approve(address(distributor), amount);
-        distributor.processSplitWith(ctx);
-        vm.stopPrank();
-
-        assertEq(
-            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
-            amount,
-            "Controller with allowance should credit balance"
-        );
-    }
-
-    /// @notice Two controllers cannot cross-credit each other's stray tokens.
-    function test_AE1_crossControllerIsolation() public {
-        // Fund distributor legitimately for project A via terminal.
-        uint256 legitimateAmount = 1000 ether;
-        rewardToken.mint(terminal, legitimateAmount);
-        vm.startPrank(terminal);
-        rewardToken.approve(address(distributor), legitimateAmount);
-        distributor.processSplitWith(_buildContext(PROJECT_A, address(rewardToken), legitimateAmount));
-        vm.stopPrank();
-
-        // Controller B tries to claim from the distributor's held balance without allowance.
-        JBSplitHookContext memory ctxB = _buildContext(PROJECT_B, address(rewardToken), legitimateAmount);
-        vm.prank(controllerB);
-        vm.expectRevert();
-        distributor.processSplitWith(ctxB);
-
-        // Project A's balance is intact.
-        assertEq(
-            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
-            legitimateAmount,
-            "Project A balance should be intact"
-        );
     }
 }
 

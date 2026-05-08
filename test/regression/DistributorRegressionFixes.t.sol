@@ -197,14 +197,13 @@ contract DistributorRegressionFixesTest is Test {
     // Unbacked split credits
     // =====================================================================
 
-    /// @notice A controller calls processSplitWith without granting allowance first.
-    ///         Should revert because the implicit prepaid branch was removed (AE-1 fix).
-    function test_C6_fix_reverts_unfunded_credit() public {
+    /// @notice A controller calls processSplitWith without tokens or allowance.
+    ///         Should revert because the transferFrom fails.
+    function test_C6_fix_reverts_without_allowance() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildTokenContext(address(rewardToken), amount);
 
-        // Controller calls processSplitWith WITHOUT granting allowance.
-        // The prepaid branch was removed, so safeTransferFrom reverts.
+        // Controller calls processSplitWith WITHOUT tokens or allowance — transferFrom reverts.
         vm.prank(controller);
         vm.expectRevert();
         tokenDistributor.processSplitWith(context);
@@ -213,30 +212,28 @@ contract DistributorRegressionFixesTest is Test {
         assertEq(
             tokenDistributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             0,
-            "No balance should be credited without allowance"
+            "No balance should be credited without actual token transfer"
         );
     }
 
-    /// @notice A controller that grants allowance before calling processSplitWith
-    ///         should work correctly (AE-1: prepaid branch removed, controllers must use allowance).
-    function test_C6_legitimate_prepaid_still_works() public {
+    /// @notice A controller that approves tokens before calling processSplitWith
+    ///         should work correctly (same as terminal path).
+    function test_C6_controller_allowance_path_works() public {
         uint256 amount = 500 ether;
         JBSplitHookContext memory context = _buildTokenContext(address(rewardToken), amount);
 
-        // Controller mints tokens and grants allowance to the distributor.
+        // Controller mints tokens and approves the distributor.
         rewardToken.mint(controller, amount);
-        vm.prank(controller);
+        vm.startPrank(controller);
         rewardToken.approve(address(tokenDistributor), amount);
-
-        // Now the controller calls processSplitWith — should succeed via transferFrom.
-        vm.prank(controller);
         tokenDistributor.processSplitWith(context);
+        vm.stopPrank();
 
         // Verify balance was credited.
         assertEq(
             tokenDistributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             amount,
-            "Balance should be credited when allowance was granted"
+            "Balance should be credited when tokens were approved and pulled"
         );
 
         // Verify the tokens are held by the distributor.

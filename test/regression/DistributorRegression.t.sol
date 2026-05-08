@@ -18,7 +18,6 @@ import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
-import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
 import {
@@ -182,8 +181,8 @@ contract DistributorRegressionTest is Test {
             split: split
         });
 
-        // FIX (AE-1): The implicit prepaid branch was removed. Without allowance,
-        // safeTransferFrom reverts.
+        // FIX: The distributor now always pulls via transferFrom. A malicious controller
+        // without tokens or allowance cannot inflate balances — the transfer reverts.
         vm.prank(maliciousController);
         vm.expectRevert();
         distributor.processSplitWith(context);

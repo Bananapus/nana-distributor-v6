@@ -88,12 +88,10 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
         // If it's not a native-token transfer, credit the ERC-20 amount.
         if (msg.value == 0 && context.amount != 0) {
-            // Pull tokens via transferFrom. The caller (terminal or controller) must grant
-            // an ERC-20 allowance before calling. Using balance delta handles fee-on-transfer
-            // tokens correctly and eliminates the stale-sweep vector where stray transfers
-            // could satisfy an unrelated controller's prepaid proof.
+            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
+            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
             uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-            IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
+            IERC20(context.token).safeTransferFrom({from: msg.sender, to: address(this), value: context.amount});
             uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
             _balanceOf[hook][IERC20(context.token)] += delta;
             _accountedBalanceOf[IERC20(context.token)] += delta;

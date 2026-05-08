@@ -14,14 +14,9 @@
 
 The token distributor depends on checkpointed voting power at the round start block. Holders must delegate for `getPastVotes` to count them, and undelegated supply can leave rewards stranded in the pool for later rounds.
 
-### Funding path split
+### Funding path
 
-`processSplitWith` supports two funding patterns:
-
-- Terminal path: pull tokens via allowance and credit the actual received amount.
-- Controller path: assume tokens were transferred before the hook call and credit `context.amount`.
-
-Mixing these assumptions causes under- or over-accounting.
+`processSplitWith` uses a single funding pattern: the caller grants an ERC-20 allowance and `processSplitWith` pulls tokens via `transferFrom`, crediting the actual received amount.
 
 ### 721 burned-token behavior
 
