@@ -103,8 +103,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Receives tokens from a Juicebox payout split.
     /// @dev Only callable by a terminal or controller for the project in the context.
     /// @dev The hook address is read from `context.split.beneficiary`.
-    /// @dev The terminal grants an ERC-20 allowance before calling — we pull via `transferFrom`.
-    /// The controller sends tokens directly before calling — nothing to pull.
+    /// @dev Both terminals and controllers grant an ERC-20 allowance before calling — we pull via `transferFrom`.
     /// For native ETH, the terminal sends the amount as `msg.value`.
     /// @param context The split hook context from the terminal or controller.
     function processSplitWith(JBSplitHookContext calldata context) external payable override {
@@ -119,27 +118,13 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // If it's not a native-token transfer, credit the ERC-20 amount.
         if (msg.value == 0 && context.amount != 0) {
-            uint256 allowance = IERC20(context.token).allowance(msg.sender, address(this));
-            if (allowance >= context.amount) {
-                // Terminal path: the caller granted an allowance — pull tokens via transferFrom.
-                // Use balance delta to handle fee-on-transfer tokens correctly.
-                uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-                IERC20(context.token).safeTransferFrom(msg.sender, address(this), context.amount);
-                uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
-                _balanceOf[hook][IERC20(context.token)] += delta;
-                _accountedBalanceOf[IERC20(context.token)] += delta;
-            } else {
-                // Controller-prepaid path: verify actual unaccounted balance covers the declared amount.
-                uint256 actual = IERC20(context.token).balanceOf(address(this));
-                uint256 unaccounted = actual - _accountedBalanceOf[IERC20(context.token)];
-                if (unaccounted < context.amount) {
-                    revert JBDistributor_UnfundedSplitCredit({
-                        token: context.token, expectedAmount: context.amount, unaccountedAmount: unaccounted
-                    });
-                }
-                _accountedBalanceOf[IERC20(context.token)] += context.amount;
-                _balanceOf[hook][IERC20(context.token)] += context.amount;
-            }
+            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
+            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
+            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
+            IERC20(context.token).safeTransferFrom({from: msg.sender, to: address(this), value: context.amount});
+            uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
+            _balanceOf[hook][IERC20(context.token)] += delta;
+            _accountedBalanceOf[IERC20(context.token)] += delta;
         } else if (msg.value != 0) {
             // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
             if (context.token != JBConstants.NATIVE_TOKEN) {

@@ -170,7 +170,7 @@ contract RegressionAccountingTest is Test {
         directory.setController(PROJECT_ID, maliciousController);
     }
 
-    function test_controllerCanCreditUndeliveredTokensAndDrainRealInventory() public {
+    function test_controllerCannotCreditUndeliveredTokens() public {
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         RegressionVotesToken votesToken = new RegressionVotesToken();
@@ -205,14 +205,10 @@ contract RegressionAccountingTest is Test {
             split: split
         });
 
-        // FIX: The malicious controller did not actually transfer tokens, so the
-        // balance-delta check reverts with UnfundedSplitCredit.
+        // FIX: The distributor now always pulls via transferFrom. A malicious controller
+        // without tokens or allowance cannot inflate balances — the transfer reverts.
         vm.prank(maliciousController);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                JBDistributor.JBDistributor_UnfundedSplitCredit.selector, address(rewardToken), 99_000 ether, 0
-            )
-        );
+        vm.expectRevert();
         distributor.processSplitWith(fakeContext);
 
         // The real balance should remain intact — the attack was blocked.

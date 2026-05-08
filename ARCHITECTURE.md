@@ -63,14 +63,14 @@ The main variables are snapshot balance, total vesting amount, and the stake sou
 
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
-- split-funding caller assumptions matter because `processSplitWith` distinguishes pull and pre-sent flows
+- split-funding caller assumptions matter because `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`
 - 721 and token variants intentionally differ in authority and forfeiture behavior
 
 ## Safe Change Guide
 
 - review snapshot timing and vesting math together
 - if claim authority changes, re-check both distributor variants separately
-- if funding semantics change, test terminal-style and controller-style flows explicitly
+- if funding semantics change, test the allowance-based `transferFrom` flow explicitly
 
 ## Canonical Checks
 

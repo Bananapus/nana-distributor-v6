@@ -14,7 +14,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 |----------|------|----------------|------------------|
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs or zero total stake can make core flows revert. | Deployment-time validation and operator runbooks. |
-| P1 | Split funding trust mismatch | `processSplitWith` distinguishes terminal-style pull flows from controller-style pre-sent flows. | Restrict callers and test both paths. |
+| P1 | Split funding trust mismatch | `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test the allowance flow. |
 
 ## 1. Trust Assumptions
 
@@ -47,8 +47,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 5. Integration Risks
 
-- **Controller-vs-terminal split funding heuristic matters.**
-- **Fee-on-transfer handling uses balance-delta accounting.** Both terminal-pull and controller-pre-send paths measure `balanceAfter - balanceBefore` to credit the actual received amount.
+- **Split funding relies on a single allowance-based flow.**
+- **Fee-on-transfer handling uses balance-delta accounting.** The `transferFrom` path measures `balanceAfter - balanceBefore` to credit the actual received amount.
 - **721 stake weights depend on checkpointed voting power at round start.** The `CHECKPOINTS()` module must be deployed and delegates must be set before the round snapshot block, or stakers receive zero weight.
 - **721 vesting and claiming treat burned tokens differently.**
 - **Checkpoint availability matters for both `IVotes` token distributors and 721 distributors.**
