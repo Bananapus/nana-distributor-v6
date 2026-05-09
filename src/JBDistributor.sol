@@ -674,6 +674,14 @@ abstract contract JBDistributor is IJBDistributor {
             // Keep a reference to the amount of tokens being claimed.
             uint256 tokenAmount = mulDiv(distributable, _tokenStake({hook: hook, tokenId: tokenId}), totalStakeAmount);
 
+            // Skip zero-amount entries to prevent stalling latestVestedIndexOf advancement.
+            if (tokenAmount == 0) {
+                unchecked {
+                    ++j;
+                }
+                continue;
+            }
+
             // Add to the list of vesting data.
             vestings.push(JBVestingData({releaseRound: vestingReleaseRound, amount: tokenAmount, shareClaimed: 0}));
 
