@@ -514,4 +514,48 @@ contract JBTokenDistributorTest is Test {
         tokenIds = new uint256[](1);
         tokenIds[0] = _tokenId(staker);
     }
+
+    /// @notice Once a round's snapshot has been taken — even at a zero balance — it must not be overwritten by
+    /// later activity in the same round. Otherwise mid-round deposits can leak into the current round's allocation.
+    /// @dev This guards the `_takeSnapshotOf` write-once invariant. The bug surfaces through
+    /// `collectVestedRewards`, which calls `_takeSnapshotOf` even when there is nothing distributable.
+    function test_zeroBalanceSnapshot_isStickyWithinRound() public {
+        // Alice has stake and delegates to self.
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        // Move to round 1 (snapshot block must be strictly in the past for getPastVotes).
+        _advanceToRound(1);
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        // Round 1, distributor balance is zero. Alice calls collectVestedRewards, which writes
+        // a `{balance: 0, vestingAmount: 0}` snapshot for (votesToken, rewardToken, round=1).
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, alice);
+
+        uint256 aliceClaimedBefore =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimedBefore, 0, "no allocation when balance is zero");
+
+        // Mid-round funding: 1000 reward tokens land in the distributor AFTER the snapshot was taken.
+        // These tokens belong to round 2's reward pool, not round 1.
+        _fundDistributor(1000 ether);
+
+        // Alice calls collectVestedRewards again, still in round 1.
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, alice);
+
+        uint256 aliceClaimedAfter =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+
+        // Sticky snapshot invariant: the round's snapshot was already taken at zero balance, so the
+        // newly funded 1000 must NOT be allocated within round 1.
+        assertEq(
+            aliceClaimedAfter,
+            aliceClaimedBefore,
+            "post-snapshot mid-round deposits must not leak into the current round"
+        );
+    }
 }
