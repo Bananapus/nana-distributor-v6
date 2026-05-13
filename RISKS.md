@@ -24,7 +24,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 2. Economic Risks
 
-- **Round snapshot timing has a zero-balance edge case.**
+- **Round snapshots are write-once per (hook, token, round).** A zero balance at first-snapshot time is a valid snapshot value, not a signal to re-snapshot. Tracked via an explicit init flag so mid-round deposits cannot leak into the current round's allocation.
 - **Unclaimed value stays in the pool.**
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled, not burned.**
@@ -58,7 +58,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 - `totalVestingAmountOf <= _balanceOf`
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
-- non-zero round snapshots stay stable within a round
+- round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only recycled through the explicit forfeiture path
 - only the encoded address can collect from the token distributor
@@ -67,7 +67,11 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ### 7.1 Anyone can trigger a round snapshot
 
-This improves liveness, but it also means operators do not fully control the exact block when a round is crystallized.
+`poke()`, `beginVesting`, and `collectVestedRewards` all call `_ensureSnapshotBlock`, which writes `roundSnapshotBlock[round] = block.number - 1` on first interaction. This is permissionless by design — keepers or frontends can call `poke()` early in a round to lock the snapshot block before any claims occur.
+
+The trade-off: the first caller chooses *when* in the round the snapshot is anchored, so any legitimate stake changes that occur later in the same round are excluded from that round's reward math. An adversary who pokes early can therefore freeze the round's stake universe before later participants act. `_ensureSnapshotBlock` also eagerly pre-fills `round + 1` from the same call, which prevents a separate first-caller race on the next round but anchors `round + 1` at a block in `round`'s timeframe.
+
+Operators should treat keeper-driven `poke()` at well-known times as part of the deployment runbook. Round rewards are mis-allocated only across the within-round delta of legitimate stake changes, not across the entire reward pool.
 
 ### 7.2 Rewards can remain undistributed when stake is missing
 

@@ -107,6 +107,14 @@ abstract contract JBDistributor is IJBDistributor {
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => JBTokenSnapshotData snapshot))) internal
         _snapshotAtRoundOf;
 
+    /// @notice Whether a snapshot has been taken for a given (hook, token, round).
+    /// @dev Required because a snapshot can legitimately store `{balance: 0, vestingAmount: 0}`,
+    /// so a zero balance is not a usable sentinel for "uninitialized".
+    /// @custom:param hook The hook the snapshot is for.
+    /// @custom:param token The address of the token claimed and vested.
+    /// @custom:param round The round to which the data applies.
+    mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
+
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
@@ -469,18 +477,20 @@ abstract contract JBDistributor is IJBDistributor {
         // Keep a reference to the current round.
         uint256 round = currentRound();
 
-        // Keep a reference to the token's snapshot.
-        snapshot = _snapshotAtRoundOf[hook][token][round];
-
-        // If a snapshot was already taken at this cycle, do not take a new one.
-        if (snapshot.balance != 0) return snapshot;
+        // If a snapshot was already taken at this round, do not take a new one. The init flag must be used as the
+        // sentinel: a zero balance is a valid snapshot value (round started with no funded balance), not a signal
+        // to re-snapshot. Re-snapshotting would let mid-round deposits leak into the current round's allocation.
+        if (_snapshotInitializedFor[hook][token][round]) {
+            return _snapshotAtRoundOf[hook][token][round];
+        }
 
         // Take a snapshot using the hook's tracked balance.
         snapshot =
             JBTokenSnapshotData({balance: _balanceOf[hook][token], vestingAmount: totalVestingAmountOf[hook][token]});
 
-        // Store the snapshot.
+        // Store the snapshot and mark it initialized.
         _snapshotAtRoundOf[hook][token][round] = snapshot;
+        _snapshotInitializedFor[hook][token][round] = true;
 
         emit SnapshotCreated({
             hook: hook, round: round, token: token, balance: snapshot.balance, vestingAmount: snapshot.vestingAmount
