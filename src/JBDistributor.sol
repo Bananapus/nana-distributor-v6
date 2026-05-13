@@ -110,7 +110,10 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Whether a snapshot has been taken for a given (hook, token, round).
     /// @dev Required because a snapshot can legitimately store `{balance: 0, vestingAmount: 0}`,
     /// so a zero balance is not a usable sentinel for "uninitialized".
-    mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedOf;
+    /// @custom:param hook The hook the snapshot is for.
+    /// @custom:param token The address of the token claimed and vested.
+    /// @custom:param round The round to which the data applies.
+    mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -477,7 +480,7 @@ abstract contract JBDistributor is IJBDistributor {
         // If a snapshot was already taken at this round, do not take a new one. The init flag must be used as the
         // sentinel: a zero balance is a valid snapshot value (round started with no funded balance), not a signal
         // to re-snapshot. Re-snapshotting would let mid-round deposits leak into the current round's allocation.
-        if (_snapshotInitializedOf[hook][token][round]) {
+        if (_snapshotInitializedFor[hook][token][round]) {
             return _snapshotAtRoundOf[hook][token][round];
         }
 
@@ -487,7 +490,7 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Store the snapshot and mark it initialized.
         _snapshotAtRoundOf[hook][token][round] = snapshot;
-        _snapshotInitializedOf[hook][token][round] = true;
+        _snapshotInitializedFor[hook][token][round] = true;
 
         emit SnapshotCreated({
             hook: hook, round: round, token: token, balance: snapshot.balance, vestingAmount: snapshot.vestingAmount
