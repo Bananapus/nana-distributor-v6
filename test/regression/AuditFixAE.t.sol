@@ -31,7 +31,6 @@ contract AEDirectory {
         return terminals[projectId][address(terminal)];
     }
 
-    // forge-lint: disable-next-line(unused-argument)
     function controllerOf(uint256) external pure returns (address) {
         return address(0);
     }
@@ -92,6 +91,7 @@ contract AuditFixAE2Test is Test {
 
     function _advanceToRound(uint256 round) internal {
         uint256 targetTimestamp = distributor.roundStartTimestamp(round) + 1;
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < targetTimestamp) {
             vm.warp(targetTimestamp);
         }

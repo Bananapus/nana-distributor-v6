@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.16 — Bump v6 deps to nana-core-v6 0.0.53 cohort
+
+- `@bananapus/core-v6`: `^0.0.48 → ^0.0.53` ([PR #145](https://github.com/Bananapus/nana-core-v6/pull/145)).
+- `@bananapus/721-hook-v6`: `^0.0.47 → ^0.0.50`.
+- `@bananapus/permission-ids-v6`: `^0.0.22 → ^0.0.25`.
+- All `JBRulesetMetadata` test literals patched to include `pauseCrossProjectFeeFreeInflows: false`.
+
 ## 0.0.1
 
 Initial release of the Juicebox V6 distributor system.
