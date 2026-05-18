@@ -127,10 +127,14 @@ contract RegressionHook {
     mapping(uint256 tokenId => address owner) public owners;
     mapping(uint256 tokenId => address owner) public snapshotOwners;
 
-    constructor(RegressionStore store, RegressionCheckpoints checkpoints) {
+    constructor(RegressionStore store, RegressionCheckpoints checkpoints_) {
         STORE = store;
-        CHECKPOINTS = checkpoints;
+        CHECKPOINTS = checkpoints_;
         CHECKPOINTS.setHook(address(this));
+    }
+
+    function checkpoints() external view returns (RegressionCheckpoints) {
+        return CHECKPOINTS;
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {
@@ -239,7 +243,7 @@ contract RegressionAccountingTest is Test {
                 votingUnits: 100,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
@@ -297,7 +301,7 @@ contract RegressionAccountingTest is Test {
                 votingUnits: 100,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,

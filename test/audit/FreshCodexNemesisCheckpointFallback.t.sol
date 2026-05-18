@@ -31,7 +31,7 @@ contract FreshCodexNemesis721Store {
             votingUnits: 100 ether,
             reserveFrequency: 0,
             reserveBeneficiary: address(0),
-            encodedIPFSUri: bytes32(0),
+            encodedIpfsUri: bytes32(0),
             category: 0,
             discountPercent: 0,
             flags: JB721TierFlags({
@@ -91,6 +91,10 @@ contract FreshCodexNemesis721Hook {
         CHECKPOINTS = new FreshCodexNemesis721Checkpoints(this);
     }
 
+    function checkpoints() external view returns (FreshCodexNemesis721Checkpoints) {
+        return CHECKPOINTS;
+    }
+
     function mint(uint256 tokenId, address owner) external {
         ownerOfToken[tokenId] = owner;
     }
@@ -135,8 +139,8 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
         distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
 
         hook.mint(1, alice);
-        hook.CHECKPOINTS().setVotes(alice, 100 ether);
-        hook.CHECKPOINTS().setTotalSupply(100 ether);
+        hook.checkpoints().setVotes(alice, 100 ether);
+        hook.checkpoints().setTotalSupply(100 ether);
 
         distributor.poke();
         uint256 snapshotBlock = distributor.roundSnapshotBlock(0);

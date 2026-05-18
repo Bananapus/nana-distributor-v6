@@ -122,10 +122,14 @@ contract Regression721Hook {
     mapping(uint256 tokenId => uint256[] blocks) internal _ownerCheckpointBlocksOf;
     mapping(uint256 tokenId => mapping(uint256 blockNumber => address owner)) internal _ownerAtBlock;
 
-    constructor(Regression721Store store, Regression721Checkpoints checkpoints) {
+    constructor(Regression721Store store, Regression721Checkpoints checkpoints_) {
         STORE = store;
-        CHECKPOINTS = checkpoints;
+        CHECKPOINTS = checkpoints_;
         CHECKPOINTS.setHook(address(this));
+    }
+
+    function checkpoints() external view returns (Regression721Checkpoints) {
+        return CHECKPOINTS;
     }
 
     function mint(address owner, uint256 tokenId) external {

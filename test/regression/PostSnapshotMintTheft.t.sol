@@ -145,6 +145,10 @@ contract VPCapMockHook {
         return _checkpoints;
     }
 
+    function checkpoints() external view returns (VPCapMockCheckpoints) {
+        return _checkpoints;
+    }
+
     function ownerOf(uint256 tokenId) external view returns (address) {
         address o = owners[tokenId];
         require(o != address(0), "ERC721: invalid token ID");
@@ -206,7 +210,7 @@ contract VotingPowerCapSufficiencyTest is Test {
                 votingUnits: 100,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,

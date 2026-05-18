@@ -136,6 +136,10 @@ contract MockHook {
         return _checkpoints;
     }
 
+    function checkpoints() external view returns (MockCheckpoints) {
+        return _checkpoints;
+    }
+
     function ownerOf(uint256 tokenId) external view returns (address) {
         address owner = owners[tokenId];
         require(owner != address(0), "ERC721: invalid token ID");
@@ -253,7 +257,7 @@ contract JB721DistributorTest is Test {
                 votingUnits: 100,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
@@ -272,7 +276,7 @@ contract JB721DistributorTest is Test {
                 votingUnits: 200,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
@@ -1268,7 +1272,7 @@ contract JB721DistributorTest is Test {
                 votingUnits: 1000,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
@@ -1590,7 +1594,7 @@ contract JB721DistributorTest is Test {
                 votingUnits: 0, // zero!
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
@@ -1809,7 +1813,7 @@ contract JB721DistributorTest is Test {
                 votingUnits: 100,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,

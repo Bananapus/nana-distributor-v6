@@ -146,7 +146,7 @@ contract DistributorRegressionFixesTest is Test {
                 votingUnits: 50,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,
