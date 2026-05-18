@@ -49,14 +49,14 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param roundDuration_ The duration of each round, specified in seconds.
-    /// @param vestingRounds_ The number of rounds until tokens are fully vested.
+    /// @param initialRoundDuration The duration of each round, specified in seconds.
+    /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     constructor(
         IJBDirectory directory,
-        uint256 roundDuration_,
-        uint256 vestingRounds_
+        uint256 initialRoundDuration,
+        uint256 initialVestingRounds
     )
-        JBDistributor(roundDuration_, vestingRounds_)
+        JBDistributor(initialRoundDuration, initialVestingRounds)
     {
         DIRECTORY = directory;
     }
@@ -79,7 +79,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     function processSplitWith(JBSplitHookContext calldata context) external payable override {
         // Only terminals and controllers for the project can call this.
         if (
-            !DIRECTORY.isTerminalOf(context.projectId, IJBTerminal(msg.sender))
+            !DIRECTORY.isTerminalOf({projectId: context.projectId, terminal: IJBTerminal(msg.sender)})
                 && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)
         ) revert JBTokenDistributor_Unauthorized({projectId: context.projectId, caller: msg.sender});
 
@@ -160,7 +160,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});
         // The high bits were checked above, so this cast recovers the encoded address.
         // forge-lint: disable-next-line(unsafe-typecast)
-        tokenStakeAmount = IVotes(hook).getPastVotes(address(uint160(tokenId)), roundSnapshotBlock[currentRound()]);
+        address account = address(uint160(tokenId));
+        tokenStakeAmount = IVotes(hook).getPastVotes({account: account, timepoint: roundSnapshotBlock[currentRound()]});
     }
 
     /// @notice The total supply of votes at a specific block.

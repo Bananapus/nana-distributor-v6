@@ -119,13 +119,15 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
-    /// @param roundDuration_ The duration of each round, specified in seconds.
-    /// @param vestingRounds_ The number of rounds until tokens are fully vested.
-    constructor(uint256 roundDuration_, uint256 vestingRounds_) {
-        if (roundDuration_ == 0) revert JBDistributor_InvalidRoundDuration({roundDuration: roundDuration_});
+    /// @param initialRoundDuration The duration of each round, specified in seconds.
+    /// @param initialVestingRounds The number of rounds until tokens are fully vested.
+    constructor(uint256 initialRoundDuration, uint256 initialVestingRounds) {
+        if (initialRoundDuration == 0) {
+            revert JBDistributor_InvalidRoundDuration({roundDuration: initialRoundDuration});
+        }
         startingTimestamp = block.timestamp;
-        roundDuration = roundDuration_;
-        vestingRounds = vestingRounds_;
+        roundDuration = initialRoundDuration;
+        vestingRounds = initialVestingRounds;
     }
 
     //*********************************************************************//
@@ -202,7 +204,7 @@ abstract contract JBDistributor is IJBDistributor {
             }
             // Use balance delta to handle fee-on-transfer tokens correctly.
             uint256 balanceBefore = token.balanceOf(address(this));
-            token.safeTransferFrom(msg.sender, address(this), amount);
+            token.safeTransferFrom({from: msg.sender, to: address(this), value: amount});
             amount = token.balanceOf(address(this)) - balanceBefore;
         }
         _balanceOf[hook][token] += amount;
@@ -283,7 +285,7 @@ abstract contract JBDistributor is IJBDistributor {
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
             // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
-            tokenAmount += vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
+            tokenAmount += vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
 
             unchecked {
                 ++vestedIndex;
@@ -329,11 +331,14 @@ abstract contract JBDistributor is IJBDistributor {
 
             if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
                 // Final unlock: compute remaining as `original - alreadyPaid` to include dust.
-                tokenAmount += vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
+                tokenAmount += vesting.amount
+                - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
             } else {
                 uint256 newShareClaimed = MAX_SHARE - lockedShare;
                 if (newShareClaimed > vesting.shareClaimed) {
-                    tokenAmount += mulDiv(vesting.amount, newShareClaimed - vesting.shareClaimed, MAX_SHARE);
+                    tokenAmount += mulDiv({
+                        x: vesting.amount, y: newShareClaimed - vesting.shareClaimed, denominator: MAX_SHARE
+                    });
                 }
             }
 
@@ -542,7 +547,7 @@ abstract contract JBDistributor is IJBDistributor {
                             });
                         }
                     } else {
-                        token.safeTransfer(beneficiary, totalTokenAmount);
+                        token.safeTransfer({to: beneficiary, value: totalTokenAmount});
                     }
                 }
                 // If forfeiture: _balanceOf is NOT decremented so the forfeited tokens
@@ -598,9 +603,12 @@ abstract contract JBDistributor is IJBDistributor {
                 if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
                     // Final unlock: compute remaining amount as `original - alreadyPaid` to force
                     // rounding dust out so nothing is stranded in the entry.
-                    claimAmount = vesting.amount - mulDiv(vesting.amount, vesting.shareClaimed, MAX_SHARE);
+                    claimAmount =
+                        vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
                 } else if (MAX_SHARE - lockedShare > vesting.shareClaimed) {
-                    claimAmount = mulDiv(vesting.amount, MAX_SHARE - lockedShare - vesting.shareClaimed, MAX_SHARE);
+                    claimAmount = mulDiv({
+                        x: vesting.amount, y: MAX_SHARE - lockedShare - vesting.shareClaimed, denominator: MAX_SHARE
+                    });
                 }
 
                 if (claimAmount != 0) {
@@ -682,7 +690,9 @@ abstract contract JBDistributor is IJBDistributor {
             }
 
             // Keep a reference to the amount of tokens being claimed.
-            uint256 tokenAmount = mulDiv(distributable, _tokenStake({hook: hook, tokenId: tokenId}), totalStakeAmount);
+            uint256 tokenAmount = mulDiv({
+                x: distributable, y: _tokenStake({hook: hook, tokenId: tokenId}), denominator: totalStakeAmount
+            });
 
             // Skip zero-amount entries to prevent stalling latestVestedIndexOf advancement.
             if (tokenAmount == 0) {
