@@ -266,7 +266,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Use the checkpoints module to verify the token's snapshot owner had voting power at the round's snapshot
         // block. If the token did not exist then, ownerOfAt returns zero above and the token is not eligible.
-        uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).CHECKPOINTS()))
+        uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).checkpoints()))
             .getPastVotes({account: owner, timepoint: snapshotBlock});
 
         // If the owner had no voting power at round start, the token is ineligible.
@@ -278,14 +278,14 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     }
 
     /// @notice The total stake at a specific block, using the hook's checkpoints module for historical accuracy.
-    /// @dev Uses `IVotes.getPastTotalSupply` from the hook's CHECKPOINTS module. This ensures that only NFTs
+    /// @dev Uses `IVotes.getPastTotalSupply` from the hook's checkpoints module. This ensures that only NFTs
     /// that existed (and were delegated) at `blockNumber` are counted, preventing late mints from diluting or
     /// capturing rewards within the current round.
     /// @param hook The hook to get the total stake for.
     /// @param blockNumber The block number to get the total staked amount at.
     /// @return total The total checkpointed voting units at the given block.
     function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
-        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();
         total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
     }
 
@@ -311,7 +311,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         returns (address owner)
     {
         // The 721 hook owns the checkpoint module; the distributor only trusts that module's historical proof.
-        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).CHECKPOINTS();
+        IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();
 
         // Use staticcall so older hooks without `ownerOfAt` fail closed instead of reverting the whole distribution.
         (bool success, bytes memory data) =
@@ -382,7 +382,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             if (owner == address(0)) return (0, newUniqueCount);
 
             // Query the owner's checkpointed voting power at the round's snapshot block.
-            pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).CHECKPOINTS()))
+            pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).checkpoints()))
                 .getPastVotes({account: owner, timepoint: snapshotBlock});
 
             // If the snapshot owner had no voting power at round start, the token is ineligible for this round.

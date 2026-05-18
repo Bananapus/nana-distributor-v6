@@ -168,6 +168,10 @@ contract VotingCapMockHook {
         return _checkpoints;
     }
 
+    function checkpoints() external view returns (VotingCapMockCheckpoints) {
+        return _checkpoints;
+    }
+
     function ownerOf(uint256 tokenId) external view returns (address) {
         address owner = owners[tokenId];
         require(owner != address(0), "ERC721: invalid token ID");
@@ -231,7 +235,7 @@ contract VotingPowerCapRegressionTest is Test {
                 votingUnits: 50,
                 reserveFrequency: 0,
                 reserveBeneficiary: address(0),
-                encodedIPFSUri: bytes32(0),
+                encodedIpfsUri: bytes32(0),
                 category: 0,
                 discountPercent: 0,
                 flags: flags,

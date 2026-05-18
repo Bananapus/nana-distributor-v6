@@ -98,9 +98,13 @@ contract RegressionFresh721Hook {
     RegressionFresh721Checkpoints public immutable CHECKPOINTS;
     mapping(uint256 tokenId => address owner) public owners;
 
-    constructor(RegressionFresh721Store store, RegressionFresh721Checkpoints checkpoints) {
+    constructor(RegressionFresh721Store store, RegressionFresh721Checkpoints checkpoints_) {
         STORE = store;
-        CHECKPOINTS = checkpoints;
+        CHECKPOINTS = checkpoints_;
+    }
+
+    function checkpoints() external view returns (RegressionFresh721Checkpoints) {
+        return CHECKPOINTS;
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {

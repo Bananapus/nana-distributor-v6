@@ -75,10 +75,14 @@ contract CodexNemesis721Hook {
     mapping(uint256 tokenId => uint256 firstCheckpointBlock) public firstCheckpointBlockOf;
     mapping(uint256 tokenId => address checkpointOwner) public checkpointOwnerOf;
 
-    constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints) {
+    constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints_) {
         STORE = store;
-        CHECKPOINTS = checkpoints;
-        checkpoints.setHook(this);
+        CHECKPOINTS = checkpoints_;
+        checkpoints_.setHook(this);
+    }
+
+    function checkpoints() external view returns (CodexNemesis721Checkpoints) {
+        return CHECKPOINTS;
     }
 
     function firstOwnerOf(uint256 tokenId) external view returns (address) {
