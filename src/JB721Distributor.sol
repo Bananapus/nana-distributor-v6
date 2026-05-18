@@ -77,14 +77,14 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param roundDuration_ The duration of each round, specified in seconds.
-    /// @param vestingRounds_ The number of rounds until tokens are fully vested.
+    /// @param initialRoundDuration The duration of each round, specified in seconds.
+    /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     constructor(
         IJBDirectory directory,
-        uint256 roundDuration_,
-        uint256 vestingRounds_
+        uint256 initialRoundDuration,
+        uint256 initialVestingRounds
     )
-        JBDistributor(roundDuration_, vestingRounds_)
+        JBDistributor(initialRoundDuration, initialVestingRounds)
     {
         DIRECTORY = directory;
     }
@@ -109,7 +109,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     function processSplitWith(JBSplitHookContext calldata context) external payable override {
         // Only terminals and controllers for the project can call this.
         if (
-            !DIRECTORY.isTerminalOf(context.projectId, IJBTerminal(msg.sender))
+            !DIRECTORY.isTerminalOf({projectId: context.projectId, terminal: IJBTerminal(msg.sender)})
                 && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)
         ) revert JB721Distributor_Unauthorized({projectId: context.projectId, caller: msg.sender});
 

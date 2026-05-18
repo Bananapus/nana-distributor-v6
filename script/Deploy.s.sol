@@ -16,7 +16,9 @@ contract Deploy is Script {
         uint256 roundDuration = vm.envUint("ROUND_DURATION");
         uint256 vestingRounds = vm.envUint("VESTING_ROUNDS");
 
-        new JB721Distributor(directory, roundDuration, vestingRounds);
+        new JB721Distributor({
+            directory: directory, initialRoundDuration: roundDuration, initialVestingRounds: vestingRounds
+        });
 
         vm.stopBroadcast();
     }
