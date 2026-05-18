@@ -1,6 +1,6 @@
 {
   "name": "@bananapus/distributor-v6",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -26,7 +26,7 @@
     "deploy:testnets": "source ./.env && npx sphinx propose ./script/Deploy.s.sol --networks testnets"
   },
   "dependencies": {
-    "@bananapus/721-hook-v6": "^0.0.50",
+    "@bananapus/721-hook-v6": "^0.0.51",
     "@bananapus/core-v6": "^0.0.54",
     "@bananapus/permission-ids-v6": "^0.0.25",
     "@openzeppelin/contracts": "5.6.1",
