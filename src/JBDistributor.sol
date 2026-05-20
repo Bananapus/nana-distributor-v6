@@ -348,9 +348,11 @@ abstract contract JBDistributor is IJBDistributor {
             } else {
                 uint256 newShareClaimed = MAX_SHARE - lockedShare;
                 if (newShareClaimed > vesting.shareClaimed) {
-                    tokenAmount += mulDiv({
-                        x: vesting.amount, y: newShareClaimed - vesting.shareClaimed, denominator: MAX_SHARE
-                    });
+                    // Calculate the newly unlocked amount from cumulative shares rather than the incremental share
+                    // delta. Incremental floor rounding can otherwise make partial collections pay less than the
+                    // cumulative amount reported by `claimedFor`, leaving dust stranded in `totalVestingAmountOf`.
+                    tokenAmount += mulDiv({x: vesting.amount, y: newShareClaimed, denominator: MAX_SHARE})
+                    - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
                 }
             }
 
@@ -656,9 +658,12 @@ abstract contract JBDistributor is IJBDistributor {
                     claimAmount =
                         vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
                 } else if (MAX_SHARE - lockedShare > vesting.shareClaimed) {
-                    claimAmount = mulDiv({
-                        x: vesting.amount, y: MAX_SHARE - lockedShare - vesting.shareClaimed, denominator: MAX_SHARE
-                    });
+                    uint256 newShareClaimed = MAX_SHARE - lockedShare;
+                    // Match `claimedFor`/`collectableFor` by using the difference between cumulative rounded claims.
+                    // Rounding each incremental share independently can underpay partial unlocks and leave
+                    // `totalVestingAmountOf` larger than the remaining claims.
+                    claimAmount = mulDiv({x: vesting.amount, y: newShareClaimed, denominator: MAX_SHARE})
+                        - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
                 }
 
                 if (claimAmount != 0) {
