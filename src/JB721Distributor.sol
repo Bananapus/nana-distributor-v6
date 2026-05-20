@@ -30,11 +30,11 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
-    error JB721Distributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
-
     /// @notice Thrown when native ETH does not match the split hook context amount.
     error JB721Distributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
+
+    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
+    error JB721Distributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JB721Distributor_Unauthorized(uint256 projectId, address caller);

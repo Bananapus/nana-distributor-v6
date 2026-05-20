@@ -28,11 +28,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
     error JBTokenDistributor_InvalidTokenId(uint256 tokenId);
 
-    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
-    error JBTokenDistributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
-
     /// @notice Thrown when native ETH does not match the split hook context amount.
     error JBTokenDistributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
+
+    /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
+    error JBTokenDistributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JBTokenDistributor_Unauthorized(uint256 projectId, address caller);

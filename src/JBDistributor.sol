@@ -27,23 +27,23 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when an empty tokenIds array is passed.
     error JBDistributor_EmptyTokenIds(uint256 tokenIdCount);
 
+    /// @notice Thrown when the round duration is zero.
+    error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
+
     /// @notice Thrown when a native ETH transfer fails.
     error JBDistributor_NativeTransferFailed(address beneficiary, uint256 amount);
 
     /// @notice Thrown when the caller does not have access to the token.
     error JBDistributor_NoAccess(address hook, uint256 tokenId, address account);
 
-    /// @notice Thrown when the round duration is zero.
-    error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
-
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute(address hook, address token, uint256 round);
 
-    /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
-    error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
-
     /// @notice Thrown when an ERC-20 reenters a funding balance-delta measurement.
     error JBDistributor_ReentrantTokenTransfer(address token);
+
+    /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
+    error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
@@ -117,6 +117,10 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param token The address of the token claimed and vested.
     /// @custom:param round The round to which the data applies.
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
+
+    //*********************************************************************//
+    // ------------------- transient stored properties ------------------- //
+    //*********************************************************************//
 
     /// @notice The ERC-20 whose incoming balance delta is currently being measured.
     address transient _acceptingToken;
@@ -477,21 +481,6 @@ abstract contract JBDistributor is IJBDistributor {
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice Ensures that a snapshot block is recorded for the given round.
-    /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
-    /// @param round The round to ensure a snapshot block for.
-    function _ensureSnapshotBlock(uint256 round) internal {
-        if (roundSnapshotBlock[round] == 0) {
-            roundSnapshotBlock[round] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round, snapshotBlock: block.number - 1});
-        }
-        // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
-        if (roundSnapshotBlock[round + 1] == 0) {
-            roundSnapshotBlock[round + 1] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
-        }
-    }
-
     /// @notice Accepts an ERC-20 funding transfer and returns the actual balance delta.
     /// @param token The ERC-20 token to accept.
     /// @param from The address to pull tokens from.
@@ -524,6 +513,21 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Close the transfer window after the token balance has been measured.
         _acceptingToken = address(0);
+    }
+
+    /// @notice Ensures that a snapshot block is recorded for the given round.
+    /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
+    /// @param round The round to ensure a snapshot block for.
+    function _ensureSnapshotBlock(uint256 round) internal {
+        if (roundSnapshotBlock[round] == 0) {
+            roundSnapshotBlock[round] = block.number - 1;
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: block.number - 1});
+        }
+        // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
+        if (roundSnapshotBlock[round + 1] == 0) {
+            roundSnapshotBlock[round + 1] = block.number - 1;
+            emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
+        }
     }
 
     /// @notice Takes a snapshot of the token balance and vesting amount for the current round.
