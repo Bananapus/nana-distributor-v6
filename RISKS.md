@@ -14,7 +14,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 |----------|------|----------------|------------------|
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs or zero total stake can make core flows revert. | Deployment-time validation and operator runbooks. |
-| P1 | Split funding trust mismatch | `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test the allowance flow. |
+| P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
 
 ## 1. Trust Assumptions
 
@@ -29,6 +29,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled, not burned.**
 - **Undelegated `IVotes` balances can dilute participation.**
+- **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
+  must not consume the owner's per-round voting cap.
 
 ## 3. Access Control And Caller Risks
 
@@ -48,11 +50,20 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 ## 5. Integration Risks
 
 - **Split funding relies on a single allowance-based flow.**
+- **Native split funding is exact.** If `context.token == NATIVE_TOKEN`, `msg.value` must equal `context.amount`.
+  Underpaying and overpaying both revert so terminal context accounting cannot drift from actual native value delivered.
+  ERC-20 split contexts must send no native value.
 - **Fee-on-transfer handling uses balance-delta accounting.** The `transferFrom` path measures `balanceAfter - balanceBefore` to credit the actual received amount.
 - **721 stake weights depend on checkpointed voting power at round start.** The `CHECKPOINTS()` module must be deployed and delegates must be set before the round snapshot block, or stakers receive zero weight.
 - **721 vesting and claiming treat burned tokens differently.**
 - **Checkpoint availability matters for both `IVotes` token distributors and 721 distributors.**
 - **Token distributor rejects token IDs with non-zero upper bits** (above 160) to prevent aliasing to the same staker address.
+- **Token distributor rewards follow delegated voting power.** For `IVotes` hooks, the encoded claimant address is the
+  delegate/account whose `getPastVotes` are used. This may differ from underlying token ownership if holders delegate
+  to someone else.
+- **Unaccounted direct sends are outside the reward ledger.** Plain ETH sent to `receive()` and direct ERC-20 transfers
+  that bypass `fund`/`processSplitWith` are not credited into `_balanceOf`. Rebasing or otherwise balance-mutating
+  tokens can also desynchronize actual token balances from the distributor's local accounting.
 
 ## 6. Invariants To Verify
 
@@ -62,6 +73,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only recycled through the explicit forfeiture path
 - only the encoded address can collect from the token distributor
+- native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
+  token balance delta with no accompanying `msg.value`
+- 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
 
 ## 7. Accepted Behaviors
 
@@ -72,6 +86,11 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 The trade-off: the first caller chooses *when* in the round the snapshot is anchored, so any legitimate stake changes that occur later in the same round are excluded from that round's reward math. An adversary who pokes early can therefore freeze the round's stake universe before later participants act. `_ensureSnapshotBlock` also eagerly pre-fills `round + 1` from the same call, which prevents a separate first-caller race on the next round but anchors `round + 1` at a block in `round`'s timeframe.
 
 Operators should treat keeper-driven `poke()` at well-known times as part of the deployment runbook. Round rewards are mis-allocated only across the within-round delta of legitimate stake changes, not across the entire reward pool.
+
+`collectVestedRewards()` can also initialize the current round's token-balance snapshot while auto-vesting. If no value
+is currently distributable, the zero snapshot is still sticky and later same-round funding rolls into a future round
+instead of being added to the already-open round. This preserves the write-once snapshot invariant, but operators should
+fund before the intended snapshot moment when same-round distribution matters.
 
 ### 7.2 Rewards can remain undistributed when stake is missing
 
@@ -84,3 +103,10 @@ They share the vesting engine but not the same ownership model.
 ### 7.4 Distribution eligibility requires enrollment
 
 `JB721Checkpoints.ownerOfAt` returns `address(0)` for tokens that have never been enrolled or transferred. Unenrolled tokens are ineligible for snapshot-based distribution. Token holders enroll by calling `delegate(address delegatee, uint256[] calldata tokenIds)`, which writes per-token owner checkpoints. This keeps mint gas low — only users who want to participate in distribution pay the checkpoint storage cost. Transfers write checkpoints via `onTransfer`, so transferred tokens are eligible without explicit enrollment.
+
+### 7.5 Burned-token forfeiture follows the vesting curve
+
+`releaseForfeitedRewards()` does not immediately free the full nominal amount of every burned token's vesting entry. It
+uses the same linear unlock math as collection, with `ownerClaim = false`, so only the currently unlocked portion is
+removed from `totalVestingAmountOf` and returned to the future distributable pool. Still-locked forfeited portions stay
+accounted as vesting until a later forfeiture call unlocks them.

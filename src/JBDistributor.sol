@@ -42,6 +42,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
+    /// @notice Thrown when an ERC-20 reenters a funding balance-delta measurement.
+    error JBDistributor_ReentrantTokenTransfer(address token);
+
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
@@ -114,6 +117,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param token The address of the token claimed and vested.
     /// @custom:param round The round to which the data applies.
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
+
+    /// @notice Whether this distributor is currently measuring an incoming ERC-20 balance delta.
+    bool transient _acceptingToken;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -203,9 +209,7 @@ abstract contract JBDistributor is IJBDistributor {
                 revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
             }
             // Use balance delta to handle fee-on-transfer tokens correctly.
-            uint256 balanceBefore = token.balanceOf(address(this));
-            token.safeTransferFrom({from: msg.sender, to: address(this), value: amount});
-            amount = token.balanceOf(address(this)) - balanceBefore;
+            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
         }
         _balanceOf[hook][token] += amount;
         _accountedBalanceOf[token] += amount;
@@ -472,6 +476,31 @@ abstract contract JBDistributor is IJBDistributor {
             roundSnapshotBlock[round + 1] = block.number - 1;
             emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
         }
+    }
+
+    /// @notice Accepts an ERC-20 funding transfer and returns the actual balance delta.
+    /// @param token The ERC-20 token to accept.
+    /// @param from The address to pull tokens from.
+    /// @param amount The nominal amount to pull.
+    /// @return acceptedAmount The actual amount received.
+    function _acceptErc20FundsFrom(
+        IERC20 token,
+        address from,
+        uint256 amount
+    )
+        internal
+        returns (uint256 acceptedAmount)
+    {
+        uint256 balanceBefore = token.balanceOf(address(this));
+
+        if (_acceptingToken) revert JBDistributor_ReentrantTokenTransfer(address(token));
+        _acceptingToken = true;
+
+        token.safeTransferFrom({from: from, to: address(this), value: amount});
+
+        acceptedAmount = token.balanceOf(address(this)) - balanceBefore;
+
+        _acceptingToken = false;
     }
 
     /// @notice Takes a snapshot of the token balance and vesting amount for the current round.

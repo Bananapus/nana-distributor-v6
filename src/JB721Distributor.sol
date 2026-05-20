@@ -9,7 +9,6 @@ import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
@@ -27,14 +26,15 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// calculation and their unvested rewards can be reclaimed via `releaseForfeitedRewards`.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
 contract JB721Distributor is JBDistributor, IJB721Distributor {
-    using SafeERC20 for IERC20;
-
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
     /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
     error JB721Distributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
+
+    /// @notice Thrown when native ETH does not match the split hook context amount.
+    error JB721Distributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JB721Distributor_Unauthorized(uint256 projectId, address caller);
@@ -116,25 +116,32 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // The target hook is the split's beneficiary.
         address hook = address(context.split.beneficiary);
 
-        // If it's not a native-token transfer, credit the ERC-20 amount.
-        if (msg.value == 0 && context.amount != 0) {
-            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
-            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
-            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-            IERC20(context.token).safeTransferFrom({from: msg.sender, to: address(this), value: context.amount});
-            uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
-            _balanceOf[hook][IERC20(context.token)] += delta;
-            _accountedBalanceOf[IERC20(context.token)] += delta;
-        } else if (msg.value != 0) {
-            // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
-            if (context.token != JBConstants.NATIVE_TOKEN) {
+        // Native splits must conserve the terminal's stated context amount exactly.
+        if (context.token == JBConstants.NATIVE_TOKEN) {
+            if (msg.value != context.amount) {
+                revert JB721Distributor_NativeAmountMismatch({msgValue: msg.value, contextAmount: context.amount});
+            }
+
+            if (msg.value != 0) {
+                _balanceOf[hook][IERC20(context.token)] += msg.value;
+                _accountedBalanceOf[IERC20(context.token)] += msg.value;
+            }
+        } else {
+            // Validate that native ETH is not cross-booked under an ERC-20 token.
+            if (msg.value != 0) {
                 revert JB721Distributor_TokenMismatch({
                     token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value
                 });
             }
-            // Native ETH: credit actual value received.
-            _balanceOf[hook][IERC20(context.token)] += msg.value;
-            _accountedBalanceOf[IERC20(context.token)] += msg.value;
+
+            if (context.amount == 0) return;
+
+            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
+            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
+            uint256 delta =
+                _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
+            _balanceOf[hook][IERC20(context.token)] += delta;
+            _accountedBalanceOf[IERC20(context.token)] += delta;
         }
     }
 
@@ -424,30 +431,31 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             stake = votingUnits < remaining ? votingUnits : remaining;
         }
 
-        // Record that this owner has consumed additional voting power from their budget.
-        consumed[ownerIndex] += stake;
-
         // If the effective stake is zero, the owner's budget is exhausted — skip this token.
         if (stake == 0) return (0, newUniqueCount);
 
         // Calculate the pro-rata reward amount: (distributable * stake) / totalStakeAmount.
         tokenAmount = mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
 
-        // Only create a vesting entry and emit an event if there is a non-zero reward.
-        if (tokenAmount > 0) {
-            // Push a new vesting data entry for this token ID, starting with zero shareClaimed.
-            vestingDataOf[ctx.hook][tokenId][ctx.token].push(
-                JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmount, shareClaimed: 0})
-            );
+        // If the pro-rata amount rounds to zero, do not consume the owner's voting budget.
+        if (tokenAmount == 0) return (0, newUniqueCount);
 
-            // Emit the claim event for off-chain indexers.
-            emit Claimed({
-                hook: ctx.hook,
-                tokenId: tokenId,
-                token: ctx.token,
-                amount: tokenAmount,
-                vestingReleaseRound: ctx.vestingReleaseRound
-            });
-        }
+        // Record that this owner has consumed additional voting power from their budget.
+        consumed[ownerIndex] += stake;
+
+        // Only create a vesting entry and emit an event if there is a non-zero reward.
+        // Push a new vesting data entry for this token ID, starting with zero shareClaimed.
+        vestingDataOf[ctx.hook][tokenId][ctx.token].push(
+            JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmount, shareClaimed: 0})
+        );
+
+        // Emit the claim event for off-chain indexers.
+        emit Claimed({
+            hook: ctx.hook,
+            tokenId: tokenId,
+            token: ctx.token,
+            amount: tokenAmount,
+            vestingReleaseRound: ctx.vestingReleaseRound
+        });
     }
 }

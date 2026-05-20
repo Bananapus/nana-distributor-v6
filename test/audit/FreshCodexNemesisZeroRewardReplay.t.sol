@@ -105,7 +105,7 @@ contract FreshCodexNemesisHook {
 contract FreshCodexNemesisZeroRewardReplayTest is Test {
     address internal alice = makeAddr("alice");
 
-    function test_zeroRewardTokenCanBeReplayedToExhaustOwnerVotingCap() public {
+    function test_zeroRewardTokenCannotBeReplayedToExhaustOwnerVotingCap() public {
         FreshCodexNemesisStore store = new FreshCodexNemesisStore();
         FreshCodexNemesisHook hook = new FreshCodexNemesisHook(store, alice);
         FreshCodexNemesisRewardToken rewardToken = new FreshCodexNemesisRewardToken();
@@ -136,8 +136,9 @@ contract FreshCodexNemesisZeroRewardReplayTest is Test {
         attacked.beginVesting(address(hook), dustToken, tokens);
         attacked.beginVesting(address(hook), dustToken, tokens);
         attacked.beginVesting(address(hook), dustToken, tokens);
+        assertEq(attacked.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
 
         attacked.beginVesting(address(hook), highValueToken, tokens);
-        assertEq(attacked.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 0);
+        assertEq(attacked.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 1);
     }
 }

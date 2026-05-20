@@ -287,6 +287,9 @@ contract TokenDistributorForkTest is Test {
         _payProject(alice, 20 ether);
         vm.roll(block.number + 1);
 
+        uint256 distributorNativeBefore = address(distributor).balance;
+        uint256 creditedBefore = distributor.balanceOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
+
         // Trigger payouts.
         vm.prank(multisig);
         jbMultiTerminal.sendPayoutsOf({
@@ -299,7 +302,10 @@ contract TokenDistributorForkTest is Test {
 
         // Verify distributor received funds.
         uint256 distributorBalance = distributor.balanceOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
-        assertGt(distributorBalance, 0, "Distributor should have received ETH from payout");
+        uint256 creditedDelta = distributorBalance - creditedBefore;
+        uint256 nativeDelta = address(distributor).balance - distributorNativeBefore;
+        assertGt(creditedDelta, 0, "Distributor should have received ETH from payout");
+        assertEq(creditedDelta, nativeDelta, "Distributor credit should equal native value received");
 
         // Vest and collect.
         _advanceToRound(1);
