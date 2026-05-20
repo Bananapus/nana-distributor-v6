@@ -15,6 +15,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs or zero total stake can make core flows revert. | Deployment-time validation and operator runbooks. |
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
+| P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. |
 
 ## 1. Trust Assumptions
 
@@ -54,6 +55,10 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   Underpaying and overpaying both revert so terminal context accounting cannot drift from actual native value delivered.
   ERC-20 split contexts must send no native value.
 - **Fee-on-transfer handling uses balance-delta accounting.** The `transferFrom` path measures `balanceAfter - balanceBefore` to credit the actual received amount.
+- **Reward-token callbacks fail closed during funding.** While `fund` or `processSplitWith` is measuring an inbound
+  ERC-20 balance delta, reentrant `fund`, `beginVesting`, `collectVestedRewards`, and `releaseForfeitedRewards` calls
+  revert. This prevents both over-crediting from nested funding and under-crediting from same-token collection netting
+  against the inbound transfer.
 - **721 stake weights depend on checkpointed voting power at round start.** The `CHECKPOINTS()` module must be deployed and delegates must be set before the round snapshot block, or stakers receive zero weight.
 - **721 vesting and claiming treat burned tokens differently.**
 - **Checkpoint availability matters for both `IVotes` token distributors and 721 distributors.**
@@ -75,6 +80,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - only the encoded address can collect from the token distributor
 - native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
   token balance delta with no accompanying `msg.value`
+- ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
 - 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
 
 ## 7. Accepted Behaviors

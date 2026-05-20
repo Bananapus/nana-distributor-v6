@@ -118,8 +118,8 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param round The round to which the data applies.
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
 
-    /// @notice Whether this distributor is currently measuring an incoming ERC-20 balance delta.
-    bool transient _acceptingToken;
+    /// @notice The ERC-20 whose incoming balance delta is currently being measured.
+    address transient _acceptingToken;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -147,6 +147,11 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
+        // Reward accounting cannot change while an ERC-20 `transferFrom` is in progress. A callback-capable reward
+        // token could otherwise snapshot, vest, or collect against balances between `balanceBefore` and
+        // `balanceAfter`, distorting the delta credited to the funder.
+        _requireNotAcceptingToken();
+
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
@@ -237,6 +242,9 @@ abstract contract JBDistributor is IJBDistributor {
         external
         override
     {
+        // Do not let reward-token callbacks mutate vesting state during inbound balance-delta accounting.
+        _requireNotAcceptingToken();
+
         // Make sure that all tokens are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
@@ -404,6 +412,10 @@ abstract contract JBDistributor is IJBDistributor {
         public
         override
     {
+        // Collections transfer reward tokens out. If this runs inside the same reward token's inbound transfer, the
+        // outgoing transfer can net against the incoming balance delta and strand the new funds unaccounted.
+        _requireNotAcceptingToken();
+
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
@@ -495,10 +507,11 @@ abstract contract JBDistributor is IJBDistributor {
         // actual amount received instead of the caller-provided nominal `amount`.
         uint256 balanceBefore = token.balanceOf(address(this));
 
-        // `safeTransferFrom` can call into arbitrary token code, so block nested accepts before entering the transfer.
-        if (_acceptingToken) revert JBDistributor_ReentrantTokenTransfer(address(token));
-        // Mark the transfer window as active. This transient flag is reverted automatically if the transfer reverts.
-        _acceptingToken = true;
+        // `safeTransferFrom` can call into arbitrary token code, so block reward-accounting mutations before entering
+        // the transfer. The token address is stored so any reentrant revert names the token whose delta is in flight.
+        address tokenBeingAccepted = _acceptingToken;
+        if (tokenBeingAccepted != address(0)) revert JBDistributor_ReentrantTokenTransfer(tokenBeingAccepted);
+        _acceptingToken = address(token);
 
         // Pull the nominal amount from the funder; SafeERC20 handles tokens that do not return a boolean.
         token.safeTransferFrom({from: from, to: address(this), value: amount});
@@ -508,7 +521,7 @@ abstract contract JBDistributor is IJBDistributor {
         acceptedAmount = token.balanceOf(address(this)) - balanceBefore;
 
         // Close the transfer window after the token balance has been measured.
-        _acceptingToken = false;
+        _acceptingToken = address(0);
     }
 
     /// @notice Takes a snapshot of the token balance and vesting amount for the current round.
@@ -768,6 +781,14 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param account The account to check authorization for.
     /// @return canClaim True if the account can collect rewards for this token ID.
     function _canClaim(address hook, uint256 tokenId, address account) internal view virtual returns (bool canClaim);
+
+    /// @notice Revert if called while an inbound ERC-20 transfer is being measured.
+    /// @dev Reward tokens are arbitrary contracts. This guard prevents token callbacks from mutating distributor
+    /// accounting midway through a balance-delta measurement.
+    function _requireNotAcceptingToken() internal view {
+        address token = _acceptingToken;
+        if (token != address(0)) revert JBDistributor_ReentrantTokenTransfer(token);
+    }
 
     /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations
     /// and their unvested rewards can be released via `releaseForfeitedRewards`.
