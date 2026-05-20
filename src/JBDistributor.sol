@@ -491,15 +491,23 @@ abstract contract JBDistributor is IJBDistributor {
         internal
         returns (uint256 acceptedAmount)
     {
+        // Snapshot this contract's token balance before pulling funds so fee-on-transfer tokens are credited by the
+        // actual amount received instead of the caller-provided nominal `amount`.
         uint256 balanceBefore = token.balanceOf(address(this));
 
+        // `safeTransferFrom` can call into arbitrary token code, so block nested accepts before entering the transfer.
         if (_acceptingToken) revert JBDistributor_ReentrantTokenTransfer(address(token));
+        // Mark the transfer window as active. This transient flag is reverted automatically if the transfer reverts.
         _acceptingToken = true;
 
+        // Pull the nominal amount from the funder; SafeERC20 handles tokens that do not return a boolean.
         token.safeTransferFrom({from: from, to: address(this), value: amount});
 
+        // Credit only the balance delta. This supports fee-on-transfer tokens and ignores any overstatement in
+        // `amount`.
         acceptedAmount = token.balanceOf(address(this)) - balanceBefore;
 
+        // Close the transfer window after the token balance has been measured.
         _acceptingToken = false;
     }
 
