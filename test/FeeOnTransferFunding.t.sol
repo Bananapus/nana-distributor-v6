@@ -16,9 +16,17 @@ contract _FotDirectory {
     mapping(uint256 => mapping(address => bool)) public terminals;
     mapping(uint256 => address) public controllers;
 
-    function setTerminal(uint256 p, address t, bool ok) external { terminals[p][t] = ok; }
-    function isTerminalOf(uint256 p, IJBTerminal t) external view returns (bool) { return terminals[p][address(t)]; }
-    function controllerOf(uint256 p) external view returns (IERC165) { return IERC165(controllers[p]); }
+    function setTerminal(uint256 p, address t, bool ok) external {
+        terminals[p][t] = ok;
+    }
+
+    function isTerminalOf(uint256 p, IJBTerminal t) external view returns (bool) {
+        return terminals[p][address(t)];
+    }
+
+    function controllerOf(uint256 p) external view returns (IERC165) {
+        return IERC165(controllers[p]);
+    }
 }
 
 /// @notice Pins `JBDistributor._acceptErc20FundsFrom`'s balance-delta crediting against a real fee-on-transfer
@@ -38,7 +46,7 @@ contract FeeOnTransferFundingTest is Test {
         directory = new _FotDirectory();
         distributor = new JB721Distributor(IJBDirectory(address(directory)), _ROUND_DURATION, _VESTING_ROUNDS);
         fotToken = new MockFeeOnTransferToken({_feeBps: 100}); // 1%
-        fotToken.mint(funder, 1_000e18);
+        fotToken.mint(funder, 1000e18);
         vm.prank(funder);
         fotToken.approve(address(distributor), type(uint256).max);
     }
@@ -88,9 +96,7 @@ contract FeeOnTransferFundingTest is Test {
             "accumulated credit equals sum of per-call deltas"
         );
         assertEq(
-            fotToken.balanceOf(address(distributor)),
-            expectedPerCall * 5,
-            "real token balance matches credited sum"
+            fotToken.balanceOf(address(distributor)), expectedPerCall * 5, "real token balance matches credited sum"
         );
     }
 
