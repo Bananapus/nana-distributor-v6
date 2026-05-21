@@ -417,6 +417,30 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
         );
     }
 
+    /// @notice INVARIANT: The hook's tracked reward-token balance is fully backed by real tokens.
+    /// @dev The handler only funds one hook with one ERC-20 reward token. Owner collections decrement both the
+    ///      distributor's accounting and its actual token balance, while forfeitures return rewards to the same hook
+    ///      balance without transferring them out. The two values should therefore remain exactly equal after every
+    ///      randomized sequence.
+    function invariant_trackedBalanceMatchesActualBacking() public view {
+        assertEq(
+            distributor.balanceOf(address(hook), IERC20(address(rewardToken))),
+            rewardToken.balanceOf(address(distributor))
+        );
+    }
+
+    /// @notice INVARIANT: The aggregate vesting counter equals the token IDs' remaining uncollected claims.
+    /// @dev Collections and forfeitures both advance each vesting entry's `shareClaimed` and decrement
+    ///      `totalVestingAmountOf` by the amount unlocked. Summing `claimedFor` across every token ID in the campaign
+    ///      should match the aggregate vesting counter exactly, including partially forfeited burned-token entries.
+    function invariant_totalVestingMatchesRemainingClaims() public view {
+        IERC20 token = IERC20(address(rewardToken));
+        uint256 remainingClaims =
+            distributor.claimedFor(address(hook), 1, token) + distributor.claimedFor(address(hook), 2, token);
+
+        assertEq(distributor.totalVestingAmountOf(address(hook), token), remainingClaims);
+    }
+
     /// @notice INVARIANT: Token balances are conserved (funded = distributor + alice + bob).
     function invariant_balanceConservation() public view {
         uint256 totalSupply = rewardToken.totalSupply();

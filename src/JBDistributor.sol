@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
+import {JBVestingMath} from "./libraries/JBVestingMath.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
@@ -27,17 +28,20 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when an empty tokenIds array is passed.
     error JBDistributor_EmptyTokenIds(uint256 tokenIdCount);
 
+    /// @notice Thrown when the round duration is zero.
+    error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
+
     /// @notice Thrown when a native ETH transfer fails.
     error JBDistributor_NativeTransferFailed(address beneficiary, uint256 amount);
 
     /// @notice Thrown when the caller does not have access to the token.
     error JBDistributor_NoAccess(address hook, uint256 tokenId, address account);
 
-    /// @notice Thrown when the round duration is zero.
-    error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
-
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute(address hook, address token, uint256 round);
+
+    /// @notice Thrown when an ERC-20 reenters a funding balance-delta measurement.
+    error JBDistributor_ReentrantTokenTransfer(address token);
 
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
@@ -116,6 +120,13 @@ abstract contract JBDistributor is IJBDistributor {
     mapping(address hook => mapping(IERC20 token => mapping(uint256 round => bool))) internal _snapshotInitializedFor;
 
     //*********************************************************************//
+    // ------------------- transient stored properties ------------------- //
+    //*********************************************************************//
+
+    /// @notice The ERC-20 whose incoming balance delta is currently being measured.
+    address transient _acceptingToken;
+
+    //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
@@ -141,6 +152,11 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
+        // Reward accounting cannot change while an ERC-20 `transferFrom` is in progress. A callback-capable reward
+        // token could otherwise snapshot, vest, or collect against balances between `balanceBefore` and
+        // `balanceAfter`, distorting the delta credited to the funder.
+        _requireNotAcceptingToken();
+
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
@@ -203,9 +219,7 @@ abstract contract JBDistributor is IJBDistributor {
                 revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
             }
             // Use balance delta to handle fee-on-transfer tokens correctly.
-            uint256 balanceBefore = token.balanceOf(address(this));
-            token.safeTransferFrom({from: msg.sender, to: address(this), value: amount});
-            amount = token.balanceOf(address(this)) - balanceBefore;
+            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
         }
         _balanceOf[hook][token] += amount;
         _accountedBalanceOf[token] += amount;
@@ -233,6 +247,9 @@ abstract contract JBDistributor is IJBDistributor {
         external
         override
     {
+        // Do not let reward-token callbacks mutate vesting state during inbound balance-delta accounting.
+        _requireNotAcceptingToken();
+
         // Make sure that all tokens are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
@@ -285,7 +302,9 @@ abstract contract JBDistributor is IJBDistributor {
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
             // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
-            tokenAmount += vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
+            tokenAmount += JBVestingMath.unclaimedAmountOf({
+                amount: vesting.amount, shareClaimed: vesting.shareClaimed, maxShare: MAX_SHARE
+            });
 
             unchecked {
                 ++vestedIndex;
@@ -324,23 +343,22 @@ abstract contract JBDistributor is IJBDistributor {
             // Keep a reference to the vested data being iterated on.
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
-            // Calculate the share amount that is locked.
-            if (vesting.releaseRound > round) {
-                lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
-            }
+            lockedShare = JBVestingMath.lockedShareOf({
+                releaseRound: vesting.releaseRound,
+                currentRound: round,
+                vestingRounds: vestingRounds,
+                maxShare: MAX_SHARE
+            });
 
-            if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
-                // Final unlock: compute remaining as `original - alreadyPaid` to include dust.
-                tokenAmount += vesting.amount
-                - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-            } else {
-                uint256 newShareClaimed = MAX_SHARE - lockedShare;
-                if (newShareClaimed > vesting.shareClaimed) {
-                    tokenAmount += mulDiv({
-                        x: vesting.amount, y: newShareClaimed - vesting.shareClaimed, denominator: MAX_SHARE
-                    });
-                }
-            }
+            // Calculate the newly unlocked amount from cumulative shares rather than the incremental share delta.
+            // Incremental floor rounding can otherwise underpay partial collections and leave dust stranded.
+            (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
+                amount: vesting.amount,
+                shareClaimed: vesting.shareClaimed,
+                lockedShare: lockedShare,
+                maxShare: MAX_SHARE
+            });
+            tokenAmount += claimAmount;
 
             unchecked {
                 ++vestedIndex;
@@ -400,6 +418,10 @@ abstract contract JBDistributor is IJBDistributor {
         public
         override
     {
+        // Collections transfer reward tokens out. If this runs inside the same reward token's inbound transfer, the
+        // outgoing transfer can net against the incoming balance delta and strand the new funds unaccounted.
+        _requireNotAcceptingToken();
+
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
@@ -458,6 +480,40 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
+
+    /// @notice Accepts an ERC-20 funding transfer and returns the actual balance delta.
+    /// @param token The ERC-20 token to accept.
+    /// @param from The address to pull tokens from.
+    /// @param amount The nominal amount to pull.
+    /// @return acceptedAmount The actual amount received.
+    function _acceptErc20FundsFrom(
+        IERC20 token,
+        address from,
+        uint256 amount
+    )
+        internal
+        returns (uint256 acceptedAmount)
+    {
+        // Arm the scoped guard before any token call, including `balanceOf`, because reward tokens are arbitrary and
+        // an upgradeable or adversarial token can reenter from either the snapshot or transfer path.
+        address tokenBeingAccepted = _acceptingToken;
+        if (tokenBeingAccepted != address(0)) revert JBDistributor_ReentrantTokenTransfer(tokenBeingAccepted);
+        _acceptingToken = address(token);
+
+        // Snapshot this contract's token balance after the guard is armed so fee-on-transfer tokens are credited by the
+        // actual amount received instead of the caller-provided nominal `amount`.
+        uint256 balanceBefore = token.balanceOf(address(this));
+
+        // Pull the nominal amount from the funder; SafeERC20 handles tokens that do not return a boolean.
+        token.safeTransferFrom({from: from, to: address(this), value: amount});
+
+        // Credit only the balance delta. This supports fee-on-transfer tokens and ignores any overstatement in
+        // `amount`.
+        acceptedAmount = token.balanceOf(address(this)) - balanceBefore;
+
+        // Close the transfer window after the token balance has been measured.
+        _acceptingToken = address(0);
+    }
 
     /// @notice Ensures that a snapshot block is recorded for the given round.
     /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
@@ -592,26 +648,26 @@ abstract contract JBDistributor is IJBDistributor {
                 // Keep a reference to the vested data being iterated on.
                 JBVestingData memory vesting = vestings[vestedIndex];
 
-                // Calculate the share amount that is locked.
-                uint256 lockedShare;
-                if (vesting.releaseRound > round) {
-                    lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
-                }
+                uint256 lockedShare = JBVestingMath.lockedShareOf({
+                    releaseRound: vesting.releaseRound,
+                    currentRound: round,
+                    vestingRounds: vestingRounds,
+                    maxShare: MAX_SHARE
+                });
 
-                uint256 claimAmount;
-
-                if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
-                    // Final unlock: compute remaining amount as `original - alreadyPaid` to force
-                    // rounding dust out so nothing is stranded in the entry.
-                    claimAmount =
-                        vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-                } else if (MAX_SHARE - lockedShare > vesting.shareClaimed) {
-                    claimAmount = mulDiv({
-                        x: vesting.amount, y: MAX_SHARE - lockedShare - vesting.shareClaimed, denominator: MAX_SHARE
-                    });
-                }
+                // Match `claimedFor`/`collectableFor` by using the difference between cumulative rounded claims.
+                // Rounding each incremental share independently can underpay partial unlocks and leave
+                // `totalVestingAmountOf` larger than the remaining claims.
+                (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
+                    amount: vesting.amount,
+                    shareClaimed: vesting.shareClaimed,
+                    lockedShare: lockedShare,
+                    maxShare: MAX_SHARE
+                });
 
                 if (claimAmount != 0) {
+                    // Persist the cumulative unlocked share, not just this round's delta, so later collections
+                    // compare against the same rounded checkpoint that produced `claimAmount`.
                     vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
                     totalTokenAmount += claimAmount;
                     emit Collected({
@@ -731,6 +787,14 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param account The account to check authorization for.
     /// @return canClaim True if the account can collect rewards for this token ID.
     function _canClaim(address hook, uint256 tokenId, address account) internal view virtual returns (bool canClaim);
+
+    /// @notice Revert if called while an inbound ERC-20 transfer is being measured.
+    /// @dev Reward tokens are arbitrary contracts. This guard prevents token callbacks from mutating distributor
+    /// accounting midway through a balance-delta measurement.
+    function _requireNotAcceptingToken() internal view {
+        address token = _acceptingToken;
+        if (token != address(0)) revert JBDistributor_ReentrantTokenTransfer(token);
+    }
 
     /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations
     /// and their unvested rewards can be released via `releaseForfeitedRewards`.

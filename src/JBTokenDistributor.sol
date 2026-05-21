@@ -8,7 +8,6 @@ import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {IJBTokenDistributor} from "./interfaces/IJBTokenDistributor.sol";
@@ -22,14 +21,15 @@ import {JBDistributor} from "./JBDistributor.sol";
 /// Holders must delegate (even to themselves) to participate. Non-delegated supply stays in pool for future rounds.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
 contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
-    using SafeERC20 for IERC20;
-
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
     /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
     error JBTokenDistributor_InvalidTokenId(uint256 tokenId);
+
+    /// @notice Thrown when native ETH does not match the split hook context amount.
+    error JBTokenDistributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
 
     /// @notice Thrown when native ETH is sent but context.token is not NATIVE_TOKEN.
     error JBTokenDistributor_TokenMismatch(address token, address expectedToken, uint256 msgValue);
@@ -86,25 +86,32 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         // The target hook is the split's beneficiary (the IVotes token address).
         address hook = address(context.split.beneficiary);
 
-        // If it's not a native-token transfer, credit the ERC-20 amount.
-        if (msg.value == 0 && context.amount != 0) {
-            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
-            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
-            uint256 balanceBefore = IERC20(context.token).balanceOf(address(this));
-            IERC20(context.token).safeTransferFrom({from: msg.sender, to: address(this), value: context.amount});
-            uint256 delta = IERC20(context.token).balanceOf(address(this)) - balanceBefore;
-            _balanceOf[hook][IERC20(context.token)] += delta;
-            _accountedBalanceOf[IERC20(context.token)] += delta;
-        } else if (msg.value != 0) {
-            // Validate that context.token matches NATIVE_TOKEN to prevent cross-booking attacks.
-            if (context.token != JBConstants.NATIVE_TOKEN) {
+        // Native splits must conserve the terminal's stated context amount exactly.
+        if (context.token == JBConstants.NATIVE_TOKEN) {
+            if (msg.value != context.amount) {
+                revert JBTokenDistributor_NativeAmountMismatch({msgValue: msg.value, contextAmount: context.amount});
+            }
+
+            if (msg.value != 0) {
+                _balanceOf[hook][IERC20(context.token)] += msg.value;
+                _accountedBalanceOf[IERC20(context.token)] += msg.value;
+            }
+        } else {
+            // Validate that native ETH is not cross-booked under an ERC-20 token.
+            if (msg.value != 0) {
                 revert JBTokenDistributor_TokenMismatch({
                     token: context.token, expectedToken: JBConstants.NATIVE_TOKEN, msgValue: msg.value
                 });
             }
-            // Native ETH: credit actual value received.
-            _balanceOf[hook][IERC20(context.token)] += msg.value;
-            _accountedBalanceOf[IERC20(context.token)] += msg.value;
+
+            if (context.amount == 0) return;
+
+            // Pull tokens via transferFrom. Both terminals and controllers grant an ERC-20
+            // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
+            uint256 delta =
+                _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
+            _balanceOf[hook][IERC20(context.token)] += delta;
+            _accountedBalanceOf[IERC20(context.token)] += delta;
         }
     }
 

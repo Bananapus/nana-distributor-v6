@@ -171,6 +171,41 @@ contract AuditFixAE2Test is Test {
         );
     }
 
+    /// @notice Partial dust collections must decrement totalVestingAmountOf by the same amount claimedFor releases.
+    function test_AE2_totalVestingClearsAfterPartialDustCollections() public {
+        rewardToken.mint({to: address(this), amount: 7});
+        rewardToken.approve({spender: address(distributor), value: 7});
+        distributor.fund({hook: address(votesToken), token: IERC20(address(rewardToken)), amount: 7});
+
+        _advanceToRound(1);
+
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = _tokenId(alice);
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
+
+        distributor.beginVesting({hook: address(votesToken), tokenIds: tokenIds, tokens: tokens});
+
+        // Collect at every partial vesting round before the final unlock.
+        for (uint256 r = 2; r <= VESTING_ROUNDS; r++) {
+            _advanceToRound(r);
+            vm.prank(alice);
+            distributor.collectVestedRewards({
+                hook: address(votesToken), tokenIds: tokenIds, tokens: tokens, beneficiary: alice
+            });
+        }
+
+        _advanceToRound(1 + VESTING_ROUNDS);
+        vm.prank(alice);
+        distributor.collectVestedRewards({
+            hook: address(votesToken), tokenIds: tokenIds, tokens: tokens, beneficiary: alice
+        });
+
+        assertEq(rewardToken.balanceOf(alice), 7, "all dust should be collected");
+        assertEq(distributor.claimedFor(address(votesToken), tokenIds[0], IERC20(address(rewardToken))), 0);
+        assertEq(distributor.totalVestingAmountOf(address(votesToken), IERC20(address(rewardToken))), 0);
+    }
+
     /// @notice Large amounts should still work correctly with the dust fix.
     function test_AE2_largeAmountStillCorrect() public {
         uint256 amount = 1_000_000 ether;

@@ -158,6 +158,36 @@ contract TokenMismatchTokenDistributorTest is Test {
         );
     }
 
+    /// @notice Native split contexts must match the actual ETH delivered by the terminal.
+    function test_tokenMismatch_nativeUnderpay_reverts() public {
+        JBSplitHookContext memory context = _buildContext(JBConstants.NATIVE_TOKEN, 1 ether);
+
+        vm.deal(terminal, 10 ether);
+
+        vm.prank(terminal);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_NativeAmountMismatch.selector, 0.5 ether, 1 ether
+            )
+        );
+        distributor.processSplitWith{value: 0.5 ether}(context);
+    }
+
+    /// @notice Native split contexts must not credit more ETH than the terminal declared.
+    function test_tokenMismatch_nativeOverpay_reverts() public {
+        JBSplitHookContext memory context = _buildContext(JBConstants.NATIVE_TOKEN, 1 ether);
+
+        vm.deal(terminal, 10 ether);
+
+        vm.prank(terminal);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBTokenDistributor.JBTokenDistributor_NativeAmountMismatch.selector, 2 ether, 1 ether
+            )
+        );
+        distributor.processSplitWith{value: 2 ether}(context);
+    }
+
     /// @notice Demonstrates the attack scenario that the fix prevents: without the fix,
     /// an attacker could steal the victim's ERC-20 balance by sending ETH with a fake token.
     function test_tokenMismatch_attackScenario_cannotStealErc20Balance() public {
@@ -279,6 +309,32 @@ contract TokenMismatch721DistributorTest is Test {
             1 ether,
             "Native ETH split should credit balance under NATIVE_TOKEN"
         );
+    }
+
+    /// @notice Native split contexts must match the actual ETH delivered by the terminal.
+    function test_tokenMismatch_721_nativeUnderpay_reverts() public {
+        JBSplitHookContext memory context = _buildContext(JBConstants.NATIVE_TOKEN, 1 ether);
+
+        vm.deal(terminal, 10 ether);
+
+        vm.prank(terminal);
+        vm.expectRevert(
+            abi.encodeWithSelector(JB721Distributor.JB721Distributor_NativeAmountMismatch.selector, 0.5 ether, 1 ether)
+        );
+        distributor.processSplitWith{value: 0.5 ether}(context);
+    }
+
+    /// @notice Native split contexts must not credit more ETH than the terminal declared.
+    function test_tokenMismatch_721_nativeOverpay_reverts() public {
+        JBSplitHookContext memory context = _buildContext(JBConstants.NATIVE_TOKEN, 1 ether);
+
+        vm.deal(terminal, 10 ether);
+
+        vm.prank(terminal);
+        vm.expectRevert(
+            abi.encodeWithSelector(JB721Distributor.JB721Distributor_NativeAmountMismatch.selector, 2 ether, 1 ether)
+        );
+        distributor.processSplitWith{value: 2 ether}(context);
     }
 
     /// @notice Full attack scenario blocked on JB721Distributor.
