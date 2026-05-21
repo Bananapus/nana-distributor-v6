@@ -37,6 +37,8 @@ contract FreshCodexNemesisStore {
     function setTokenTier(uint256 tokenId, uint104 votingUnits) external {
         JB721TierFlags memory flags;
         tierOfToken[tokenId] = JB721Tier({
+            // This audit fixture only mints small token IDs, which fit the tier ID width.
+            // forge-lint: disable-next-line(unsafe-typecast)
             id: uint32(tokenId),
             price: 0,
             remainingSupply: 0,

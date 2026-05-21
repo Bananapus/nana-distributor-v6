@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
+import {JBVestingMath} from "./libraries/JBVestingMath.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
@@ -301,7 +302,9 @@ abstract contract JBDistributor is IJBDistributor {
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
             // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
-            tokenAmount += vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
+            tokenAmount += JBVestingMath.unclaimedAmountOf({
+                amount: vesting.amount, shareClaimed: vesting.shareClaimed, maxShare: MAX_SHARE
+            });
 
             unchecked {
                 ++vestedIndex;
@@ -340,25 +343,22 @@ abstract contract JBDistributor is IJBDistributor {
             // Keep a reference to the vested data being iterated on.
             JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
 
-            // Calculate the share amount that is locked.
-            if (vesting.releaseRound > round) {
-                lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
-            }
+            lockedShare = JBVestingMath.lockedShareOf({
+                releaseRound: vesting.releaseRound,
+                currentRound: round,
+                vestingRounds: vestingRounds,
+                maxShare: MAX_SHARE
+            });
 
-            if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
-                // Final unlock: compute remaining as `original - alreadyPaid` to include dust.
-                tokenAmount += vesting.amount
-                - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-            } else {
-                uint256 newShareClaimed = MAX_SHARE - lockedShare;
-                if (newShareClaimed > vesting.shareClaimed) {
-                    // Calculate the newly unlocked amount from cumulative shares rather than the incremental share
-                    // delta. Incremental floor rounding can otherwise make partial collections pay less than the
-                    // cumulative amount reported by `claimedFor`, leaving dust stranded in `totalVestingAmountOf`.
-                    tokenAmount += mulDiv({x: vesting.amount, y: newShareClaimed, denominator: MAX_SHARE})
-                    - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-                }
-            }
+            // Calculate the newly unlocked amount from cumulative shares rather than the incremental share delta.
+            // Incremental floor rounding can otherwise underpay partial collections and leave dust stranded.
+            (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
+                amount: vesting.amount,
+                shareClaimed: vesting.shareClaimed,
+                lockedShare: lockedShare,
+                maxShare: MAX_SHARE
+            });
+            tokenAmount += claimAmount;
 
             unchecked {
                 ++vestedIndex;
@@ -648,29 +648,26 @@ abstract contract JBDistributor is IJBDistributor {
                 // Keep a reference to the vested data being iterated on.
                 JBVestingData memory vesting = vestings[vestedIndex];
 
-                // Calculate the share amount that is locked.
-                uint256 lockedShare;
-                if (vesting.releaseRound > round) {
-                    lockedShare = (vesting.releaseRound - round) * MAX_SHARE / vestingRounds;
-                }
+                uint256 lockedShare = JBVestingMath.lockedShareOf({
+                    releaseRound: vesting.releaseRound,
+                    currentRound: round,
+                    vestingRounds: vestingRounds,
+                    maxShare: MAX_SHARE
+                });
 
-                uint256 claimAmount;
-
-                if (lockedShare == 0 && vesting.shareClaimed < MAX_SHARE) {
-                    // Final unlock: compute remaining amount as `original - alreadyPaid` to force
-                    // rounding dust out so nothing is stranded in the entry.
-                    claimAmount =
-                        vesting.amount - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-                } else if (MAX_SHARE - lockedShare > vesting.shareClaimed) {
-                    uint256 newShareClaimed = MAX_SHARE - lockedShare;
-                    // Match `claimedFor`/`collectableFor` by using the difference between cumulative rounded claims.
-                    // Rounding each incremental share independently can underpay partial unlocks and leave
-                    // `totalVestingAmountOf` larger than the remaining claims.
-                    claimAmount = mulDiv({x: vesting.amount, y: newShareClaimed, denominator: MAX_SHARE})
-                        - mulDiv({x: vesting.amount, y: vesting.shareClaimed, denominator: MAX_SHARE});
-                }
+                // Match `claimedFor`/`collectableFor` by using the difference between cumulative rounded claims.
+                // Rounding each incremental share independently can underpay partial unlocks and leave
+                // `totalVestingAmountOf` larger than the remaining claims.
+                (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
+                    amount: vesting.amount,
+                    shareClaimed: vesting.shareClaimed,
+                    lockedShare: lockedShare,
+                    maxShare: MAX_SHARE
+                });
 
                 if (claimAmount != 0) {
+                    // Persist the cumulative unlocked share, not just this round's delta, so later collections
+                    // compare against the same rounded checkpoint that produced `claimAmount`.
                     vestings[vestedIndex].shareClaimed = MAX_SHARE - lockedShare;
                     totalTokenAmount += claimAmount;
                     emit Collected({
