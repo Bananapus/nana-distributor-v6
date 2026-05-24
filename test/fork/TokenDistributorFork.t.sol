@@ -290,7 +290,8 @@ contract TokenDistributorForkTest is Test {
             token: JBConstants.NATIVE_TOKEN,
             amount: 10 ether,
             currency: uint256(uint160(JBConstants.NATIVE_TOKEN)),
-            minTokensPaidOut: 0
+            minTokensPaidOut: 0,
+            referralProjectId: 0
         });
 
         // Verify distributor received funds.

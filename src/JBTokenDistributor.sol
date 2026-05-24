@@ -11,9 +11,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
+import {JBDistributor} from "./JBDistributor.sol";
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {IJBTokenDistributor} from "./interfaces/IJBTokenDistributor.sol";
-import {JBDistributor} from "./JBDistributor.sol";
+import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
@@ -42,17 +43,6 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JBTokenDistributor_Unauthorized(uint256 projectId, address caller);
-
-    //*********************************************************************//
-    // ----------------------------- structs ----------------------------- //
-    //*********************************************************************//
-
-    /// @dev Bundles claim-round parameters to avoid stack-too-deep errors.
-    struct ClaimContext {
-        address hook;
-        uint256 lastClaimableRound;
-        uint256 vestingReleaseRound;
-    }
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -303,8 +293,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         if (round == 0) return;
 
         // Current-round funding is excluded. It becomes claimable only after a later round starts.
-        ClaimContext memory ctx =
-            ClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
+        JBClaimContext memory ctx =
+            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {
@@ -339,7 +329,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param token The reward token to claim.
     /// @return tokenAmount The amount added to vesting.
     function _claimPastRewardsForTokenId(
-        ClaimContext memory ctx,
+        JBClaimContext memory ctx,
         uint256 tokenId,
         IERC20 token
     )

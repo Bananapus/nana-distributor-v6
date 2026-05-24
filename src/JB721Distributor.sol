@@ -8,17 +8,18 @@ import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
+import {JBDistributor} from "./JBDistributor.sol";
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
-import {JBDistributor} from "./JBDistributor.sol";
+import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
+import {JBVestContext} from "./structs/JBVestContext.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
 /// @notice A singleton distributor that distributes ERC-20 rewards to JB 721 NFT stakers with linear vesting.
@@ -42,28 +43,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice Thrown when the caller is not a terminal or controller for the project.
     error JB721Distributor_Unauthorized(uint256 projectId, address caller);
-
-    //*********************************************************************//
-    // ----------------------------- structs ----------------------------- //
-    //*********************************************************************//
-
-    /// @dev Bundles per-round vesting parameters to avoid stack-too-deep.
-    struct VestContext {
-        address hook;
-        IERC20 token;
-        uint256 distributable;
-        uint256 totalStakeAmount;
-        uint256 vestingReleaseRound;
-        uint256 rewardRound;
-        uint256 snapshotBlock;
-    }
-
-    /// @dev Bundles claim-round parameters to avoid stack-too-deep.
-    struct ClaimContext {
-        address hook;
-        uint256 lastClaimableRound;
-        uint256 vestingReleaseRound;
-    }
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -333,8 +312,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         if (round == 0) return;
 
         // Current-round funding is excluded. It becomes claimable only after a later round starts.
-        ClaimContext memory ctx =
-            ClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
+        JBClaimContext memory ctx =
+            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {
@@ -356,7 +335,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param token The reward token to claim.
     /// @return totalVestingAmount The amount added to vesting for this reward token.
     function _claimPastRewardsForToken(
-        ClaimContext memory ctx,
+        JBClaimContext memory ctx,
         uint256[] calldata tokenIds,
         IERC20 token
     )
@@ -393,7 +372,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                     _burnExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
                 } else if (rewardRound.totalStake != 0) {
                     // Bundle the fixed round data used by every NFT in the batch.
-                    VestContext memory vestCtx = VestContext({
+                    JBVestContext memory vestCtx = JBVestContext({
                         hook: ctx.hook,
                         token: token,
                         distributable: rewardRound.amount,
@@ -454,7 +433,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param tokenAmounts The cumulative amount to vest for each token ID in `tokenIds`.
     /// @return totalVestingAmount The amount added to vesting from this reward round.
     function _claimRewardRoundForTokenIds(
-        VestContext memory ctx,
+        JBVestContext memory ctx,
         uint256[] calldata tokenIds,
         uint256[] memory tokenAmounts
     )
@@ -501,7 +480,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @return tokenAmount The reward amount vested for this token ID.
     /// @return newUniqueCount The updated count of distinct snapshot owners after processing this token ID.
     function _claimRewardRoundForTokenId(
-        VestContext memory ctx,
+        JBVestContext memory ctx,
         uint256 tokenId,
         address[] memory owners,
         uint256[] memory consumed,
@@ -664,7 +643,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         returns (uint256 totalVestingAmount)
     {
         // Bundle iteration-constant parameters into a struct to avoid stack-too-deep errors.
-        VestContext memory ctx = VestContext({
+        JBVestContext memory ctx = JBVestContext({
             hook: hook,
             token: token,
             distributable: distributable,
@@ -862,7 +841,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @return tokenAmount The reward amount vested for this token ID (0 if skipped).
     /// @return newUniqueCount The updated count of distinct owners after processing this token ID.
     function _vestSingleToken(
-        VestContext memory ctx,
+        JBVestContext memory ctx,
         uint256 tokenId,
         address[] memory owners,
         uint256[] memory consumed,
