@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/// @notice A reward amount assigned to a specific token-distributor round.
+/// @notice A reward amount assigned to a specific distributor round.
 /// @custom:member amount The reward amount assigned to the round.
 /// @custom:member totalStake The aggregate stake at the round's snapshot block.
 /// @custom:member snapshotBlock The block used for per-account historical stake lookups.

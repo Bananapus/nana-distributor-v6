@@ -21,7 +21,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// vesting.
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their IVotes token)`.
-/// @dev The stake weight of each staker is their delegated voting power at round start (via `getPastVotes`).
+/// @dev The stake weight of each staker is their delegated voting power at the funded round's snapshot block.
 /// Holders must delegate (even to themselves) to participate.
 /// @dev Funded rewards are assigned to the funding round. Stakers claim historical rounds lazily; all unclaimed past
 /// rewards begin vesting when the staker claims, not when the rewards were funded.

@@ -255,6 +255,7 @@ contract DistributorRegressionFixesTest is Test {
         nftRewardToken.mint(address(this), 1500 ether);
         nftRewardToken.approve(address(nftDistributor), 1500 ether);
         nftDistributor.fund(address(hook), IERC20(address(nftRewardToken)), 1500 ether);
+        _advanceToRound(1, nftDistributor);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(nftRewardToken));
@@ -265,6 +266,7 @@ contract DistributorRegressionFixesTest is Test {
         // With the fix, consumed votes persist in storage across calls.
         uint256[] memory singleId = new uint256[](1);
 
+        vm.startPrank(alice);
         singleId[0] = 1;
         nftDistributor.beginVesting(address(hook), singleId, tokens);
 
@@ -273,6 +275,7 @@ contract DistributorRegressionFixesTest is Test {
 
         singleId[0] = 3;
         nftDistributor.beginVesting(address(hook), singleId, tokens);
+        vm.stopPrank();
 
         // Check claimed amounts.
         uint256 claimed1 = nftDistributor.claimedFor(address(hook), 1, IERC20(address(nftRewardToken)));

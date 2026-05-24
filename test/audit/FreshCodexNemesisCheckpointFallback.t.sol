@@ -85,6 +85,7 @@ contract FreshCodexNemesis721Hook {
     mapping(uint256 tokenId => address firstOwner) public firstOwnerOfToken;
     mapping(uint256 tokenId => uint256 firstTransferBlock) public firstTransferBlockOf;
     mapping(uint256 tokenId => address transferredTo) public transferredToOf;
+    mapping(uint256 tokenId => uint256 blockNumber) public mintBlockOf;
 
     constructor() {
         STORE = new FreshCodexNemesis721Store();
@@ -97,6 +98,7 @@ contract FreshCodexNemesis721Hook {
 
     function mint(uint256 tokenId, address owner) external {
         ownerOfToken[tokenId] = owner;
+        if (mintBlockOf[tokenId] == 0) mintBlockOf[tokenId] = block.number;
     }
 
     function transfer(uint256 tokenId, address to) external {
@@ -118,6 +120,9 @@ contract FreshCodexNemesis721Hook {
     }
 
     function ownerOfAtLikeInstalledCheckpoints(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        uint256 mintBlock = mintBlockOf[tokenId];
+        if (mintBlock == 0 || mintBlock > blockNumber) return address(0);
+
         uint256 firstTransferBlock = firstTransferBlockOf[tokenId];
         if (firstTransferBlock == 0 || firstTransferBlock > blockNumber) return firstOwnerOf(tokenId);
         return transferredToOf[tokenId];
@@ -125,7 +130,7 @@ contract FreshCodexNemesis721Hook {
 }
 
 contract FreshCodexNemesisCheckpointFallbackTest is Test {
-    function test_lateMintedReplacementConsumesSnapshotVotesBeforeRealSnapshotToken() public {
+    function test_lateMintedReplacementCannotConsumeSnapshotVotesBeforeRealSnapshotToken() public {
         address alice = address(0xA11CE);
         address bob = address(0xB0B);
 
@@ -134,15 +139,14 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
         FreshCodexNemesisRewardToken reward = new FreshCodexNemesisRewardToken();
         FreshCodexNemesis721Hook hook = new FreshCodexNemesis721Hook();
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
-
         hook.mint(1, alice);
         hook.checkpoints().setVotes(alice, 100 ether);
         hook.checkpoints().setTotalSupply(100 ether);
+        vm.roll(block.number + 1);
 
-        distributor.poke();
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
+        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
         uint256 snapshotBlock = distributor.roundSnapshotBlock(0);
         vm.roll(snapshotBlock + 2);
 
@@ -154,23 +158,27 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
 
         uint256[] memory lateTokenIds = new uint256[](1);
         lateTokenIds[0] = 2;
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(alice);
         distributor.beginVesting(address(hook), lateTokenIds, tokens);
 
         uint256[] memory realSnapshotTokenIds = new uint256[](1);
         realSnapshotTokenIds[0] = 1;
+        vm.prank(bob);
         distributor.beginVesting(address(hook), realSnapshotTokenIds, tokens);
 
-        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 100 ether);
-        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 0);
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 100 ether);
 
-        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), lateTokenIds, tokens, alice);
         vm.prank(bob);
         distributor.collectVestedRewards(address(hook), realSnapshotTokenIds, tokens, bob);
 
-        assertEq(reward.balanceOf(alice), 100 ether);
-        assertEq(reward.balanceOf(bob), 0);
+        assertEq(reward.balanceOf(alice), 0);
+        assertEq(reward.balanceOf(bob), 100 ether);
     }
 }

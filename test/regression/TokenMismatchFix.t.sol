@@ -68,6 +68,17 @@ contract TMVotesToken is ERC20, ERC20Votes {
     }
 }
 
+/// @notice Minimal 721 hook/checkpoints pair for JB721Distributor funding-path tests.
+contract TM721Checkpoints {
+    function getPastTotalSupply(uint256) external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract TM721Hook {
+    TM721Checkpoints public immutable checkpoints = new TM721Checkpoints();
+}
+
 // =========================================================================
 // Test: JBTokenDistributor token mismatch vulnerability
 // =========================================================================
@@ -243,9 +254,9 @@ contract TokenMismatch721DistributorTest is Test {
     TMMockDirectory directory;
     TMVictimToken victimToken;
     JB721Distributor distributor;
+    TM721Hook hook;
 
     address terminal = makeAddr("terminal");
-    address hook = makeAddr("nft-hook");
     uint256 projectId = 1;
 
     uint256 constant ROUND_DURATION = 100;
@@ -257,6 +268,7 @@ contract TokenMismatch721DistributorTest is Test {
 
         directory.setTerminal(projectId, terminal, true);
 
+        hook = new TM721Hook();
         distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
     }
 
@@ -265,7 +277,7 @@ contract TokenMismatch721DistributorTest is Test {
         JBSplit memory split = JBSplit({
             percent: 1_000_000_000,
             projectId: 0,
-            beneficiary: payable(hook),
+            beneficiary: payable(address(hook)),
             preferAddToBalance: false,
             lockedUntil: 0,
             hook: IJBSplitHook(address(distributor))
@@ -305,7 +317,7 @@ contract TokenMismatch721DistributorTest is Test {
 
         // Balance should be credited under NATIVE_TOKEN.
         assertEq(
-            distributor.balanceOf(hook, IERC20(JBConstants.NATIVE_TOKEN)),
+            distributor.balanceOf(address(hook), IERC20(JBConstants.NATIVE_TOKEN)),
             1 ether,
             "Native ETH split should credit balance under NATIVE_TOKEN"
         );
@@ -351,7 +363,9 @@ contract TokenMismatch721DistributorTest is Test {
         vm.stopPrank();
 
         assertEq(
-            distributor.balanceOf(hook, IERC20(address(victimToken))), victimAmount, "Victim balance should be credited"
+            distributor.balanceOf(address(hook), IERC20(address(victimToken))),
+            victimAmount,
+            "Victim balance should be credited"
         );
 
         // Step 2: Attack — send ETH but claim it as victimToken.
@@ -371,7 +385,7 @@ contract TokenMismatch721DistributorTest is Test {
 
         // Balance unaffected.
         assertEq(
-            distributor.balanceOf(hook, IERC20(address(victimToken))),
+            distributor.balanceOf(address(hook), IERC20(address(victimToken))),
             victimAmount,
             "Balance must remain unchanged after blocked attack"
         );

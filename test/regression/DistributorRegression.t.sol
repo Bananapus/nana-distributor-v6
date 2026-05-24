@@ -119,17 +119,21 @@ contract DistributorRegressionTest is Test {
         rewardToken.mint(address(this), 1500 ether);
         rewardToken.approve(address(distributor), 1500 ether);
         distributor.fund(address(hook), IERC20(address(rewardToken)), 1500 ether);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
         uint256[] memory oneTokenId = new uint256[](1);
+        vm.startPrank(alice);
         oneTokenId[0] = 1;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
         oneTokenId[0] = 2;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
         oneTokenId[0] = 3;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
+        vm.stopPrank();
 
         uint256 claimed1 = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
         uint256 claimed2 = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));

@@ -17,7 +17,7 @@ The package separates distribution mechanics by asset type:
 
 - `JBDistributor` coordinates shared round and vesting logic
 - `JBTokenDistributor` distributes ERC-20 balances using `IVotes` checkpointed voting power
-- `JB721Distributor` distributes value to 721 holders using checkpointed voting power, ensuring only holders at round start are eligible
+- `JB721Distributor` distributes value to 721 holders using checkpointed voting power, ensuring only holders at the funded round's snapshot block are eligible
 
 Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
 
@@ -31,13 +31,13 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 | --- | --- |
 | `JBDistributor` | Shared round-based vesting, claiming, and accounting logic. |
 | `JBTokenDistributor` | ERC-20 distributor keyed to `IVotes` checkpointed voting power. |
-| `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's `CHECKPOINTS()` module. Only NFTs held at round start are eligible. |
+| `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's `CHECKPOINTS()` module. Only NFTs held at the funded round's snapshot block are eligible. |
 
 ## Mental Model
 
 1. a project funds the distributor, often through a payout split
-2. token-distributor funding is assigned to the funding round; 721 distributions snapshot when vesting begins
-3. token stakers later claim all past reward rounds into a fresh vesting entry
+2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
+3. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
 4. recipients collect their vested share as the configured vesting schedule unlocks
 5. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
 
@@ -53,8 +53,8 @@ This repo does not explain why an allocation exists. It only defines how funded 
 ## Integration Traps
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
-- ERC-20 and ERC-721 distributions share vesting math, but token rewards are now historical and owner-claimed while
-  721 rewards use the shared permissionless vesting flow
+- ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
+  token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
 - `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token path
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
@@ -62,7 +62,7 @@ This repo does not explain why an allocation exists. It only defines how funded 
 ## Where State Lives
 
 - round and vesting state: `JBDistributor`
-- token snapshot inputs: `JBTokenSnapshotData`
+- historical reward-round inputs: `JBRewardRoundData`
 - vesting schedule state: `JBVestingData`
 - asset-specific claim behavior: the concrete distributor
 

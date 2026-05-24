@@ -74,6 +74,7 @@ contract CodexNemesis721Hook {
     mapping(uint256 tokenId => address firstOwner) public firstOwnerOfToken;
     mapping(uint256 tokenId => uint256 firstCheckpointBlock) public firstCheckpointBlockOf;
     mapping(uint256 tokenId => address checkpointOwner) public checkpointOwnerOf;
+    mapping(uint256 tokenId => uint256 blockNumber) public mintBlockOf;
 
     constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints_) {
         STORE = store;
@@ -92,6 +93,7 @@ contract CodexNemesis721Hook {
 
     function mint(address owner, uint256 tokenId) external {
         ownerOf[tokenId] = owner;
+        if (mintBlockOf[tokenId] == 0) mintBlockOf[tokenId] = block.number;
     }
 
     function transferToken(address to, uint256 tokenId) external {
@@ -103,6 +105,9 @@ contract CodexNemesis721Hook {
     }
 
     function ownerOfAtLikeInstalledCheckpoints(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        uint256 mintBlock = mintBlockOf[tokenId];
+        if (mintBlock == 0 || mintBlock > blockNumber) return address(0);
+
         uint256 checkpointBlock = firstCheckpointBlockOf[tokenId];
         if (checkpointBlock == 0 || checkpointBlock > blockNumber) {
             address first = firstOwnerOfToken[tokenId];
@@ -119,7 +124,7 @@ contract CodexNemesis721OwnerOfAtFallbackTest is Test {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
 
-    function test_lateMintedReplacementConsumesSnapshotVotesBeforeRealSnapshotToken() public {
+    function test_lateMintedReplacementCannotConsumeSnapshotVotesBeforeRealSnapshotToken() public {
         JB721Distributor distributor =
             new JB721Distributor(IJBDirectory(address(new CodexNemesisDirectory())), ROUND_DURATION, VESTING_ROUNDS);
         CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
@@ -127,16 +132,14 @@ contract CodexNemesis721OwnerOfAtFallbackTest is Test {
         CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();
         CodexNemesis721Hook hook = new CodexNemesis721Hook(store, checkpoints);
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
-
         hook.mint(alice, 1);
         checkpoints.setVotes(alice, 100 ether);
         checkpoints.setTotalSupply(100 ether);
-
         vm.roll(block.number + 1);
-        distributor.poke();
+
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
+        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
         uint256 snapshotBlock = distributor.roundSnapshotBlock(0);
 
         vm.roll(snapshotBlock + 2);
@@ -147,16 +150,21 @@ contract CodexNemesis721OwnerOfAtFallbackTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+
         tokenIds[0] = 2;
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         tokenIds[0] = 1;
+        vm.prank(bob);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 100 ether);
-        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 0);
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 100 ether);
 
-        vm.warp(block.timestamp + ROUND_DURATION);
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
 
         tokenIds[0] = 2;
         vm.prank(alice);
@@ -166,7 +174,7 @@ contract CodexNemesis721OwnerOfAtFallbackTest is Test {
         vm.prank(bob);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, bob);
 
-        assertEq(reward.balanceOf(alice), 100 ether);
-        assertEq(reward.balanceOf(bob), 0);
+        assertEq(reward.balanceOf(alice), 0);
+        assertEq(reward.balanceOf(bob), 100 ether);
     }
 }

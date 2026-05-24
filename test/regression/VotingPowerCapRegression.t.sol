@@ -288,6 +288,7 @@ contract VotingPowerCapRegressionTest is Test {
         // (store has initialSupply=10, remainingSupply=7, so 3 minted)
 
         _fundHook(1500 ether);
+        _advanceToRound(1);
 
         uint256[] memory tokenIds = new uint256[](3);
         tokenIds[0] = 1;
@@ -296,6 +297,7 @@ contract VotingPowerCapRegressionTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Without the cap, Alice would get: mulDiv(1500, 50, 150) * 3 = 500 * 3 = 1500 ether.
@@ -332,6 +334,7 @@ contract VotingPowerCapRegressionTest is Test {
         hook._checkpoints().setVotesOverride(alice, 100);
 
         _fundHook(1500 ether);
+        _advanceToRound(1);
 
         // Only vest token 1.
         uint256[] memory tokenIds = new uint256[](1);
@@ -339,6 +342,7 @@ contract VotingPowerCapRegressionTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // With 1 NFT at 50 voting units, pastVotes=100 is more than enough.

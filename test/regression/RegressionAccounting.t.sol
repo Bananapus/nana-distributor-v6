@@ -265,12 +265,15 @@ contract RegressionAccountingTest is Test {
         rewardToken.mint(address(this), 1000 ether);
         rewardToken.approve(address(distributor), 1000 ether);
         distributor.fund(address(hook), IERC20(address(rewardToken)), 1000 ether);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
         uint256[] memory firstLateMint = new uint256[](1);
         firstLateMint[0] = 2;
+        vm.prank(attacker);
         distributor.beginVesting(address(hook), firstLateMint, tokens);
 
         assertEq(distributor.claimedFor(address(hook), 2, tokens[0]), 0);
@@ -325,17 +328,21 @@ contract RegressionAccountingTest is Test {
         rewardToken.mint(address(this), 1000 ether);
         rewardToken.approve(address(distributor), 1000 ether);
         distributor.fund(address(hook), IERC20(address(rewardToken)), 1000 ether);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
         uint256[] memory firstLateMint = new uint256[](1);
         firstLateMint[0] = 2;
+        vm.startPrank(attacker);
         distributor.beginVesting(address(hook), firstLateMint, tokens);
 
         uint256[] memory secondLateMint = new uint256[](1);
         secondLateMint[0] = 3;
         distributor.beginVesting(address(hook), secondLateMint, tokens);
+        vm.stopPrank();
 
         // FIX: With persistent consumed-votes tracking, the second beginVesting sees
         // that all 100 votes are already consumed, so token 3 gets 0 reward.
@@ -353,7 +360,7 @@ contract RegressionAccountingTest is Test {
         );
 
         // Collection should succeed without underflow.
-        vm.warp(distributor.roundStartTimestamp(VESTING_ROUNDS) + 1);
+        vm.warp(distributor.roundStartTimestamp(VESTING_ROUNDS + 1) + 1);
         vm.roll(block.number + 1);
         vm.prank(attacker);
         distributor.collectVestedRewards(address(hook), firstLateMint, tokens, attacker);

@@ -6,7 +6,7 @@
 
 ## System Overview
 
-`JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` uses the shared permissionless vesting flow with checkpointed voting power from the hook's `CHECKPOINTS()` module, ensuring only NFTs held at round start are eligible.
+`JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` now follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
 Both variants can be used as `IJBSplitHook` receivers.
 
@@ -45,13 +45,14 @@ fund token distributor
   -> one fresh vesting entry starts at claim time
 ```
 
-### 721 Begin Vesting
+### 721 Funding And Claim
 
 ```text
-funded 721 distributor
-  -> begin a round
-  -> snapshot stake and tracked balance for that round
-  -> record vesting entries for requested token IDs
+fund 721 distributor
+  -> assign accepted amount to current reward round
+  -> record snapshot block and total 721 checkpointed stake for that round
+  -> current NFT owner later claims rounds <= currentRound - 1
+  -> one fresh vesting entry starts at claim time
 ```
 
 ### Collect
@@ -74,7 +75,7 @@ The main variables are snapshot balance, total vesting amount, and the stake sou
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
 - split-funding caller assumptions matter because `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`
-- 721 and token variants intentionally differ in authority and forfeiture behavior
+- 721 and token variants intentionally differ in ownership model and forfeiture behavior
 
 ## Safe Change Guide
 

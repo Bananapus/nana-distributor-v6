@@ -29,6 +29,17 @@ contract _FotDirectory {
     }
 }
 
+/// @notice Minimal 721 hook/checkpoints pair for funding-only tests.
+contract _FotCheckpoints {
+    function getPastTotalSupply(uint256) external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract _Fot721Hook {
+    _FotCheckpoints public immutable checkpoints = new _FotCheckpoints();
+}
+
 /// @notice Pins `JBDistributor._acceptErc20FundsFrom`'s balance-delta crediting against a real fee-on-transfer
 /// token implementation. Without this test the central new mechanism in the audit-hardening PR (delta-based
 /// accounting) is unproven for the token class it was designed to support.
@@ -38,12 +49,13 @@ contract FeeOnTransferFundingTest is Test {
 
     JB721Distributor internal distributor;
     _FotDirectory internal directory;
+    _Fot721Hook internal hook;
     MockFeeOnTransferToken internal fotToken; // 1% fee
-    address internal hook = address(0xBEEF);
     address internal funder = address(0xCAFE);
 
     function setUp() public {
         directory = new _FotDirectory();
+        hook = new _Fot721Hook();
         distributor = new JB721Distributor(IJBDirectory(address(directory)), _ROUND_DURATION, _VESTING_ROUNDS);
         fotToken = new MockFeeOnTransferToken({_feeBps: 100}); // 1%
         fotToken.mint(funder, 1000e18);
@@ -58,13 +70,13 @@ contract FeeOnTransferFundingTest is Test {
         uint256 expectedFee = nominal / 100; // 1%
         uint256 expectedCredit = nominal - expectedFee;
 
-        uint256 hookBalanceBefore = distributor.balanceOf(hook, IERC20(address(fotToken)));
+        uint256 hookBalanceBefore = distributor.balanceOf(address(hook), IERC20(address(fotToken)));
         uint256 actualBalanceBefore = fotToken.balanceOf(address(distributor));
 
         vm.prank(funder);
-        distributor.fund(hook, IERC20(address(fotToken)), nominal);
+        distributor.fund(address(hook), IERC20(address(fotToken)), nominal);
 
-        uint256 hookBalanceAfter = distributor.balanceOf(hook, IERC20(address(fotToken)));
+        uint256 hookBalanceAfter = distributor.balanceOf(address(hook), IERC20(address(fotToken)));
         uint256 actualBalanceAfter = fotToken.balanceOf(address(distributor));
 
         assertEq(
@@ -74,7 +86,7 @@ contract FeeOnTransferFundingTest is Test {
         );
         assertEq(actualBalanceAfter - actualBalanceBefore, expectedCredit, "real token balance matches credited delta");
         assertEq(
-            distributor.balanceOf(hook, IERC20(address(fotToken))),
+            distributor.balanceOf(address(hook), IERC20(address(fotToken))),
             actualBalanceAfter,
             "accounted balance never exceeds actual on-chain balance"
         );
@@ -87,11 +99,11 @@ contract FeeOnTransferFundingTest is Test {
 
         for (uint256 i; i < 5; ++i) {
             vm.prank(funder);
-            distributor.fund(hook, IERC20(address(fotToken)), nominal);
+            distributor.fund(address(hook), IERC20(address(fotToken)), nominal);
         }
 
         assertEq(
-            distributor.balanceOf(hook, IERC20(address(fotToken))),
+            distributor.balanceOf(address(hook), IERC20(address(fotToken))),
             expectedPerCall * 5,
             "accumulated credit equals sum of per-call deltas"
         );
@@ -105,7 +117,7 @@ contract FeeOnTransferFundingTest is Test {
     function test_fund_feeOnTransfer_doesNotTriggerReentrancyGuard() public {
         vm.prank(funder);
         // Reverts inside the guard would surface here; the FOT path is not reentrant on its own.
-        distributor.fund(hook, IERC20(address(fotToken)), 1e18);
+        distributor.fund(address(hook), IERC20(address(fotToken)), 1e18);
         // If we got here, the guard didn't false-positive on a plain FOT transfer.
     }
 }

@@ -19,7 +19,6 @@ import {JB721Distributor} from "../src/JB721Distributor.sol";
 import {JBDistributor} from "../src/JBDistributor.sol";
 import {IJBDistributor} from "../src/interfaces/IJBDistributor.sol";
 import {IJB721Distributor} from "../src/interfaces/IJB721Distributor.sol";
-import {JBTokenSnapshotData} from "../src/structs/JBTokenSnapshotData.sol";
 
 /// @notice Mock JB directory for testing.
 contract MockDirectory {
@@ -122,6 +121,7 @@ contract MockHook {
     MockCheckpoints public _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
+    mapping(uint256 tokenId => mapping(uint256 blockNumber => address owner)) public historicalOwnerOf;
 
     constructor(MockStore store) {
         _store = store;
@@ -147,6 +147,9 @@ contract MockHook {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
+        address historicalOwner = historicalOwnerOf[tokenId][blockNumber];
+        if (historicalOwner != address(0)) return historicalOwner;
+
         uint256 mintBlock = _store.mintBlockOf(address(this), tokenId);
         if (mintBlock != 0 && mintBlock > blockNumber) return address(0);
         return owners[tokenId];
@@ -154,6 +157,10 @@ contract MockHook {
 
     function setOwner(uint256 tokenId, address owner) external {
         owners[tokenId] = owner;
+    }
+
+    function setHistoricalOwner(uint256 tokenId, uint256 blockNumber, address owner) external {
+        historicalOwnerOf[tokenId][blockNumber] = owner;
     }
 
     function burn(uint256 tokenId) external {
@@ -314,13 +321,41 @@ contract JB721DistributorTest is Test {
         distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
-    function _beginVestingBoth() internal {
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = 1;
-        tokenIds[1] = 2;
-        IERC20[] memory tokens = new IERC20[](1);
+    function _advanceToNextRound() internal {
+        _advanceToRound(distributor.currentRound() + 1);
+    }
+
+    function _singleTokenId(uint256 tokenId) internal pure returns (uint256[] memory tokenIds) {
+        tokenIds = new uint256[](1);
+        tokenIds[0] = tokenId;
+    }
+
+    function _singleRewardToken() internal view returns (IERC20[] memory tokens) {
+        tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
+    }
+
+    function _beginVestingFor(uint256 tokenId, IERC20[] memory tokens) internal {
+        address owner = hook.owners(tokenId);
+        vm.prank(owner);
+        distributor.beginVesting(address(hook), _singleTokenId(tokenId), tokens);
+    }
+
+    function _beginVestingFor(address hookAddress, uint256 tokenId, IERC20[] memory tokens, address owner) internal {
+        vm.prank(owner);
+        distributor.beginVesting(hookAddress, _singleTokenId(tokenId), tokens);
+    }
+
+    function _beginVestingFor(address owner, uint256[] memory tokenIds, IERC20[] memory tokens) internal {
+        vm.prank(owner);
         distributor.beginVesting(address(hook), tokenIds, tokens);
+    }
+
+    function _beginVestingBoth() internal {
+        _advanceToNextRound();
+        IERC20[] memory tokens = _singleRewardToken();
+        _beginVestingFor(1, tokens);
+        _beginVestingFor(2, tokens);
     }
 
     function _splitContext(address token, uint256 amount) internal view returns (JBSplitHookContext memory) {
@@ -405,16 +440,15 @@ contract JB721DistributorTest is Test {
 
         _advanceToRound(2);
 
-        // lockedShare = (4-2)*100000/4 = 50000.
-        // collectableFor = mulDiv(250e18, 100000 - 0 - 50000, 100000) = 125e18.
-        assertEq(distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken))), 125 ether);
+        // Claim happened in round 1, so round 2 is 25% vested.
+        assertEq(distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken))), 62.5 ether);
     }
 
     function test_collectableFor_atFull() public {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // lockedShare = 0. collectableFor = 250e18.
         assertEq(distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
@@ -424,17 +458,11 @@ contract JB721DistributorTest is Test {
     function test_snapshotAtRoundOf() public {
         _fundHook(1000 ether);
 
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 1;
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        JBTokenSnapshotData memory snapshot =
-            distributor.snapshotAtRoundOf(address(hook), IERC20(address(rewardToken)), 0);
-        assertEq(snapshot.balance, 1000 ether);
-        assertEq(snapshot.vestingAmount, 0); // No prior vesting.
+        (uint256 amount, uint256 totalStake,, bool initialized) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        assertEq(amount, 1000 ether);
+        assertEq(totalStake, 400);
+        assertTrue(initialized);
     }
 
     function test_vestingDataOf() public {
@@ -443,7 +471,7 @@ contract JB721DistributorTest is Test {
 
         (uint256 releaseRound, uint256 amount, uint256 shareClaimed) =
             distributor.vestingDataOf(address(hook), 1, IERC20(address(rewardToken)), 0);
-        assertEq(releaseRound, VESTING_ROUNDS); // round 0 + vestingRounds.
+        assertEq(releaseRound, 1 + VESTING_ROUNDS); // claimed in round 1.
         assertEq(amount, 250 ether);
         assertEq(shareClaimed, 0);
     }
@@ -455,7 +483,7 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.latestVestedIndexOf(address(hook), 1, IERC20(address(rewardToken))), 0);
 
         // Collect fully -> latestVestedIndex should advance.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
         vm.prank(alice);
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = 1;
@@ -510,11 +538,13 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = nativeToken;
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
         assertEq(distributor.claimedFor(address(hook), 1, nativeToken), 25 ether);
 
         // Advance past full vesting.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Alice collects.
         uint256 aliceBalBefore = alice.balance;
@@ -545,6 +575,8 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Only token 1 vesting: 250 ether.
@@ -559,9 +591,12 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Second call in same round should silently skip (not revert).
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Only one vesting entry should exist.
@@ -576,11 +611,14 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Move to next round, add more funds, should succeed.
-        _advanceToRound(1);
         _fundHook(500 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Two vesting entries for token 1.
@@ -597,20 +635,23 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(hook), tokenIds1, tokens);
-
-        // Mint more tokens — but snapshot already taken for this round.
+        // Add more rewards in the same funding round.
         _fundHook(500 ether);
 
-        // Second call in same round with different tokenId should reuse snapshot.
+        _advanceToNextRound();
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds1, tokens);
+
+        // Second call in same claim round with different tokenId uses the same historical reward round.
         uint256[] memory tokenIds2 = new uint256[](1);
         tokenIds2[0] = 2;
 
+        vm.prank(bob);
         distributor.beginVesting(address(hook), tokenIds2, tokens);
 
-        // Both should be based on original 1000 ether snapshot.
-        // Token 1: 250e18, Token 2: 500e18. Total = 750e18.
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 750 ether);
+        // Both fundings in round 0 share the same snapshot and reward pot.
+        // Token 1: 375e18, Token 2: 750e18. Total = 1125e18.
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 1125 ether);
     }
 
     function test_beginVesting_emitsClaimedEvent() public {
@@ -622,8 +663,10 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         vm.expectEmit(true, true, false, true);
-        emit IJBDistributor.Claimed(address(hook), 1, IERC20(address(rewardToken)), 250 ether, VESTING_ROUNDS);
+        emit IJBDistributor.Claimed(address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS);
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
     }
 
@@ -676,17 +719,17 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
         assertEq(rewardToken.balanceOf(alice), 250 ether);
-        // Auto-vest during collect created a new entry (25% of 750 undistributed = 187.5 ether).
-        // That entry is fully locked at collection time and remains in totalVesting.
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 187.5 ether);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
     }
 
     function test_collectVestedRewards_partialVesting_exactAmounts() public {
@@ -697,29 +740,27 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Warp forward 2 of 4 rounds (50%).
-        _advanceToRound(2);
+        _advanceToRound(3);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
-        // Entry 0 (250e18, release=4): 50% unlocked → 125 ether.
-        // Auto-vest entry (187.5e18, release=6): 100% locked → 0.
+        // Entry 0 (250e18, release=5): 50% unlocked → 125 ether.
         assertEq(rewardToken.balanceOf(alice), 125 ether);
 
         // Warp forward remaining 2 rounds.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
         // Entry 0 remaining: 125 ether.
-        // Entry 1 (187.5e18, release=6): 50% unlocked at round 4 → 93.75 ether.
-        // Entry 2 (auto-vest round 4, release=8): 100% locked → 0.
-        // Total: 125 + 125 + 93.75 = 343.75.
-        assertEq(rewardToken.balanceOf(alice), 343.75 ether);
+        assertEq(rewardToken.balanceOf(alice), 250 ether);
     }
 
     function test_collectVestedRewards_quarterVesting() public {
@@ -730,10 +771,12 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Warp forward 1 of 4 rounds (25%).
-        _advanceToRound(1);
+        _advanceToRound(2);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -750,10 +793,12 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Warp forward 3 of 4 rounds (75%).
-        _advanceToRound(3);
+        _advanceToRound(4);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -770,8 +815,10 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(bob);
         vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
@@ -799,11 +846,13 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.expectEmit(true, true, false, true);
-        emit IJBDistributor.Collected(address(hook), 1, IERC20(address(rewardToken)), 250 ether, VESTING_ROUNDS);
+        emit IJBDistributor.Collected(address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -817,8 +866,10 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Alice sends to charlie.
         vm.prank(alice);
@@ -836,7 +887,7 @@ contract JB721DistributorTest is Test {
         _fundHook(1000 ether);
 
         // Advance past full vesting WITHOUT calling beginVesting.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Alice calls collectVestedRewards directly — auto-vest should create a vesting entry.
         uint256[] memory tokenIds = new uint256[](1);
@@ -882,11 +933,13 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 250 ether);
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
         hook.burn(1);
 
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, alice);
@@ -904,10 +957,12 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Warp forward 2 of 4 rounds.
-        _advanceToRound(2);
+        _advanceToRound(3);
         hook.burn(1);
 
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, alice);
@@ -930,7 +985,9 @@ contract JB721DistributorTest is Test {
         store.setBurnedFor(2, 1);
 
         _fundHook(1000 ether);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _advanceToNextRound();
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), tokens);
 
         // Only token 1 should vest. Total stake = (2)*100 = 200 (burned excluded).
         // Token 1 stake = 100 → 100/200 = 50% of 1000 = 500 ether.
@@ -938,9 +995,10 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 500 ether);
 
         // Next round should work fine — no underflow.
-        _advanceToRound(1);
         _fundHook(1 ether);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _advanceToNextRound();
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), tokens);
     }
 
     function test_releaseForfeitedRewards_notBurned_reverts() public {
@@ -951,6 +1009,8 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
@@ -992,13 +1052,15 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(rewardToken));
         tokens[1] = IERC20(address(rewardToken2));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Token 1 share = 100/400 = 25%.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 250 ether);
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken2))), 125 ether);
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -1019,26 +1081,148 @@ contract JB721DistributorTest is Test {
 
         // Round 0: fund 1000 and vest.
         _fundHook(1000 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Token 1 gets 250e18 from round 0.
 
         // Move to round 1: fund 400 more and vest.
-        _advanceToRound(1);
         _fundHook(400 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // Snapshot at round 1: balance = 1400 ether (1000 funded + 400 new), vestingAmount = 250e18.
-        // distributable = 1400e18 - 250e18 = 1150e18.
-        // Token 1 gets mulDiv(1150e18, 100, 400) = 287.5e18 from round 1.
+        // Token 1 gets 25% of the round 1 funding, or 100e18.
 
         // Move past all vesting.
-        _advanceToRound(1 + VESTING_ROUNDS);
+        _advanceToRound(2 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
-        assertEq(rewardToken.balanceOf(alice), 250 ether + 287.5 ether);
+        assertEq(rewardToken.balanceOf(alice), 250 ether + 100 ether);
+    }
+
+    function test_delayedClaim_cumulativeRewardsStartVestingWhenClaimed() public {
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        // Round 0 funding belongs to round 0.
+        _fundHook(1000 ether);
+
+        // Round 1 funding belongs to round 1.
+        _advanceToRound(1);
+        _fundHook(400 ether);
+
+        // Alice first shows up in round 2, so both completed reward rounds start vesting now.
+        _advanceToRound(2);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 350 ether);
+
+        (uint256 releaseRound, uint256 amount, uint256 shareClaimed) =
+            distributor.vestingDataOf(address(hook), 1, IERC20(address(rewardToken)), 0);
+        assertEq(releaseRound, 2 + VESTING_ROUNDS);
+        assertEq(amount, 350 ether);
+        assertEq(shareClaimed, 0);
+        assertEq(distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken))), 0);
+
+        _advanceToRound(2 + VESTING_ROUNDS);
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
+
+        assertEq(rewardToken.balanceOf(alice), 350 ether);
+    }
+
+    function test_currentRoundRewardsExcludedUntilNextRound() public {
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        _fundHook(1000 ether);
+
+        _advanceToRound(1);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+
+        // Funding in round 1 is not claimable during round 1.
+        _fundHook(400 ether);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+
+        _advanceToRound(2);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 350 ether);
+    }
+
+    function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        hook.CHECKPOINTS().setVotesOverride(alice, 100);
+        hook.CHECKPOINTS().setVotesOverride(charlie, 0);
+
+        _fundHook(1000 ether);
+        (,, uint256 snapshotBlock,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        hook.setHistoricalOwner(1, snapshotBlock, alice);
+
+        // The NFT transfers before anyone claims, so the current owner is the only account authorized to claim.
+        hook.setOwner(1, charlie);
+
+        _advanceToRound(1);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        vm.prank(charlie);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        // The amount proves the claim used Alice's snapshot votes, not Charlie's current zero votes.
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+    }
+
+    function test_lateMintCannotClaimHistoricalRewardRound() public {
+        uint256 lateTokenId = 3;
+        store.setTokenTier(lateTokenId, 1);
+
+        _fundHook(1000 ether);
+        (,, uint256 snapshotBlock,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+
+        hook.setOwner(lateTokenId, charlie);
+        store.setMintBlock(address(hook), lateTokenId, snapshotBlock + 1);
+
+        _advanceToRound(1);
+
+        vm.prank(charlie);
+        distributor.beginVesting(address(hook), _singleTokenId(lateTokenId), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), lateTokenId, IERC20(address(rewardToken))), 0);
+    }
+
+    function test_ownerVotingCapPersistsAcrossSeparateDelayedClaims() public {
+        IERC20[] memory tokens = _singleRewardToken();
+
+        hook.setOwner(2, alice);
+        hook.CHECKPOINTS().setVotesOverride(alice, 100);
+        hook.CHECKPOINTS().setTotalSupplyOverride(100);
+
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), tokens);
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 1000 ether);
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(2), tokens);
+
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 0);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
     }
 
     // =====================================================================
@@ -1055,22 +1239,23 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // First vesting creates snapshot.
-        distributor.beginVesting(address(hook), tokenIds1, tokens);
-
-        // Add more funds.
+        // Add more funds in the same reward round.
         _fundHook(500 ether);
 
-        // Second vesting in same round reuses snapshot.
+        _advanceToNextRound();
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), tokenIds1, tokens);
+
+        // Second vesting in the same claim round reuses the historical reward round.
+        vm.prank(bob);
         distributor.beginVesting(address(hook), tokenIds2, tokens);
 
-        // Both should be based on original 1000 ether snapshot.
-        // Token 1: 250e18, Token 2: 500e18. Total = 750e18.
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 750 ether);
+        // Both fundings share the round 0 reward pot.
+        // Token 1: 375e18, Token 2: 750e18. Total = 1125e18.
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 1125 ether);
 
-        JBTokenSnapshotData memory snapshot =
-            distributor.snapshotAtRoundOf(address(hook), IERC20(address(rewardToken)), 0);
-        assertEq(snapshot.balance, 1000 ether);
+        (uint256 amount,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        assertEq(amount, 1500 ether);
     }
 
     // =====================================================================
@@ -1106,7 +1291,7 @@ contract JB721DistributorTest is Test {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Collect both.
         uint256[] memory aliceIds = new uint256[](1);
@@ -1123,8 +1308,7 @@ contract JB721DistributorTest is Test {
 
         assertEq(rewardToken.balanceOf(alice), 250 ether);
         assertEq(rewardToken.balanceOf(bob), 500 ether);
-        // Auto-vest during collect created new entries: 62.5 (alice) + 125 (bob) = 187.5 ether.
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 187.5 ether);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
         // 250 ether remains undistributed (remaining 25% of stake not claimed by any token).
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 250 ether);
     }
@@ -1163,11 +1347,13 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 totalClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
-        _advanceToRound(rounds);
+        _advanceToRound(1 + rounds);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -1190,11 +1376,13 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 totalClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -1214,9 +1402,11 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(2);
+        _advanceToRound(3);
 
         // Check collectableFor equals what we actually collect.
         uint256 collectable = distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken)));
@@ -1238,20 +1428,20 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 totalClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
         // Collect at each round.
         for (uint256 r = 1; r <= VESTING_ROUNDS; r++) {
-            _advanceToRound(r);
+            _advanceToRound(1 + r);
             vm.prank(alice);
             distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
         }
 
-        // Alice receives at least totalClaimed from the original vest.
-        // Auto-vest during each collect redistributes from the undistributed pool, adding more.
-        assertGe(rewardToken.balanceOf(alice), totalClaimed);
+        assertEq(rewardToken.balanceOf(alice), totalClaimed);
     }
 
     // =====================================================================
@@ -1310,6 +1500,7 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](0);
 
         // Should succeed with no-op for outer loop.
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
     }
 
@@ -1334,8 +1525,10 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -1362,8 +1555,10 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Transfer token 1 from alice to charlie.
         hook.setOwner(1, charlie);
@@ -1391,31 +1586,33 @@ contract JB721DistributorTest is Test {
 
         // Round 0: vest
         _fundHook(1000 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Round 1: vest
-        _advanceToRound(1);
         _fundHook(400 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Round 2: vest
-        _advanceToRound(2);
         _fundHook(200 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // Warp past all vesting (round 2 + 4 = round 6 releases last entry).
-        _advanceToRound(2 + VESTING_ROUNDS);
+        // Warp past all vesting (round 3 + 4 = round 7 releases last entry).
+        _advanceToRound(3 + VESTING_ROUNDS);
 
         uint256 totalClaimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
-        // Should collect all three entries (auto-vest entry is 100% locked, contributes 0).
         assertEq(rewardToken.balanceOf(alice), totalClaimed);
         assertEq(distributor.latestVestedIndexOf(address(hook), 1, IERC20(address(rewardToken))), 3);
-        // Auto-vest during collect created a new entry from the undistributed pool.
-        assertGt(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
     }
 
     function test_threeVestingEntries_partialCollect_skipsLockedEntries() public {
@@ -1424,26 +1621,30 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // Round 0: vest -> releaseRound = 4
+        // Round 0 funding -> claim in round 1 -> releaseRound = 5
         _fundHook(1000 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
         uint256 claimed0 = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
-        // Round 1: vest -> releaseRound = 5
-        _advanceToRound(1);
+        // Round 1 funding -> claim in round 2 -> releaseRound = 6
         _fundHook(400 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // Round 2: vest -> releaseRound = 6
-        _advanceToRound(2);
+        // Round 2 funding -> claim in round 3 -> releaseRound = 7
         _fundHook(200 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Record total claimed before any collection.
         uint256 totalClaimedBefore = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
 
-        // Collect at round 4: entry[0] fully vested, entry[1] partially, entry[2] more locked.
-        _advanceToRound(4);
+        // Collect at round 5: entry[0] fully vested, entry[1] partially, entry[2] more locked.
+        _advanceToRound(5);
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
@@ -1452,23 +1653,21 @@ contract JB721DistributorTest is Test {
         assertGt(firstCollect, 0);
         assertGe(firstCollect, claimed0);
 
-        // Collect at round 5: entry[1] fully vests, entry[2] partially.
-        _advanceToRound(5);
+        // Collect at round 6: entry[1] fully vests, entry[2] partially.
+        _advanceToRound(6);
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
         uint256 secondCollect = rewardToken.balanceOf(alice);
         assertGt(secondCollect, firstCollect);
 
-        // Collect at round 6: entry[2] fully vests.
-        _advanceToRound(6);
+        // Collect at round 7: entry[2] fully vests.
+        _advanceToRound(7);
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
-        // Alice received at least her original three entries (auto-vest adds more from undistributed pool).
-        assertGe(rewardToken.balanceOf(alice), totalClaimedBefore);
-        // Original three entries are fully exhausted; auto-vest entries may have remaining amounts.
-        assertGe(distributor.latestVestedIndexOf(address(hook), 1, IERC20(address(rewardToken))), 3);
+        assertEq(rewardToken.balanceOf(alice), totalClaimedBefore);
+        assertEq(distributor.latestVestedIndexOf(address(hook), 1, IERC20(address(rewardToken))), 3);
     }
 
     /// @notice collectVestedRewards now matches collectableFor even with multiple stacked entries.
@@ -1479,17 +1678,21 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         _fundHook(1000 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(1);
         _fundHook(400 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(2);
         _fundHook(200 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(4);
+        _advanceToRound(5);
 
         uint256 preview = distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken)));
 
@@ -1514,26 +1717,26 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Partial collect at 50%.
-        _advanceToRound(2);
+        _advanceToRound(3);
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
         assertEq(rewardToken.balanceOf(alice), 125 ether);
 
         uint256 vestingAfterPartial = distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken)));
-        // 250 - 125 collected + 187.5 auto-vest = 312.5 remaining.
-        assertEq(vestingAfterPartial, 312.5 ether);
+        assertEq(vestingAfterPartial, 125 ether);
 
         // Burn and release remaining forfeited rewards.
         hook.burn(1);
 
-        _advanceToRound(4);
+        _advanceToRound(5);
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
 
-        // Auto-vest entry (187.5, release=6) is 50% locked at round 4: 93.75 stays as phantom vesting.
-        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 93.75 ether);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
         // Alice keeps what she collected, no more sent.
         assertEq(rewardToken.balanceOf(alice), 125 ether);
     }
@@ -1547,7 +1750,7 @@ contract JB721DistributorTest is Test {
         _beginVestingBoth();
 
         // Burn token 1 and forfeit after full vest.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
         hook.burn(1);
         store.setBurnedFor(1, 1);
 
@@ -1562,19 +1765,7 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 500 ether);
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
 
-        // Move to next round. The forfeited 250 is now distributable.
-        _advanceToRound(VESTING_ROUNDS + 1);
-
-        // Vest token 2 again (new round).
-        uint256[] memory tokenIds2 = new uint256[](1);
-        tokenIds2[0] = 2;
-        distributor.beginVesting(address(hook), tokenIds2, tokens);
-
-        // Token 2 should get 200/200 = 100% of 500 distributable = 500 ether from the new round.
-        JBTokenSnapshotData memory snap =
-            distributor.snapshotAtRoundOf(address(hook), IERC20(address(rewardToken)), distributor.currentRound());
-        assertEq(snap.balance, 1000 ether);
-        assertEq(snap.vestingAmount, 500 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
     }
 
     // =====================================================================
@@ -1621,7 +1812,7 @@ contract JB721DistributorTest is Test {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         uint256[] memory tokenIds = new uint256[](2);
         tokenIds[0] = 1;
@@ -1644,7 +1835,7 @@ contract JB721DistributorTest is Test {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         IERC20 token = IERC20(address(rewardToken));
         assertEq(distributor.collectableFor(address(hook), 1, token), distributor.claimedFor(address(hook), 1, token));
@@ -1663,20 +1854,21 @@ contract JB721DistributorTest is Test {
 
         // Round 0: fund and vest.
         _fundHook(1000 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        JBTokenSnapshotData memory snap0 = distributor.snapshotAtRoundOf(address(hook), IERC20(address(rewardToken)), 0);
-        assertEq(snap0.balance, 1000 ether);
-        assertEq(snap0.vestingAmount, 0);
+        (uint256 amount0,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        assertEq(amount0, 1000 ether);
 
-        // Round 1: snapshot should reflect vesting from round 0.
-        _advanceToRound(1);
+        // Round 1 funding records a separate reward round.
         _fundHook(500 ether);
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        JBTokenSnapshotData memory snap1 = distributor.snapshotAtRoundOf(address(hook), IERC20(address(rewardToken)), 1);
-        assertEq(snap1.balance, 1500 ether);
-        assertEq(snap1.vestingAmount, 250 ether);
+        (uint256 amount1,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 1);
+        assertEq(amount1, 500 ether);
     }
 
     // =====================================================================
@@ -1698,9 +1890,11 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(maliciousToken));
 
         // Vest.
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
 
         // Set up reentrancy: on transfer, the token calls collectVestedRewards again.
         maliciousToken.setReentrancyTarget(address(hook), tokenIds, tokens, alice);
@@ -1726,9 +1920,11 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        _advanceToRound(rounds);
+        _advanceToRound(1 + rounds);
 
         uint256 collectable = distributor.collectableFor(address(hook), 1, IERC20(address(rewardToken)));
         uint256 claimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
@@ -1762,15 +1958,14 @@ contract JB721DistributorTest is Test {
 
         // Round 0.
         _fundHook(fund1);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _beginVestingBoth();
 
         // Round 1.
-        _advanceToRound(1);
         _fundHook(fund2);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _beginVestingBoth();
 
         // Full vest.
-        _advanceToRound(1 + VESTING_ROUNDS);
+        _advanceToRound(2 + VESTING_ROUNDS);
 
         uint256[] memory aliceIds = new uint256[](1);
         aliceIds[0] = 1;
@@ -1840,9 +2035,12 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Vest on hook2.
+        vm.prank(charlie);
         distributor.beginVesting(address(hook2), tokenIds, tokens);
 
         // Vesting amounts are isolated.
@@ -1850,7 +2048,7 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.totalVestingAmountOf(address(hook2), IERC20(address(rewardToken))), 500 ether);
 
         // Collect from hook2 -- should not affect hook1.
-        _advanceToRound(VESTING_ROUNDS);
+        _advanceToRound(1 + VESTING_ROUNDS);
         vm.prank(charlie);
         distributor.collectVestedRewards(address(hook2), tokenIds, tokens, charlie);
 
@@ -1916,7 +2114,7 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _beginVestingBoth();
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 25 ether);
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 50 ether);
@@ -1960,6 +2158,8 @@ contract JB721DistributorTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        _advanceToNextRound();
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), amount * 100 / 400);
     }
