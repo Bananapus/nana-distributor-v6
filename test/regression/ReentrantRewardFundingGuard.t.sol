@@ -93,11 +93,13 @@ contract ReentrantRewardFundingGuard is Test {
     ReentrantRewardDirectory private _directory;
     ReentrantRewardToken private _reward;
     ReentrantVotesToken private _stake;
+    ReentrantVotesToken private _victimStake;
 
     address private _attacker = makeAddr("attacker");
     address private _terminal = makeAddr("terminal");
+    address private _victim = makeAddr("victim");
     address private _victimFunder = makeAddr("victimFunder");
-    address private _victimHook = makeAddr("victimHook");
+    address private _victimHook;
 
     uint256 private _projectId = 1;
 
@@ -108,10 +110,17 @@ contract ReentrantRewardFundingGuard is Test {
         _distributor = new JBTokenDistributor(IJBDirectory(address(_directory)), 1, 1);
         _reward = new ReentrantRewardToken();
         _stake = new ReentrantVotesToken();
+        _victimStake = new ReentrantVotesToken();
 
         _stake.mint(_attacker, 1 ether);
         vm.prank(_attacker);
         _stake.delegate(_attacker);
+
+        _victimStake.mint(_victim, 1 ether);
+        vm.prank(_victim);
+        _victimStake.delegate(_victim);
+        _victimHook = address(_victimStake);
+
         vm.roll(block.number + 1);
 
         _fundVictimHook();

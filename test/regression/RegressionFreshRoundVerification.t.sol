@@ -135,14 +135,14 @@ contract RegressionFreshRoundVerificationTest is Test {
         RegressionFresh721Hook hook = new RegressionFresh721Hook(store, checkpoints);
         checkpoints.setHook(address(hook));
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
-
         hook.setOwner(1, alice);
         checkpoints.setVotes(alice, 100);
         checkpoints.setTotalSupply(100);
-        distributor.poke();
+        vm.roll(block.number + 1);
+
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
+        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
         uint256 snapshotBlock = distributor.roundSnapshotBlock(0);
 
         hook.setOwner(1, address(0));
@@ -154,10 +154,13 @@ contract RegressionFreshRoundVerificationTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);
 
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
         assertEq(reward.balanceOf(alice), 0);
@@ -181,7 +184,8 @@ contract RegressionFreshRoundVerificationTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
-        distributor.beginVesting(address(votes), tokenIds, tokens);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+
         vm.prank(alice);
         distributor.collectVestedRewards(address(votes), tokenIds, tokens, alice);
 

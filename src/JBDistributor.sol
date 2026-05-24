@@ -8,6 +8,7 @@ import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {JBVestingMath} from "./libraries/JBVestingMath.sol";
+import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
@@ -46,12 +47,24 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
+    /// @notice Thrown when a value cannot fit in a uint208 reward-round field.
+    error JBDistributor_Uint208Overflow(uint256 value);
+
+    /// @notice Thrown when a value cannot fit in a uint48 reward-round field.
+    error JBDistributor_Uint48Overflow(uint256 value);
+
+    /// @notice Thrown when fundings in the same reward round use different claim deadlines.
+    error JBDistributor_ClaimDeadlineMismatch(uint256 existingDeadline, uint256 newDeadline);
+
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
 
     /// @notice The number of shares that represent 100%.
     uint256 public constant MAX_SHARE = 100_000;
+
+    /// @notice Asset-agnostic burn sink for expired rewards.
+    address public constant BURN_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -79,6 +92,12 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice The block number recorded as the snapshot point for each round.
     /// @dev Set to `block.number - 1` on first interaction in a round, so that `IVotes.getPastVotes` works.
     mapping(uint256 round => uint256) public override roundSnapshotBlock;
+
+    /// @notice Reward data assigned to each funding round.
+    /// @custom:param hook The stake source whose stakers receive rewards.
+    /// @custom:param token The reward token.
+    /// @custom:param round The reward round.
+    mapping(address hook => mapping(IERC20 token => mapping(uint256 round => JBRewardRoundData))) public rewardRoundOf;
 
     /// @notice The amount of a token that is currently vesting for a hook's stakers.
     /// @custom:param hook The hook whose stakers are vesting.
@@ -151,7 +170,15 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param hook The hook (IVotes token or 721 hook) whose stakers are vesting.
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
-    function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
+    function beginVesting(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        external
+        virtual
+        override
+    {
         // Reward accounting cannot change while an ERC-20 `transferFrom` is in progress. A callback-capable reward
         // token could otherwise snapshot, vest, or collect against balances between `balanceBefore` and
         // `balanceAfter`, distorting the delta credited to the funder.
@@ -211,18 +238,58 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param hook The hook to fund (determines which staker pool receives the tokens).
     /// @param token The token to fund with.
     /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
-    function fund(address hook, IERC20 token, uint256 amount) external payable override {
-        if (address(token) == JBConstants.NATIVE_TOKEN) {
-            amount = msg.value;
-        } else {
-            if (msg.value != 0) {
-                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
+    function fund(address hook, IERC20 token, uint256 amount) external payable virtual override {
+        _fund({hook: hook, token: token, amount: amount, claimDuration: 0});
+    }
+
+    /// @notice Fund the distributor for a specific hook with expiring rewards.
+    /// @dev The claim window starts when the funded round first becomes claimable.
+    /// @param hook The hook to fund.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund.
+    /// @param claimDuration The number of seconds claimants have after the round becomes claimable.
+    function fundWithClaimDuration(
+        address hook,
+        IERC20 token,
+        uint256 amount,
+        uint48 claimDuration
+    )
+        external
+        payable
+        virtual
+        override
+    {
+        _fund({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+    }
+
+    /// @notice Burn unclaimed rewards from expired reward rounds.
+    /// @param hook The hook whose expired rewards should be burned.
+    /// @param token The reward token to burn.
+    /// @param rounds The reward rounds to burn.
+    /// @return amount The total amount burned.
+    function burnExpiredRewards(
+        address hook,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        virtual
+        override
+        returns (uint256 amount)
+    {
+        // Do not let reward-token callbacks burn inventory during an inbound balance-delta measurement.
+        _requireNotAcceptingToken();
+
+        // Process every requested round independently so callers can batch keeper work.
+        for (uint256 i; i < rounds.length;) {
+            // Add this round's expired remainder to the batch total.
+            amount += _burnExpiredRewardRound({hook: hook, token: token, round: rounds[i]});
+
+            unchecked {
+                // Safe because the loop is bounded by calldata length.
+                ++i;
             }
-            // Use balance delta to handle fee-on-transfer tokens correctly.
-            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
         }
-        _balanceOf[hook][token] += amount;
-        _accountedBalanceOf[token] += amount;
     }
 
     /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
@@ -416,6 +483,7 @@ abstract contract JBDistributor is IJBDistributor {
         address beneficiary
     )
         public
+        virtual
         override
     {
         // Collections transfer reward tokens out. If this runs inside the same reward token's inbound transfer, the
@@ -515,18 +583,168 @@ abstract contract JBDistributor is IJBDistributor {
         _acceptingToken = address(0);
     }
 
+    /// @notice Accept funds and assign them to this round's reward ledger.
+    /// @param hook The stake source whose stakers receive the rewards.
+    /// @param token The reward token being funded.
+    /// @param amount The nominal amount to fund.
+    /// @param claimDuration The number of seconds claimants have once the round becomes claimable.
+    function _fund(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
+        // Native funding is measured by msg.value, not the caller-provided amount.
+        if (address(token) == JBConstants.NATIVE_TOKEN) {
+            amount = msg.value;
+        } else {
+            // ERC-20 funding must not carry native ETH.
+            if (msg.value != 0) {
+                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
+            }
+
+            // ERC-20 funding is measured by balance delta so fee-on-transfer tokens are accounted correctly.
+            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
+        }
+
+        // Store the accepted amount in this round's historical reward ledger.
+        _recordRewardFunding({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+    }
+
+    /// @notice Record accepted funding as the current round's reward pot.
+    /// @param hook The stake source whose stakers receive the rewards.
+    /// @param token The reward token.
+    /// @param amount The accepted funding amount.
+    /// @param claimDuration The number of seconds claimants have once the round becomes claimable.
+    function _recordRewardFunding(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
+        // Zero-value transfers do not create reward rounds or alter tracked balances.
+        if (amount == 0) return;
+
+        // Funding belongs to the round in progress when the distributor receives the rewards.
+        uint256 round = currentRound();
+
+        // Load the current round's ledger entry for this hook and reward token.
+        JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
+
+        // A zero deadline means no expiration; otherwise the clock starts once this round becomes claimable.
+        uint48 claimDeadline = _claimDeadlineFor({round: round, claimDuration: claimDuration});
+
+        // First funding in a round locks that round's snapshot block and total stake for all later claims.
+        if (rewardRound.amount == 0) {
+            // Record the exact historical block used for all stake lookups in this round.
+            uint256 snapshotBlock = _ensureSnapshotBlockFor(round);
+
+            // Store the snapshot block in the packed uint48 field.
+            rewardRound.snapshotBlock = _toUint48(snapshotBlock);
+
+            // Store the packed claim deadline chosen by the rewarder.
+            rewardRound.claimDeadline = claimDeadline;
+
+            // Store the packed total stake that shares this round's reward pot.
+            rewardRound.totalStake = _toUint208(_totalStake({hook: hook, blockNumber: snapshotBlock}));
+        } else if (rewardRound.claimDeadline != claimDeadline) {
+            // All fundings merged into the same round must have one deadline for deterministic expiry.
+            revert JBDistributor_ClaimDeadlineMismatch({
+                existingDeadline: rewardRound.claimDeadline, newDeadline: claimDeadline
+            });
+        }
+
+        // Multiple fundings in the same round share the same snapshot and accumulate into one reward pot.
+        rewardRound.amount = _toUint208(uint256(rewardRound.amount) + amount);
+
+        // Keep the base distributor's balance accounting in sync for collection and conservation checks.
+        _balanceOf[hook][token] += amount;
+        _accountedBalanceOf[token] += amount;
+    }
+
+    /// @notice Burn one expired reward round's unclaimed inventory.
+    /// @param hook The hook whose expired rewards should be burned.
+    /// @param token The reward token to burn.
+    /// @param round The reward round to burn.
+    /// @return burnAmount The amount burned.
+    function _burnExpiredRewardRound(address hook, IERC20 token, uint256 round) internal returns (uint256 burnAmount) {
+        // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
+        JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
+
+        // Ignore rounds that either never expire or have not reached their deadline yet.
+        if (!_rewardRoundExpired(rewardRound)) return 0;
+
+        // If prior claims have already materialized the whole round, there is nothing left to burn.
+        if (rewardRound.claimedAmount >= rewardRound.amount) return 0;
+
+        // Burn only the unclaimed remainder, preserving amounts that already started vesting.
+        burnAmount = uint256(rewardRound.amount) - uint256(rewardRound.claimedAmount);
+
+        // Mark the whole round settled before transferring to close reentrancy-sensitive accounting.
+        rewardRound.claimedAmount = rewardRound.amount;
+
+        // Remove the expired remainder from distributor inventory and send it to the burn sink.
+        _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
+
+        // Surface the permissionless burn for off-chain accounting.
+        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
+    }
+
+    /// @notice Burn reward inventory by transferring it to the burn sink.
+    /// @param hook The hook whose tracked balance is being burned.
+    /// @param token The reward token to burn.
+    /// @param amount The amount to burn.
+    function _burnRewardTokens(address hook, IERC20 token, uint256 amount) internal {
+        // No-op zero burns so callers can batch empty or already-settled rounds safely.
+        if (amount == 0) return;
+
+        // Remove the burned amount from the hook's reward inventory.
+        _balanceOf[hook][token] -= amount;
+
+        // Remove the same amount from the global inventory tracked for this token.
+        _accountedBalanceOf[token] -= amount;
+
+        // Native rewards cannot be ERC-20-burned, so send them to the shared burn sink.
+        if (address(token) == JBConstants.NATIVE_TOKEN) {
+            // Forward the exact expired native amount to the burn sink.
+            (bool success,) = BURN_ADDRESS.call{value: amount}("");
+
+            // Revert if the native sink transfer fails, preserving accounting by reverting the whole burn.
+            if (!success) revert JBDistributor_NativeTransferFailed({beneficiary: BURN_ADDRESS, amount: amount});
+        } else {
+            // ERC-20 rewards are removed from usable inventory by sending them to the same burn sink.
+            token.safeTransfer({to: BURN_ADDRESS, value: amount});
+        }
+    }
+
+    /// @notice Cast a reward-round value to uint208.
+    /// @param value The value to cast.
+    /// @return castValue The cast value.
+    function _toUint208(uint256 value) internal pure returns (uint208 castValue) {
+        if (value > type(uint208).max) revert JBDistributor_Uint208Overflow({value: value});
+        // forge-lint: disable-next-line(unsafe-typecast)
+        castValue = uint208(value);
+    }
+
+    /// @notice Cast a reward-round value to uint48.
+    /// @param value The value to cast.
+    /// @return castValue The cast value.
+    function _toUint48(uint256 value) internal pure returns (uint48 castValue) {
+        if (value > type(uint48).max) revert JBDistributor_Uint48Overflow({value: value});
+        // forge-lint: disable-next-line(unsafe-typecast)
+        castValue = uint48(value);
+    }
+
     /// @notice Ensures that a snapshot block is recorded for the given round.
     /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
     /// @param round The round to ensure a snapshot block for.
     function _ensureSnapshotBlock(uint256 round) internal {
-        if (roundSnapshotBlock[round] == 0) {
-            roundSnapshotBlock[round] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round, snapshotBlock: block.number - 1});
-        }
+        _ensureSnapshotBlockFor(round);
         // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
-        if (roundSnapshotBlock[round + 1] == 0) {
-            roundSnapshotBlock[round + 1] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
+        _ensureSnapshotBlockFor(round + 1);
+    }
+
+    /// @notice Ensures that a snapshot block is recorded for exactly the given round.
+    /// @dev Token-distributor funding uses this to assign rewards to the funding round without also freezing the next
+    /// round earlier than necessary.
+    /// @param round The round to ensure a snapshot block for.
+    /// @return snapshotBlock The snapshot block recorded for the round.
+    function _ensureSnapshotBlockFor(uint256 round) internal returns (uint256 snapshotBlock) {
+        snapshotBlock = roundSnapshotBlock[round];
+        if (snapshotBlock == 0) {
+            snapshotBlock = block.number - 1;
+            roundSnapshotBlock[round] = snapshotBlock;
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock, caller: msg.sender});
         }
     }
 
@@ -554,8 +772,37 @@ abstract contract JBDistributor is IJBDistributor {
         _snapshotInitializedFor[hook][token][round] = true;
 
         emit SnapshotCreated({
-            hook: hook, round: round, token: token, balance: snapshot.balance, vestingAmount: snapshot.vestingAmount
+            hook: hook,
+            round: round,
+            token: token,
+            balance: snapshot.balance,
+            vestingAmount: snapshot.vestingAmount,
+            caller: msg.sender
         });
+    }
+
+    /// @notice The deadline for a reward round with the given claim duration.
+    /// @param round The reward round.
+    /// @param claimDuration The claim duration once the round becomes claimable.
+    /// @return claimDeadline The deadline timestamp. Zero means no expiration.
+    function _claimDeadlineFor(uint256 round, uint48 claimDuration) internal view returns (uint48 claimDeadline) {
+        // Zero duration keeps the round non-expiring and backward compatible with existing fund paths.
+        if (claimDuration == 0) return 0;
+
+        // Start the window at the next round boundary, when the funded round first becomes claimable.
+        claimDeadline = _toUint48(roundStartTimestamp(round + 1) + claimDuration);
+    }
+
+    /// @notice Whether a reward round has passed its claim deadline.
+    /// @param rewardRound The reward round data.
+    /// @return expired True if unclaimed rewards can be burned.
+    function _rewardRoundExpired(JBRewardRoundData storage rewardRound) internal view returns (bool expired) {
+        // Copy the packed deadline into memory so the zero check and timestamp compare use the same value.
+        uint48 claimDeadline = rewardRound.claimDeadline;
+
+        // A zero deadline never expires; non-zero deadlines expire at or after the configured timestamp.
+        // forge-lint: disable-next-line(block-timestamp)
+        expired = claimDeadline != 0 && block.timestamp >= claimDeadline;
     }
 
     /// @notice Unlocks rewards for the given token IDs and tokens, either for collection or forfeiture.
@@ -675,7 +922,8 @@ abstract contract JBDistributor is IJBDistributor {
                         tokenId: tokenId,
                         token: token,
                         amount: claimAmount,
-                        vestingReleaseRound: vesting.releaseRound
+                        vestingReleaseRound: vesting.releaseRound,
+                        caller: msg.sender
                     });
                 }
 
@@ -766,7 +1014,8 @@ abstract contract JBDistributor is IJBDistributor {
                 tokenId: tokenId,
                 token: token,
                 amount: tokenAmount,
-                vestingReleaseRound: vestingReleaseRound
+                vestingReleaseRound: vestingReleaseRound,
+                caller: msg.sender
             });
 
             unchecked {

@@ -175,7 +175,6 @@ contract RegressionFreshVerificationTest is Test {
     /// with context.token set to an ERC-20 address reverts with TokenMismatch.
     function test_nativeValueCanCreateUnbackedErc20CreditAndDrainOtherHookInventory() public {
         address attacker = makeAddr("attacker");
-        address victimHook = makeAddr("victimHook");
         uint256 rewardAmount = 100_000_000; // 100 units of a 6-decimal token.
 
         RegressionDirectory directory = new RegressionDirectory();
@@ -185,8 +184,12 @@ contract RegressionFreshVerificationTest is Test {
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         RegressionToken reward = new RegressionToken();
         RegressionVotes stake = new RegressionVotes();
+        RegressionVotes victimStake = new RegressionVotes();
+        address victimHook = address(victimStake);
         stake.setVotes(attacker, 1 ether);
         stake.setTotalSupply(1 ether);
+        victimStake.setVotes(makeAddr("victim"), 1 ether);
+        victimStake.setTotalSupply(1 ether);
 
         reward.mint(address(this), rewardAmount);
         reward.approve(address(distributor), rewardAmount);
@@ -237,15 +240,14 @@ contract RegressionFreshVerificationTest is Test {
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();
         Regression721Hook hook = new Regression721Hook(store, checkpoints);
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
-
         hook.mint(alice, 1);
         checkpoints.setVotes(alice, 100);
         checkpoints.setTotalSupply(100);
         vm.roll(block.number + 1);
-        distributor.poke();
+
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
+        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
 
         hook.burn(1);
         hook.mint(alice, 2);
@@ -255,11 +257,14 @@ contract RegressionFreshVerificationTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);
 
-        vm.warp(block.timestamp + ROUND_DURATION);
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
 
@@ -278,16 +283,15 @@ contract RegressionFreshVerificationTest is Test {
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();
         Regression721Hook hook = new Regression721Hook(store, checkpoints);
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
-
         // Token 1 is the snapshot-eligible NFT initially owned by the seller.
         hook.mint(seller, 1);
         checkpoints.setVotes(seller, 100);
         checkpoints.setTotalSupply(100);
         vm.roll(block.number + 1);
-        distributor.poke();
+
+        reward.mint(address(this), 100 ether);
+        reward.approve(address(distributor), 100 ether);
+        distributor.fund(address(hook), IERC20(address(reward)), 100 ether);
 
         // After the snapshot, the seller transfers token 1 away and mints a new token 2.
         hook.mint(buyer, 1);
@@ -301,14 +305,18 @@ contract RegressionFreshVerificationTest is Test {
         tokens[0] = IERC20(address(reward));
 
         // The late-minted replacement token cannot consume the seller's snapshot votes.
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(seller);
         distributor.beginVesting(address(hook), sellerTokenIds, tokens);
         // The real snapshot token now owned by the buyer can vest against the token's snapshot owner.
+        vm.prank(buyer);
         distributor.beginVesting(address(hook), buyerTokenIds, tokens);
 
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 100 ether);
 
-        vm.warp(block.timestamp + ROUND_DURATION);
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
         vm.prank(buyer);
         distributor.collectVestedRewards(address(hook), buyerTokenIds, tokens, buyer);
 

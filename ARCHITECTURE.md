@@ -6,15 +6,16 @@
 
 ## System Overview
 
-`JBDistributor` is the shared vesting engine. `JBTokenDistributor` changes stake measurement to checkpointed voting power. `JB721Distributor` changes stake measurement to checkpointed voting power from the hook's `CHECKPOINTS()` module, ensuring only NFTs held at round start are eligible.
+`JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` now follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
-Both variants can be used as `IJBSplitHook` receivers.
+Both variants can be used as `IJBSplitHook` receivers. Split funding and plain `fund` create non-expiring reward rounds. Direct `fundWithClaimDuration` creates a reward round whose unclaimed remainder can be burned permissionlessly after the configured claim window.
 
 ## Core Invariants
 
 - snapshot timing must stay coherent
 - tracked funded balance must cover current vesting obligations
 - claim authority must match the distributor type
+- expired burns must only remove unclaimed reward-round inventory
 - 721 forfeiture handling must not over-allocate or burn value accidentally
 - token and 721 variants must preserve the same core vesting math
 
@@ -35,13 +36,36 @@ Both variants can be used as `IJBSplitHook` receivers.
 
 ## Critical Flows
 
-### Begin Vesting
+### Token Funding And Claim
 
 ```text
-funded distributor
-  -> begin a round
-  -> snapshot stake and tracked balance for that round
-  -> record vesting entries for the requested token IDs
+fund token distributor
+  -> assign accepted amount to current reward round
+  -> record snapshot block and total IVotes supply for that round
+  -> optionally record a claim deadline when funded with claim duration
+  -> staker later claims rounds <= currentRound - 1
+  -> one fresh vesting entry starts at claim time
+```
+
+### 721 Funding And Claim
+
+```text
+fund 721 distributor
+  -> assign accepted amount to current reward round
+  -> record snapshot block and total 721 checkpointed stake for that round
+  -> optionally record a claim deadline when funded with claim duration
+  -> current NFT owner later claims rounds <= currentRound - 1
+  -> one fresh vesting entry starts at claim time
+```
+
+### Expired Reward Burn
+
+```text
+any caller
+  -> provide hook, reward token, and expired reward rounds
+  -> distributor skips non-expired or already-settled rounds
+  -> unclaimed remainder is funded amount minus amount already materialized into vesting
+  -> unclaimed remainder leaves tracked inventory and is sent to the burn sink
 ```
 
 ### Collect
@@ -57,14 +81,15 @@ claimant
 
 This repo owns vesting-round accounting. It does not own upstream treasury accounting or entitlement creation.
 
-The main variables are snapshot balance, total vesting amount, and the stake source used to split each round.
+The main variables are snapshot balance, total vesting amount, reward-round claimed amount, optional claim deadline, and the stake source used to split each round.
 
 ## Security Model
 
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
 - split-funding caller assumptions matter because `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`
-- 721 and token variants intentionally differ in authority and forfeiture behavior
+- claim-duration assumptions matter because expired unclaimed rewards are burnable by anyone
+- 721 and token variants intentionally differ in ownership model and forfeiture behavior
 
 ## Safe Change Guide
 

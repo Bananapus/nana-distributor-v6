@@ -15,7 +15,7 @@
 
 ## Control Model
 
-- vesting is mostly driven by deployment parameters and permissionless round starts
+- vesting is driven by deployment parameters, round timing, and claimant-initiated materialization
 - claim authority differs by distributor type
 - 721 forfeiture handling adds a separate recovery path not present in the token distributor
 
@@ -23,7 +23,8 @@
 
 | Role | How Assigned | Scope | Notes |
 | --- | --- | --- | --- |
-| Round starter | Any caller | Per distributor | Vesting is permissionless |
+| Snapshot keeper | Any caller | Per distributor | `poke` can lock snapshot blocks before funding or claims |
+| Expiry keeper | Any caller | Per expired reward round | `burnExpiredRewards` clears unclaimed inventory after a rewarder's deadline |
 | Token claimant | Encoded claimant address | Per token slot | Token distributor authority model |
 | NFT claimant | Current NFT owner | Per token ID | 721 distributor authority model |
 
@@ -43,19 +44,23 @@
 ## Operational Notes
 
 - review round timing and vesting-round count before deployment
-- verify the distributor holds the correct asset before starting rounds
+- choose claim durations carefully when using `fundWithClaimDuration`; plain `fund` and split funding do not expire
+- verify the distributor holds the correct asset before claimants start vesting
 - do not assume token and 721 variants behave identically
 
 ## Recovery
 
-- unclaimed value can remain for future rounds
+- unclaimed reward rounds remain reserved for historical stakers or NFT owners; they do not become someone else's
+  reward merely because the claimant is late
+- expiring reward rounds are the exception: after the configured deadline, anyone can burn the unclaimed remainder
 - 721 forfeiture release can recycle some value
 - bad deployment parameters usually require a new distributor instance
 
 ## Admin Boundaries
 
 - this repo does not create upstream entitlement logic
-- permissionless vesting means operators do not fully control snapshot timing
+- token and 721 vesting are claimant-initiated; operators still need to manage snapshot timing with `poke` where
+  predictable snapshots matter
 - the distributor cannot make a missing or wrong stake source correct
 
 ## Source Map

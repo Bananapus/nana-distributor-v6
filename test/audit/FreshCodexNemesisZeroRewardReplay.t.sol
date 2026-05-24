@@ -124,23 +124,28 @@ contract FreshCodexNemesisZeroRewardReplayTest is Test {
         rewardToken.approve(address(attacked), 2);
         control.fund(address(hook), IERC20(address(rewardToken)), 2);
         attacked.fund(address(hook), IERC20(address(rewardToken)), 2);
+        vm.warp(control.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
         uint256[] memory highValueToken = new uint256[](1);
         highValueToken[0] = 2;
+        vm.prank(alice);
         control.beginVesting(address(hook), highValueToken, tokens);
         assertEq(control.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 1);
 
         uint256[] memory dustToken = new uint256[](1);
         dustToken[0] = 1;
+        vm.startPrank(alice);
         attacked.beginVesting(address(hook), dustToken, tokens);
         attacked.beginVesting(address(hook), dustToken, tokens);
         attacked.beginVesting(address(hook), dustToken, tokens);
         assertEq(attacked.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
 
         attacked.beginVesting(address(hook), highValueToken, tokens);
+        vm.stopPrank();
         assertEq(attacked.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 1);
     }
 }

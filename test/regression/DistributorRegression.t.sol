@@ -119,17 +119,21 @@ contract DistributorRegressionTest is Test {
         rewardToken.mint(address(this), 1500 ether);
         rewardToken.approve(address(distributor), 1500 ether);
         distributor.fund(address(hook), IERC20(address(rewardToken)), 1500 ether);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
 
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
         uint256[] memory oneTokenId = new uint256[](1);
+        vm.startPrank(alice);
         oneTokenId[0] = 1;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
         oneTokenId[0] = 2;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
         oneTokenId[0] = 3;
         distributor.beginVesting(address(hook), oneTokenId, tokens);
+        vm.stopPrank();
 
         uint256 claimed1 = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
         uint256 claimed2 = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));
@@ -146,18 +150,24 @@ contract DistributorRegressionTest is Test {
         JBTokenDistributor distributor =
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         RegressionRewardToken rewardToken = new RegressionRewardToken();
+        RegressionVotesToken victimVotes = new RegressionVotesToken();
         RegressionVotesToken attackerVotes = new RegressionVotesToken();
 
+        address victim = makeAddr("victim");
         address attacker = makeAddr("attacker");
         address maliciousController = makeAddr("maliciousController");
-        address victimHook = makeAddr("victimHook");
         uint256 projectId = 1;
 
         directory.setController(projectId, maliciousController);
 
+        victimVotes.mint(victim, 1000 ether);
+        vm.prank(victim);
+        victimVotes.delegate(victim);
+        vm.roll(block.number + 1);
+
         rewardToken.mint(address(this), 1000 ether);
         rewardToken.approve(address(distributor), 1000 ether);
-        distributor.fund(victimHook, IERC20(address(rewardToken)), 1000 ether);
+        distributor.fund(address(victimVotes), IERC20(address(rewardToken)), 1000 ether);
 
         attackerVotes.mint(attacker, 1000 ether);
         vm.prank(attacker);
@@ -188,7 +198,7 @@ contract DistributorRegressionTest is Test {
         distributor.processSplitWith(context);
 
         // The victim hook's balance should remain intact.
-        assertEq(distributor.balanceOf(victimHook, IERC20(address(rewardToken))), 1000 ether);
+        assertEq(distributor.balanceOf(address(victimVotes), IERC20(address(rewardToken))), 1000 ether);
         // No balance should be credited to the attacker's hook.
         assertEq(distributor.balanceOf(address(attackerVotes), IERC20(address(rewardToken))), 0);
     }

@@ -143,7 +143,7 @@ contract ReentrantRewardCollectionGuardTest is Test {
         _reward.configure({distributorAddress: _distributor, hookAddress: _hook});
 
         _fundAndVestInitialRewards();
-        vm.warp(_distributor.roundStartTimestamp(1) + 1);
+        vm.warp(_distributor.roundStartTimestamp(2) + 1);
     }
 
     function test_reentrantCollectDuringFundingRevertsBeforeUnderCredit() public {
@@ -188,6 +188,9 @@ contract ReentrantRewardCollectionGuardTest is Test {
         _reward.mint({to: address(this), amount: 100 ether});
         _reward.approve({spender: address(_distributor), value: 100 ether});
         _distributor.fund({hook: address(_hook), token: IERC20(address(_reward)), amount: 100 ether});
+        vm.warp(_distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(address(_reward));
         _distributor.beginVesting({hook: address(_hook), tokenIds: _singleTokenId(), tokens: _singleRewardToken()});
     }
 

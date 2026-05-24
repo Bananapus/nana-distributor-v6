@@ -142,13 +142,11 @@ contract TokenDistributorForkTest is Test {
         // Advance to round 1.
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
 
         uint256 aliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
         uint256 bobClaimed = distributor.claimedFor(hook, _tokenId(bob), IERC20(JBConstants.NATIVE_TOKEN));
@@ -182,14 +180,12 @@ contract TokenDistributorForkTest is Test {
         distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](3);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
-        tokenIds[2] = _tokenId(carol);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
+        _beginVestingFor(carol, hook, tokens);
 
         // Carol should have 0 claimed (no delegation).
         uint256 carolClaimed = distributor.claimedFor(hook, _tokenId(carol), IERC20(JBConstants.NATIVE_TOKEN));
@@ -206,12 +202,10 @@ contract TokenDistributorForkTest is Test {
         distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = _tokenId(alice);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
 
         uint256 aliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
         assertGt(aliceClaimed, 0, "Alice claimed something");
@@ -236,13 +230,11 @@ contract TokenDistributorForkTest is Test {
         distributor.fund{value: 5 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 5 ether);
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
 
         uint256 round1AliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
 
@@ -252,7 +244,8 @@ contract TokenDistributorForkTest is Test {
 
         // Begin vesting round 3 funds.
         _advanceToRound(4);
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
 
         // Advance past both vesting periods.
         _advanceToRound(1 + VESTING_ROUNDS + VESTING_ROUNDS);
@@ -311,13 +304,10 @@ contract TokenDistributorForkTest is Test {
         // Vest and collect.
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
 
         uint256 aliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
         assertGt(aliceClaimed, 0, "Alice claimed from payout-funded distributor");
@@ -353,7 +343,7 @@ contract TokenDistributorForkTest is Test {
         tokenIds[0] = _tokenId(alice);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
 
         _advanceToRound(1 + VESTING_ROUNDS);
 
@@ -388,13 +378,11 @@ contract TokenDistributorForkTest is Test {
         distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.beginVesting(hook, tokenIds, tokens);
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
 
         uint256 totalVesting = distributor.totalVestingAmountOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
         uint256 balance = distributor.balanceOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
@@ -421,6 +409,11 @@ contract TokenDistributorForkTest is Test {
     function _singleTokenId(address staker) internal pure returns (uint256[] memory ids) {
         ids = new uint256[](1);
         ids[0] = _tokenId(staker);
+    }
+
+    function _beginVestingFor(address staker, address hook, IERC20[] memory tokens) internal {
+        vm.prank(staker);
+        distributor.beginVesting(hook, _singleTokenId(staker), tokens);
     }
 
     function _advanceToRound(uint256 round) internal {

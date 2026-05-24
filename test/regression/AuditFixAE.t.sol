@@ -83,6 +83,7 @@ contract AuditFixAE2Test is Test {
         votesToken.mint(alice, 1000 ether);
         vm.prank(alice);
         votesToken.delegate(alice);
+        vm.roll(block.number + 1);
     }
 
     function _tokenId(address staker) internal pure returns (uint256) {
@@ -96,6 +97,11 @@ contract AuditFixAE2Test is Test {
             vm.warp(targetTimestamp);
         }
         vm.roll(block.number + 1);
+    }
+
+    function _beginVesting(uint256[] memory tokenIds, IERC20[] memory tokens) internal {
+        vm.prank(alice);
+        distributor.beginVesting(address(votesToken), tokenIds, tokens);
     }
 
     /// @notice 1 wei of dust should be fully claimable after full vesting, not stranded.
@@ -112,7 +118,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Partial vesting (round 2 of 4): claimAmount should round to 0.
         _advanceToRound(2);
@@ -148,7 +154,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Collect at each partial vesting round.
         for (uint256 r = 2; r <= VESTING_ROUNDS; r++) {
@@ -184,7 +190,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting({hook: address(votesToken), tokenIds: tokenIds, tokens: tokens});
+        _beginVesting(tokenIds, tokens);
 
         // Collect at every partial vesting round before the final unlock.
         for (uint256 r = 2; r <= VESTING_ROUNDS; r++) {
@@ -220,7 +226,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Collect partially at each round.
         for (uint256 r = 2; r <= VESTING_ROUNDS; r++) {
@@ -252,7 +258,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Advance to full vesting.
         _advanceToRound(1 + VESTING_ROUNDS);
@@ -281,7 +287,7 @@ contract AuditFixAE2Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // claimedFor should show 1 wei remaining.
         assertEq(
@@ -304,7 +310,7 @@ contract AuditFixAE2Test is Test {
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 3);
 
         _advanceToRound(1);
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Fund again for a new round.
         rewardToken.mint(address(this), 5);
@@ -312,7 +318,7 @@ contract AuditFixAE2Test is Test {
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 5);
 
         _advanceToRound(2);
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVesting(tokenIds, tokens);
 
         // Advance past all vesting periods (entry 0 releases at round 5, entry 1 at round 6).
         _advanceToRound(2 + VESTING_ROUNDS);

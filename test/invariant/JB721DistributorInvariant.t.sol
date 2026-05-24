@@ -238,21 +238,6 @@ contract DistributorHandler is Test {
 
         if (!vest1 && !vest2) return;
 
-        uint256 count;
-        if (vest1) count++;
-        if (vest2) count++;
-
-        uint256[] memory tokenIds = new uint256[](count);
-        uint256 idx;
-        if (vest1) {
-            tokenIds[idx++] = 1;
-            lastVestedRoundOf[1] = currentRound;
-        }
-        if (vest2) {
-            tokenIds[idx++] = 2;
-            lastVestedRoundOf[2] = currentRound;
-        }
-
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
@@ -261,8 +246,23 @@ contract DistributorHandler is Test {
             distributor.balanceOf(address(hook), IERC20(address(rewardToken)))
                 > distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken)))
         ) {
-            distributor.beginVesting(address(hook), tokenIds, tokens);
-            ghost_vestingCalls++;
+            if (vest1) {
+                uint256[] memory tokenIds = new uint256[](1);
+                tokenIds[0] = 1;
+                vm.prank(alice);
+                distributor.beginVesting(address(hook), tokenIds, tokens);
+                lastVestedRoundOf[1] = currentRound;
+                ghost_vestingCalls++;
+            }
+
+            if (vest2) {
+                uint256[] memory tokenIds = new uint256[](1);
+                tokenIds[0] = 2;
+                vm.prank(bob);
+                distributor.beginVesting(address(hook), tokenIds, tokens);
+                lastVestedRoundOf[2] = currentRound;
+                ghost_vestingCalls++;
+            }
         }
     }
 

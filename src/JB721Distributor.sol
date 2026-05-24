@@ -8,15 +8,18 @@ import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
-import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
 import {JBDistributor} from "./JBDistributor.sol";
+import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
+import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
+import {JBClaimContext} from "./structs/JBClaimContext.sol";
+import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
+import {JBVestContext} from "./structs/JBVestContext.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
 /// @notice A singleton distributor that distributes ERC-20 rewards to JB 721 NFT stakers with linear vesting.
@@ -24,6 +27,8 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// `hook = this contract` and `beneficiary = address(their 721 hook)`.
 /// @dev The stake weight of each NFT is its tier's `votingUnits`. Burned NFTs are excluded from the total stake
 /// calculation and their unvested rewards can be reclaimed via `releaseForfeitedRewards`.
+/// @dev Funded rewards are assigned to the funding round. NFT owners claim historical rounds lazily; all unclaimed
+/// past rewards begin vesting when the current NFT owner claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
 contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
@@ -40,19 +45,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     error JB721Distributor_Unauthorized(uint256 projectId, address caller);
 
     //*********************************************************************//
-    // ----------------------------- structs ----------------------------- //
-    //*********************************************************************//
-
-    /// @dev Bundles per-round vesting parameters to avoid stack-too-deep.
-    struct VestContext {
-        address hook;
-        IERC20 token;
-        uint256 distributable;
-        uint256 totalStakeAmount;
-        uint256 vestingReleaseRound;
-    }
-
-    //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
     //*********************************************************************//
 
@@ -60,16 +52,26 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     IJBDirectory public immutable DIRECTORY;
 
     //*********************************************************************//
+    // --------------------- public stored properties -------------------- //
+    //*********************************************************************//
+
+    /// @notice The next reward round an NFT token ID has not yet claimed.
+    /// @custom:param hook The 721 hook whose NFTs are claiming.
+    /// @custom:param tokenId The NFT token ID.
+    /// @custom:param token The reward token being claimed.
+    mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public nextClaimRoundOf;
+
+    //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
 
-    /// @notice Tracks voting power consumed per hook/token/round/owner to prevent cap resets across calls.
+    /// @notice Tracks voting power consumed per hook/token/reward round/owner to prevent cap resets across calls.
     /// @custom:param hook The hook address.
     /// @custom:param token The reward token.
-    /// @custom:param releaseRound The vesting release round.
+    /// @custom:param rewardRound The reward round.
     /// @custom:param owner The NFT owner.
     mapping(
-        address hook => mapping(IERC20 token => mapping(uint256 releaseRound => mapping(address owner => uint256)))
+        address hook => mapping(IERC20 token => mapping(uint256 rewardRound => mapping(address owner => uint256)))
     ) internal _consumedVotesOf;
 
     //*********************************************************************//
@@ -123,8 +125,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             }
 
             if (msg.value != 0) {
-                _balanceOf[hook][IERC20(context.token)] += msg.value;
-                _accountedBalanceOf[IERC20(context.token)] += msg.value;
+                // Assign native split proceeds to the current reward round for this 721 hook.
+                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value, claimDuration: 0});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -140,9 +142,62 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             // allowance before calling. Balance delta handles fee-on-transfer tokens correctly.
             uint256 delta =
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
-            _balanceOf[hook][IERC20(context.token)] += delta;
-            _accountedBalanceOf[IERC20(context.token)] += delta;
+
+            // Assign only the amount actually received to this round's reward pot.
+            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta, claimDuration: 0});
         }
+    }
+
+    /// @notice Snapshot this NFT's past reward rounds and start vesting them now.
+    /// @dev Current-round funding is excluded. It becomes claimable once a later round starts.
+    /// @param hook The 721 hook whose NFTs are vesting.
+    /// @param tokenIds The NFT token IDs to claim for.
+    /// @param tokens The reward tokens to begin vesting.
+    function beginVesting(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        external
+        override(JBDistributor, IJBDistributor)
+    {
+        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
+        _requireNotAcceptingToken();
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
+
+        // Only the current NFT owner can start vesting for each token ID.
+        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
+
+        // Materialize all unclaimed historical rewards into fresh vesting entries that start now.
+        _claimPastRewards({hook: hook, tokenIds: tokenIds, tokens: tokens});
+    }
+
+    /// @notice Collect already-vested rewards and first start vesting any unclaimed past reward rounds.
+    /// @param hook The 721 hook whose NFTs are collecting.
+    /// @param tokenIds The NFT token IDs to collect for.
+    /// @param tokens The reward tokens to collect.
+    /// @param beneficiary The recipient of collected vested rewards.
+    function collectVestedRewards(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        public
+        override(JBDistributor, IJBDistributor)
+    {
+        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
+        _requireNotAcceptingToken();
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
+
+        // Only the current NFT owner can materialize and collect rewards for each token ID.
+        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
+
+        // Before collecting, bring the token IDs current by starting vesting for any past reward rounds.
+        _claimPastRewards({hook: hook, tokenIds: tokenIds, tokens: tokens});
+
+        // Release whatever portion of existing vesting entries has unlocked by this round.
+        _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true});
     }
 
     //*********************************************************************//
@@ -160,6 +215,248 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
+
+    /// @notice Claim all past reward rounds for the given NFT token IDs and reward tokens into fresh vesting entries.
+    /// @param hook The 721 hook whose NFT owners are claiming.
+    /// @param tokenIds The NFT token IDs to claim for.
+    /// @param tokens The reward tokens to claim.
+    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal {
+        // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
+        uint256 round = currentRound();
+        if (round == 0) return;
+
+        // Current-round funding is excluded. It becomes claimable only after a later round starts.
+        JBClaimContext memory ctx =
+            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
+
+        // Process each reward token independently because each token has its own round funding and claim cursor.
+        for (uint256 i; i < tokens.length;) {
+            IERC20 token = tokens[i];
+            uint256 totalVestingAmount = _claimPastRewardsForToken({ctx: ctx, tokenIds: tokenIds, token: token});
+
+            // Track the newly claimed amount as vesting, so later collections unlock against it over time.
+            if (totalVestingAmount != 0) totalVestingAmountOf[hook][token] += totalVestingAmount;
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice Claim one reward token across all completed rounds for a batch of NFT token IDs.
+    /// @param ctx The claim-round context.
+    /// @param tokenIds The NFT token IDs to claim for.
+    /// @param token The reward token to claim.
+    /// @return totalVestingAmount The amount added to vesting for this reward token.
+    function _claimPastRewardsForToken(
+        JBClaimContext memory ctx,
+        uint256[] calldata tokenIds,
+        IERC20 token
+    )
+        internal
+        returns (uint256 totalVestingAmount)
+    {
+        uint256[] memory tokenAmounts = new uint256[](tokenIds.length);
+        uint256 firstClaimRound = ctx.lastClaimableRound + 1;
+
+        // Find the earliest cursor in the batch, skipping token IDs that are already current.
+        for (uint256 i; i < tokenIds.length;) {
+            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][tokenIds[i]][token];
+            if (nextClaimRound <= ctx.lastClaimableRound && nextClaimRound < firstClaimRound) {
+                firstClaimRound = nextClaimRound;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        // If every token ID is already current, there is nothing to materialize.
+        if (firstClaimRound > ctx.lastClaimableRound) return 0;
+
+        // Walk every unclaimed historical round needed by at least one token ID.
+        for (uint256 rewardRoundNumber = firstClaimRound; rewardRoundNumber <= ctx.lastClaimableRound;) {
+            // Load this reward round's funding, snapshot, claim counter, and deadline.
+            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][token][rewardRoundNumber];
+
+            // Skip rounds that never received funding.
+            if (rewardRound.amount != 0) {
+                // Expired rounds can no longer be claimed; burn their unclaimed remainder instead.
+                if (_rewardRoundExpired(rewardRound)) {
+                    _burnExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
+                } else if (rewardRound.totalStake != 0) {
+                    // Bundle the fixed round data used by every NFT in the batch.
+                    JBVestContext memory vestCtx = JBVestContext({
+                        hook: ctx.hook,
+                        token: token,
+                        distributable: rewardRound.amount,
+                        totalStakeAmount: rewardRound.totalStake,
+                        vestingReleaseRound: ctx.vestingReleaseRound,
+                        rewardRound: rewardRoundNumber,
+                        snapshotBlock: rewardRound.snapshotBlock
+                    });
+
+                    // Claim this round for every eligible token ID that has not already advanced past it.
+                    uint256 roundVestingAmount =
+                        _claimRewardRoundForTokenIds({ctx: vestCtx, tokenIds: tokenIds, tokenAmounts: tokenAmounts});
+
+                    // Track only the amount that actually started vesting, leaving zero-vote and dust amounts burnable.
+                    if (roundVestingAmount != 0) {
+                        rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + roundVestingAmount);
+
+                        // Add this round's vesting amount into the reward token batch total.
+                        totalVestingAmount += roundVestingAmount;
+                    }
+                }
+            }
+
+            unchecked {
+                ++rewardRoundNumber;
+            }
+        }
+
+        // Advance cursors even when a token ID earned zero, so empty or zero-stake rounds are not rescanned forever.
+        for (uint256 i; i < tokenIds.length;) {
+            uint256 tokenId = tokenIds[i];
+            nextClaimRoundOf[ctx.hook][tokenId][token] = ctx.lastClaimableRound + 1;
+
+            // All accumulated past rewards for this NFT start a single fresh vesting schedule at the claim round.
+            if (tokenAmounts[i] != 0) {
+                vestingDataOf[ctx.hook][tokenId][token].push(
+                    JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmounts[i], shareClaimed: 0})
+                );
+
+                emit Claimed({
+                    hook: ctx.hook,
+                    tokenId: tokenId,
+                    token: token,
+                    amount: tokenAmounts[i],
+                    vestingReleaseRound: ctx.vestingReleaseRound,
+                    caller: msg.sender
+                });
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice Claim one funded historical reward round for a batch of NFT token IDs.
+    /// @param ctx The reward-round context.
+    /// @param tokenIds The NFT token IDs to claim for.
+    /// @param tokenAmounts The cumulative amount to vest for each token ID in `tokenIds`.
+    /// @return totalVestingAmount The amount added to vesting from this reward round.
+    function _claimRewardRoundForTokenIds(
+        JBVestContext memory ctx,
+        uint256[] calldata tokenIds,
+        uint256[] memory tokenAmounts
+    )
+        internal
+        returns (uint256 totalVestingAmount)
+    {
+        // Allocate scratch arrays sized to the maximum possible number of distinct snapshot owners.
+        address[] memory owners = new address[](tokenIds.length);
+        uint256[] memory consumed = new uint256[](tokenIds.length);
+        uint256 uniqueCount;
+
+        // Claim each token ID that has not yet advanced past this reward round.
+        for (uint256 j; j < tokenIds.length;) {
+            if (nextClaimRoundOf[ctx.hook][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+                (uint256 tokenAmount, uint256 newUniqueCount) = _claimRewardRoundForTokenId({
+                    ctx: ctx, tokenId: tokenIds[j], owners: owners, consumed: consumed, uniqueCount: uniqueCount
+                });
+
+                uniqueCount = newUniqueCount;
+                tokenAmounts[j] += tokenAmount;
+                totalVestingAmount += tokenAmount;
+            }
+
+            unchecked {
+                ++j;
+            }
+        }
+
+        // Persist consumed voting power to storage to prevent cap resets across separate claim calls.
+        for (uint256 k; k < uniqueCount;) {
+            _consumedVotesOf[ctx.hook][ctx.token][ctx.rewardRound][owners[k]] = consumed[k];
+            unchecked {
+                ++k;
+            }
+        }
+    }
+
+    /// @notice Claim one NFT token ID for one historical reward round, enforcing the snapshot owner's vote cap.
+    /// @param ctx The reward-round context.
+    /// @param tokenId The NFT token ID to claim for.
+    /// @param owners A scratch array mapping slot indices to snapshot owners for deduplication.
+    /// @param consumed A scratch array tracking consumed voting power by owner slot.
+    /// @param uniqueCount The number of distinct snapshot owners seen so far in this reward-round batch.
+    /// @return tokenAmount The reward amount vested for this token ID.
+    /// @return newUniqueCount The updated count of distinct snapshot owners after processing this token ID.
+    function _claimRewardRoundForTokenId(
+        JBVestContext memory ctx,
+        uint256 tokenId,
+        address[] memory owners,
+        uint256[] memory consumed,
+        uint256 uniqueCount
+    )
+        internal
+        view
+        returns (uint256 tokenAmount, uint256 newUniqueCount)
+    {
+        newUniqueCount = uniqueCount;
+
+        uint256 votingUnits =
+            IJB721TiersHook(ctx.hook)
+        .STORE()
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
+
+        uint256 ownerIndex;
+        uint256 pastVotes;
+        {
+            // Use the funding round's snapshot block, not the block at which the NFT owner finally claims.
+            address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
+            if (owner == address(0)) return (0, newUniqueCount);
+
+            pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).checkpoints()))
+                .getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
+            if (pastVotes == 0) return (0, newUniqueCount);
+
+            bool found;
+            for (uint256 k; k < newUniqueCount;) {
+                if (owners[k] == owner) {
+                    ownerIndex = k;
+                    found = true;
+                    break;
+                }
+                unchecked {
+                    ++k;
+                }
+            }
+
+            if (!found) {
+                ownerIndex = newUniqueCount;
+                owners[newUniqueCount] = owner;
+                // Initialize from persistent storage to prevent cap resets across separate claim calls.
+                consumed[newUniqueCount] = _consumedVotesOf[ctx.hook][ctx.token][ctx.rewardRound][owner];
+                unchecked {
+                    ++newUniqueCount;
+                }
+            }
+        }
+
+        uint256 remaining = pastVotes > consumed[ownerIndex] ? pastVotes - consumed[ownerIndex] : 0;
+        uint256 stake = votingUnits < remaining ? votingUnits : remaining;
+        if (stake == 0) return (0, newUniqueCount);
+
+        // The round's reward pot is split pro-rata across checkpointed voting power.
+        tokenAmount = mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
+        if (tokenAmount == 0) return (0, newUniqueCount);
+
+        // Only non-zero reward claims consume the snapshot owner's voting budget.
+        consumed[ownerIndex] += stake;
+    }
 
     /// @notice Override vesting to cap each owner's consumed voting power across all their NFTs.
     /// @dev Prevents an owner with N NFTs of V voting units each from claiming N*V when their pastVotes < N*V.
@@ -187,12 +484,14 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         returns (uint256 totalVestingAmount)
     {
         // Bundle iteration-constant parameters into a struct to avoid stack-too-deep errors.
-        VestContext memory ctx = VestContext({
+        JBVestContext memory ctx = JBVestContext({
             hook: hook,
             token: token,
             distributable: distributable,
             totalStakeAmount: totalStakeAmount,
-            vestingReleaseRound: vestingReleaseRound
+            vestingReleaseRound: vestingReleaseRound,
+            rewardRound: currentRound(),
+            snapshotBlock: roundSnapshotBlock[currentRound()]
         });
 
         // Allocate scratch arrays sized to the maximum possible number of distinct owners (one per token ID).
@@ -221,7 +520,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Persist consumed voting power to storage to prevent cap resets across calls.
         for (uint256 k; k < uniqueCount;) {
-            _consumedVotesOf[hook][token][vestingReleaseRound][owners[k]] = consumed[k];
+            _consumedVotesOf[hook][token][ctx.rewardRound][owners[k]] = consumed[k];
             unchecked {
                 ++k;
             }
@@ -239,6 +538,22 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @return canClaim True if the account owns the token.
     function _canClaim(address hook, uint256 tokenId, address account) internal view override returns (bool canClaim) {
         canClaim = IERC721(hook).ownerOf(tokenId) == account;
+    }
+
+    /// @notice Revert unless the caller is authorized to claim each NFT token ID.
+    /// @param hook The 721 hook whose NFT owners are claiming.
+    /// @param tokenIds The NFT token IDs to check.
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view {
+        // Each requested NFT must currently belong to msg.sender.
+        for (uint256 i; i < tokenIds.length;) {
+            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /// @notice Checks if the given token was burned.
@@ -276,7 +591,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).checkpoints()))
             .getPastVotes({account: owner, timepoint: snapshotBlock});
 
-        // If the owner had no voting power at round start, the token is ineligible.
+        // If the owner had no voting power at the snapshot block, the token is ineligible.
         if (pastVotes == 0) return 0;
 
         // Cap at the token's tier voting units — the owner's past votes may cover multiple tokens,
@@ -343,7 +658,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @return tokenAmount The reward amount vested for this token ID (0 if skipped).
     /// @return newUniqueCount The updated count of distinct owners after processing this token ID.
     function _vestSingleToken(
-        VestContext memory ctx,
+        JBVestContext memory ctx,
         uint256 tokenId,
         address[] memory owners,
         uint256[] memory consumed,
@@ -384,7 +699,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256 pastVotes;
         {
             // Reuse the same round snapshot block for every token in this vesting batch.
-            uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
+            uint256 snapshotBlock = ctx.snapshotBlock;
             address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
             if (owner == address(0)) return (0, newUniqueCount);
 
@@ -392,7 +707,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).checkpoints()))
                 .getPastVotes({account: owner, timepoint: snapshotBlock});
 
-            // If the snapshot owner had no voting power at round start, the token is ineligible for this round.
+            // If the snapshot owner had no voting power at the snapshot block, the token is ineligible for this round.
             if (pastVotes == 0) return (0, newUniqueCount);
 
             // Search the owners array for an existing slot belonging to this owner.
@@ -414,7 +729,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 ownerIndex = newUniqueCount;
                 owners[newUniqueCount] = owner;
                 // Initialize from persistent storage to prevent cap resets across calls.
-                consumed[newUniqueCount] = _consumedVotesOf[ctx.hook][ctx.token][ctx.vestingReleaseRound][owner];
+                consumed[newUniqueCount] = _consumedVotesOf[ctx.hook][ctx.token][ctx.rewardRound][owner];
                 unchecked {
                     ++newUniqueCount;
                 }
@@ -455,7 +770,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             tokenId: tokenId,
             token: ctx.token,
             amount: tokenAmount,
-            vestingReleaseRound: ctx.vestingReleaseRound
+            vestingReleaseRound: ctx.vestingReleaseRound,
+            caller: msg.sender
         });
     }
 }

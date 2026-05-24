@@ -268,6 +268,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Token 1 consumed all 100 votes. Token 3 gets 0 (budget exhausted).
@@ -297,6 +298,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 token3Claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
@@ -304,6 +306,7 @@ contract VotingPowerCapSufficiencyTest is Test {
 
         // Now vest token 1. Alice's budget is already consumed.
         tokenIds[0] = 1;
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 token1Claimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
@@ -329,6 +332,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(charlie);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
@@ -358,6 +362,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 total;
@@ -389,6 +394,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
+        vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
@@ -406,15 +412,19 @@ contract VotingPowerCapSufficiencyTest is Test {
         store.setTokenTier(3, 1);
         hook.setOwner(3, alice);
 
-        // Vest all three tokens.
-        uint256[] memory tokenIds = new uint256[](3);
-        tokenIds[0] = 1; // alice
-        tokenIds[1] = 2; // bob
-        tokenIds[2] = 3; // alice (post-snapshot)
+        // Each current owner must claim their own NFTs.
+        uint256[] memory aliceTokenIds = new uint256[](2);
+        aliceTokenIds[0] = 1; // alice
+        aliceTokenIds[1] = 3; // alice (post-snapshot)
+        uint256[] memory bobTokenIds = new uint256[](1);
+        bobTokenIds[0] = 2; // bob
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(hook), tokenIds, tokens);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), aliceTokenIds, tokens);
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), bobTokenIds, tokens);
 
         uint256 aliceTotal = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)))
             + distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));

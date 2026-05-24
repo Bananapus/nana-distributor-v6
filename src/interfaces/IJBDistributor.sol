@@ -5,8 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {JBTokenSnapshotData} from "../structs/JBTokenSnapshotData.sol";
 
-/// @notice Interface for round-based reward distributors with linear vesting. Stakers claim their share of a
-/// distributable balance each round, and claimed amounts vest linearly over a configurable number of rounds.
+/// @notice Interface for round-based reward distributors with linear vesting. Stakers claim their share of funded
+/// reward rounds, and claimed amounts vest linearly over a configurable number of rounds.
 /// Two implementations exist: `JBTokenDistributor` (IVotes token stakers) and `JB721Distributor` (NFT holders).
 interface IJBDistributor {
     //*********************************************************************//
@@ -19,8 +19,14 @@ interface IJBDistributor {
     /// @param token The address of the token to vest.
     /// @param amount The amount of tokens to vest.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
+    /// @param caller The address that triggered the claim.
     event Claimed(
-        address indexed hook, uint256 indexed tokenId, IERC20 token, uint256 amount, uint256 vestingReleaseRound
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 token,
+        uint256 amount,
+        uint256 vestingReleaseRound,
+        address caller
     );
 
     /// @notice Emitted when vested tokens are collected.
@@ -29,14 +35,31 @@ interface IJBDistributor {
     /// @param token The address of the token collected.
     /// @param amount The amount of tokens collected.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
+    /// @param caller The address that triggered the collection.
     event Collected(
-        address indexed hook, uint256 indexed tokenId, IERC20 token, uint256 amount, uint256 vestingReleaseRound
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 token,
+        uint256 amount,
+        uint256 vestingReleaseRound,
+        address caller
     );
 
     /// @notice Emitted when a snapshot block is first recorded for a round.
     /// @param round The round the snapshot block was recorded for.
     /// @param snapshotBlock The block number recorded as the snapshot point.
-    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
+    /// @param caller The address that triggered the snapshot recording.
+    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock, address caller);
+
+    /// @notice Emitted when an expired reward round's unclaimed amount is burned.
+    /// @param hook The hook whose expired rewards were burned.
+    /// @param round The expired reward round.
+    /// @param token The reward token that was burned.
+    /// @param amount The unclaimed reward amount burned.
+    /// @param caller The address that triggered the burn.
+    event ExpiredRewardsBurned(
+        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
+    );
 
     /// @notice Emitted when a snapshot is created for a round.
     /// @param hook The hook the snapshot is for.
@@ -44,8 +67,14 @@ interface IJBDistributor {
     /// @param token The token the snapshot is of.
     /// @param balance The token balance at the time of the snapshot.
     /// @param vestingAmount The amount of tokens vesting at the time of the snapshot.
+    /// @param caller The address that triggered the snapshot.
     event SnapshotCreated(
-        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 balance, uint256 vestingAmount
+        address indexed hook,
+        uint256 indexed round,
+        IERC20 indexed token,
+        uint256 balance,
+        uint256 vestingAmount,
+        address caller
     );
 
     //*********************************************************************//
@@ -134,6 +163,22 @@ interface IJBDistributor {
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
+
+    /// @notice Fund the distributor for a specific hook with expiring rewards.
+    /// @dev `claimDuration` is measured from the first timestamp at which the funded round can be claimed.
+    /// @dev A zero duration means the reward round does not expire.
+    /// @param hook The hook to fund.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund.
+    /// @param claimDuration The number of seconds claimants have after the round becomes claimable.
+    function fundWithClaimDuration(address hook, IERC20 token, uint256 amount, uint48 claimDuration) external payable;
+
+    /// @notice Burn unclaimed rewards from expired reward rounds.
+    /// @param hook The hook whose expired reward rounds should be burned.
+    /// @param token The reward token to burn.
+    /// @param rounds The reward rounds to burn.
+    /// @return amount The total amount burned.
+    function burnExpiredRewards(address hook, IERC20 token, uint256[] calldata rounds) external returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;
