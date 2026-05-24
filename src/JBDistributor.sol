@@ -625,7 +625,7 @@ abstract contract JBDistributor is IJBDistributor {
         if (snapshotBlock == 0) {
             snapshotBlock = block.number - 1;
             roundSnapshotBlock[round] = snapshotBlock;
-            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock});
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock, caller: msg.sender});
         }
     }
 
@@ -653,7 +653,12 @@ abstract contract JBDistributor is IJBDistributor {
         _snapshotInitializedFor[hook][token][round] = true;
 
         emit SnapshotCreated({
-            hook: hook, round: round, token: token, balance: snapshot.balance, vestingAmount: snapshot.vestingAmount
+            hook: hook,
+            round: round,
+            token: token,
+            balance: snapshot.balance,
+            vestingAmount: snapshot.vestingAmount,
+            caller: msg.sender
         });
     }
 
@@ -774,7 +779,8 @@ abstract contract JBDistributor is IJBDistributor {
                         tokenId: tokenId,
                         token: token,
                         amount: claimAmount,
-                        vestingReleaseRound: vesting.releaseRound
+                        vestingReleaseRound: vesting.releaseRound,
+                        caller: msg.sender
                     });
                 }
 
@@ -865,7 +871,8 @@ abstract contract JBDistributor is IJBDistributor {
                 tokenId: tokenId,
                 token: token,
                 amount: tokenAmount,
-                vestingReleaseRound: vestingReleaseRound
+                vestingReleaseRound: vestingReleaseRound,
+                caller: msg.sender
             });
 
             unchecked {

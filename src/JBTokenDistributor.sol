@@ -365,7 +365,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             tokenId: tokenId,
             token: token,
             amount: tokenAmount,
-            vestingReleaseRound: ctx.vestingReleaseRound
+            vestingReleaseRound: ctx.vestingReleaseRound,
+            caller: msg.sender
         });
     }
 

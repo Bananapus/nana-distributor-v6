@@ -417,7 +417,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                     tokenId: tokenId,
                     token: token,
                     amount: tokenAmounts[i],
-                    vestingReleaseRound: ctx.vestingReleaseRound
+                    vestingReleaseRound: ctx.vestingReleaseRound,
+                    caller: msg.sender
                 });
             }
 
@@ -953,7 +954,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             tokenId: tokenId,
             token: ctx.token,
             amount: tokenAmount,
-            vestingReleaseRound: ctx.vestingReleaseRound
+            vestingReleaseRound: ctx.vestingReleaseRound,
+            caller: msg.sender
         });
     }
 }

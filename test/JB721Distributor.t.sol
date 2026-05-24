@@ -673,7 +673,9 @@ contract JB721DistributorTest is Test {
         tokens[0] = IERC20(address(rewardToken));
 
         vm.expectEmit(true, true, false, true);
-        emit IJBDistributor.Claimed(address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS);
+        emit IJBDistributor.Claimed(
+            address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS, alice
+        );
 
         _advanceToNextRound();
         vm.prank(alice);
@@ -697,7 +699,7 @@ contract JB721DistributorTest is Test {
         _advanceToRound(1);
 
         vm.expectEmit(true, false, false, true);
-        emit IJBDistributor.RoundSnapshotRecorded(1, block.number - 1);
+        emit IJBDistributor.RoundSnapshotRecorded(1, block.number - 1, address(this));
 
         distributor.poke();
     }
@@ -862,7 +864,9 @@ contract JB721DistributorTest is Test {
         _advanceToRound(1 + VESTING_ROUNDS);
 
         vm.expectEmit(true, true, false, true);
-        emit IJBDistributor.Collected(address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS);
+        emit IJBDistributor.Collected(
+            address(hook), 1, IERC20(address(rewardToken)), 250 ether, 1 + VESTING_ROUNDS, alice
+        );
 
         vm.prank(alice);
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);

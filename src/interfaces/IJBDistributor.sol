@@ -19,8 +19,14 @@ interface IJBDistributor {
     /// @param token The address of the token to vest.
     /// @param amount The amount of tokens to vest.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
+    /// @param caller The address that triggered the claim.
     event Claimed(
-        address indexed hook, uint256 indexed tokenId, IERC20 token, uint256 amount, uint256 vestingReleaseRound
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 token,
+        uint256 amount,
+        uint256 vestingReleaseRound,
+        address caller
     );
 
     /// @notice Emitted when vested tokens are collected.
@@ -29,14 +35,21 @@ interface IJBDistributor {
     /// @param token The address of the token collected.
     /// @param amount The amount of tokens collected.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
+    /// @param caller The address that triggered the collection.
     event Collected(
-        address indexed hook, uint256 indexed tokenId, IERC20 token, uint256 amount, uint256 vestingReleaseRound
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 token,
+        uint256 amount,
+        uint256 vestingReleaseRound,
+        address caller
     );
 
     /// @notice Emitted when a snapshot block is first recorded for a round.
     /// @param round The round the snapshot block was recorded for.
     /// @param snapshotBlock The block number recorded as the snapshot point.
-    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
+    /// @param caller The address that triggered the snapshot recording.
+    event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock, address caller);
 
     /// @notice Emitted when an expired reward round's unclaimed amount is burned.
     /// @param hook The hook whose expired rewards were burned.
@@ -54,8 +67,14 @@ interface IJBDistributor {
     /// @param token The token the snapshot is of.
     /// @param balance The token balance at the time of the snapshot.
     /// @param vestingAmount The amount of tokens vesting at the time of the snapshot.
+    /// @param caller The address that triggered the snapshot.
     event SnapshotCreated(
-        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 balance, uint256 vestingAmount
+        address indexed hook,
+        uint256 indexed round,
+        IERC20 indexed token,
+        uint256 balance,
+        uint256 vestingAmount,
+        address caller
     );
 
     //*********************************************************************//
