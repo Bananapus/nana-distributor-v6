@@ -614,7 +614,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
 
         // Surface the permissionless burn for off-chain accounting.
-        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount});
+        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
     }
 
     /// @notice Override vesting to cap each owner's consumed voting power across all their NFTs.

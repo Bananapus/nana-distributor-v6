@@ -43,7 +43,10 @@ interface IJBDistributor {
     /// @param round The expired reward round.
     /// @param token The reward token that was burned.
     /// @param amount The unclaimed reward amount burned.
-    event ExpiredRewardsBurned(address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount);
+    /// @param caller The address that triggered the burn.
+    event ExpiredRewardsBurned(
+        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
+    );
 
     /// @notice Emitted when a snapshot is created for a round.
     /// @param hook The hook the snapshot is for.

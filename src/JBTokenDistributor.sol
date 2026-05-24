@@ -429,7 +429,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
 
         // Surface the permissionless burn for off-chain accounting.
-        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount});
+        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
     }
 
     //*********************************************************************//
