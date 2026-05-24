@@ -61,12 +61,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @custom:param token The reward token being claimed.
     mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public nextClaimRoundOf;
 
-    /// @notice Reward data assigned to each funding round.
-    /// @custom:param hook The 721 hook whose NFT owners receive rewards.
-    /// @custom:param token The reward token.
-    /// @custom:param round The reward round.
-    mapping(address hook => mapping(IERC20 token => mapping(uint256 round => JBRewardRoundData))) public rewardRoundOf;
-
     //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
@@ -206,63 +200,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true});
     }
 
-    /// @notice Directly fund this 721 distributor for a specific hook.
-    /// @dev The accepted amount is assigned to the current reward round and can be claimed once a later round starts.
-    /// @param hook The 721 hook whose NFT owners receive the rewards.
-    /// @param token The reward token being funded.
-    /// @param amount The nominal amount to fund. Ignored for native ETH; `msg.value` is used instead.
-    function fund(address hook, IERC20 token, uint256 amount) external payable override(JBDistributor, IJBDistributor) {
-        _fund({hook: hook, token: token, amount: amount, claimDuration: 0});
-    }
-
-    /// @notice Directly fund this 721 distributor with rewards that expire if unclaimed.
-    /// @dev The claim window starts when the funded round first becomes claimable.
-    /// @param hook The 721 hook whose NFT owners receive the rewards.
-    /// @param token The reward token being funded.
-    /// @param amount The nominal amount to fund. Ignored for native ETH; `msg.value` is used instead.
-    /// @param claimDuration The number of seconds NFT owners have to claim once the round becomes claimable.
-    function fundWithClaimDuration(
-        address hook,
-        IERC20 token,
-        uint256 amount,
-        uint48 claimDuration
-    )
-        external
-        payable
-        override(JBDistributor, IJBDistributor)
-    {
-        _fund({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
-    }
-
-    /// @notice Burn unclaimed rewards from expired 721-distributor reward rounds.
-    /// @param hook The 721 hook whose expired rewards should be burned.
-    /// @param token The reward token to burn.
-    /// @param rounds The reward rounds to burn.
-    /// @return amount The total amount burned.
-    function burnExpiredRewards(
-        address hook,
-        IERC20 token,
-        uint256[] calldata rounds
-    )
-        external
-        override(JBDistributor, IJBDistributor)
-        returns (uint256 amount)
-    {
-        // Do not let reward-token callbacks burn inventory during an inbound balance-delta measurement.
-        _requireNotAcceptingToken();
-
-        // Process every requested round independently so callers can batch keeper work.
-        for (uint256 i; i < rounds.length;) {
-            // Add this round's expired remainder to the batch total.
-            amount += _burnExpiredRewardRound({hook: hook, token: token, round: rounds[i]});
-
-            unchecked {
-                // Safe because the loop is bounded by calldata length.
-                ++i;
-            }
-        }
-    }
-
     //*********************************************************************//
     // -------------------------- public views --------------------------- //
     //*********************************************************************//
@@ -278,29 +215,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
-
-    /// @notice Accept funds and assign them to this round's reward ledger.
-    /// @param hook The 721 hook whose NFT owners receive the rewards.
-    /// @param token The reward token being funded.
-    /// @param amount The nominal amount to fund.
-    /// @param claimDuration The number of seconds NFT owners have to claim once the round becomes claimable.
-    function _fund(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
-        // Native funding is measured by msg.value, not the caller-provided amount.
-        if (address(token) == JBConstants.NATIVE_TOKEN) {
-            amount = msg.value;
-        } else {
-            // ERC-20 funding must not carry native ETH.
-            if (msg.value != 0) {
-                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
-            }
-
-            // ERC-20 funding is measured by balance delta so fee-on-transfer tokens are accounted correctly.
-            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
-        }
-
-        // Store the accepted amount in this round's historical reward ledger.
-        _recordRewardFunding({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
-    }
 
     /// @notice Claim all past reward rounds for the given NFT token IDs and reward tokens into fresh vesting entries.
     /// @param hook The 721 hook whose NFT owners are claiming.
@@ -544,80 +458,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         consumed[ownerIndex] += stake;
     }
 
-    /// @notice Record accepted funding as the current round's reward pot.
-    /// @param hook The 721 hook whose NFT owners receive the rewards.
-    /// @param token The reward token.
-    /// @param amount The accepted funding amount.
-    /// @param claimDuration The number of seconds NFT owners have to claim once the round becomes claimable.
-    function _recordRewardFunding(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
-        // Zero-value transfers do not create reward rounds or alter tracked balances.
-        if (amount == 0) return;
-
-        // Funding belongs to the round in progress when the distributor receives the rewards.
-        uint256 round = currentRound();
-
-        // Load the current round's ledger entry for this hook and reward token.
-        JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
-
-        // A zero deadline means no expiration; otherwise the clock starts once this round becomes claimable.
-        uint48 claimDeadline = _claimDeadlineFor({round: round, claimDuration: claimDuration});
-
-        // First funding in a round locks that round's snapshot block and total stake for all later claims.
-        if (rewardRound.amount == 0) {
-            // Record the exact historical block used for all per-NFT stake lookups in this round.
-            uint256 snapshotBlock = _ensureSnapshotBlockFor(round);
-
-            // Store the snapshot block in the packed uint48 field.
-            rewardRound.snapshotBlock = _toUint48(snapshotBlock);
-
-            // Store the packed claim deadline chosen by the rewarder.
-            rewardRound.claimDeadline = claimDeadline;
-
-            // Store the packed total voting units that share this round's reward pot.
-            rewardRound.totalStake = _toUint208(_totalStake({hook: hook, blockNumber: snapshotBlock}));
-        } else if (rewardRound.claimDeadline != claimDeadline) {
-            // All fundings merged into the same round must have one deadline for deterministic expiry.
-            revert JBDistributor_ClaimDeadlineMismatch({
-                existingDeadline: rewardRound.claimDeadline, newDeadline: claimDeadline
-            });
-        }
-
-        // Multiple fundings in the same round share the same snapshot and accumulate into one reward pot.
-        rewardRound.amount = _toUint208(uint256(rewardRound.amount) + amount);
-
-        // Keep the base distributor's balance accounting in sync for collection and conservation checks.
-        _balanceOf[hook][token] += amount;
-        _accountedBalanceOf[token] += amount;
-    }
-
-    /// @notice Burn one expired reward round's unclaimed inventory.
-    /// @param hook The 721 hook whose expired rewards should be burned.
-    /// @param token The reward token to burn.
-    /// @param round The reward round to burn.
-    /// @return burnAmount The amount burned.
-    function _burnExpiredRewardRound(address hook, IERC20 token, uint256 round) internal returns (uint256 burnAmount) {
-        // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
-        JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
-
-        // Ignore rounds that either never expire or have not reached their deadline yet.
-        if (!_rewardRoundExpired(rewardRound)) return 0;
-
-        // If prior claims have already materialized the whole round, there is nothing left to burn.
-        if (rewardRound.claimedAmount >= rewardRound.amount) return 0;
-
-        // Burn only the unclaimed remainder, preserving amounts that already started vesting.
-        burnAmount = uint256(rewardRound.amount) - uint256(rewardRound.claimedAmount);
-
-        // Mark the whole round settled before transferring to close reentrancy-sensitive accounting.
-        rewardRound.claimedAmount = rewardRound.amount;
-
-        // Remove the expired remainder from distributor inventory and send it to the burn sink.
-        _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
-
-        // Surface the permissionless burn for off-chain accounting.
-        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
-    }
-
     /// @notice Override vesting to cap each owner's consumed voting power across all their NFTs.
     /// @dev Prevents an owner with N NFTs of V voting units each from claiming N*V when their pastVotes < N*V.
     ///      Iterates over all token IDs in the batch, delegating per-token logic to `_vestSingleToken`. A pair of
@@ -690,30 +530,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
-
-    /// @notice The deadline for a reward round with the given claim duration.
-    /// @param round The reward round.
-    /// @param claimDuration The claim duration once the round becomes claimable.
-    /// @return claimDeadline The deadline timestamp. Zero means no expiration.
-    function _claimDeadlineFor(uint256 round, uint48 claimDuration) internal view returns (uint48 claimDeadline) {
-        // Zero duration keeps the round non-expiring and backward compatible with existing fund paths.
-        if (claimDuration == 0) return 0;
-
-        // Start the window at the next round boundary, when the funded round first becomes claimable.
-        claimDeadline = _toUint48(roundStartTimestamp(round + 1) + claimDuration);
-    }
-
-    /// @notice Whether a reward round has passed its claim deadline.
-    /// @param rewardRound The reward round data.
-    /// @return expired True if unclaimed rewards can be burned.
-    function _rewardRoundExpired(JBRewardRoundData storage rewardRound) internal view returns (bool expired) {
-        // Copy the packed deadline into memory so the zero check and timestamp compare use the same value.
-        uint48 claimDeadline = rewardRound.claimDeadline;
-
-        // A zero deadline never expires; non-zero deadlines expire at or after the configured timestamp.
-        // forge-lint: disable-next-line(block-timestamp)
-        expired = claimDeadline != 0 && block.timestamp >= claimDeadline;
-    }
 
     /// @notice Check if the account owns the given NFT token ID.
     /// @param hook The hook the token belongs to.
