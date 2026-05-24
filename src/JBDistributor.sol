@@ -46,12 +46,24 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
+    /// @notice Thrown when a value cannot fit in a uint208 reward-round field.
+    error JBDistributor_Uint208Overflow(uint256 value);
+
+    /// @notice Thrown when a value cannot fit in a uint48 reward-round field.
+    error JBDistributor_Uint48Overflow(uint256 value);
+
+    /// @notice Thrown when fundings in the same reward round use different claim deadlines.
+    error JBDistributor_ClaimDeadlineMismatch(uint256 existingDeadline, uint256 newDeadline);
+
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
 
     /// @notice The number of shares that represent 100%.
     uint256 public constant MAX_SHARE = 100_000;
+
+    /// @notice Asset-agnostic burn sink for expired rewards.
+    address public constant BURN_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -232,6 +244,31 @@ abstract contract JBDistributor is IJBDistributor {
         _balanceOf[hook][token] += amount;
         _accountedBalanceOf[token] += amount;
     }
+
+    /// @notice Fund the distributor for a specific hook with expiring rewards.
+    /// @dev Concrete distributors implement reward-round assignment.
+    function fundWithClaimDuration(
+        address hook,
+        IERC20 token,
+        uint256 amount,
+        uint48 claimDuration
+    )
+        external
+        payable
+        virtual
+        override;
+
+    /// @notice Burn unclaimed rewards from expired reward rounds.
+    /// @dev Concrete distributors own their reward-round ledgers.
+    function burnExpiredRewards(
+        address hook,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        virtual
+        override
+        returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
     /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
@@ -522,6 +559,51 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Close the transfer window after the token balance has been measured.
         _acceptingToken = address(0);
+    }
+
+    /// @notice Burn reward inventory by transferring it to the burn sink.
+    /// @param hook The hook whose tracked balance is being burned.
+    /// @param token The reward token to burn.
+    /// @param amount The amount to burn.
+    function _burnRewardTokens(address hook, IERC20 token, uint256 amount) internal {
+        // No-op zero burns so callers can batch empty or already-settled rounds safely.
+        if (amount == 0) return;
+
+        // Remove the burned amount from the hook's reward inventory.
+        _balanceOf[hook][token] -= amount;
+
+        // Remove the same amount from the global inventory tracked for this token.
+        _accountedBalanceOf[token] -= amount;
+
+        // Native rewards cannot be ERC-20-burned, so send them to the shared burn sink.
+        if (address(token) == JBConstants.NATIVE_TOKEN) {
+            // Forward the exact expired native amount to the burn sink.
+            (bool success,) = BURN_ADDRESS.call{value: amount}("");
+
+            // Revert if the native sink transfer fails, preserving accounting by reverting the whole burn.
+            if (!success) revert JBDistributor_NativeTransferFailed({beneficiary: BURN_ADDRESS, amount: amount});
+        } else {
+            // ERC-20 rewards are removed from usable inventory by sending them to the same burn sink.
+            token.safeTransfer({to: BURN_ADDRESS, value: amount});
+        }
+    }
+
+    /// @notice Cast a reward-round value to uint208.
+    /// @param value The value to cast.
+    /// @return castValue The cast value.
+    function _toUint208(uint256 value) internal pure returns (uint208 castValue) {
+        if (value > type(uint208).max) revert JBDistributor_Uint208Overflow({value: value});
+        // forge-lint: disable-next-line(unsafe-typecast)
+        castValue = uint208(value);
+    }
+
+    /// @notice Cast a reward-round value to uint48.
+    /// @param value The value to cast.
+    /// @return castValue The cast value.
+    function _toUint48(uint256 value) internal pure returns (uint48 castValue) {
+        if (value > type(uint48).max) revert JBDistributor_Uint48Overflow({value: value});
+        // forge-lint: disable-next-line(unsafe-typecast)
+        castValue = uint48(value);
     }
 
     /// @notice Ensures that a snapshot block is recorded for the given round.

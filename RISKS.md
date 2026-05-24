@@ -15,6 +15,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs can brick an instance; zero total stake can leave reward rounds unclaimable. | Deployment-time validation and operator runbooks. |
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
+| P1 | Expiry window misconfiguration | Too-short claim durations make otherwise valid unclaimed rewards burnable by anyone. | Rewarder runbooks, UI warnings, and tests for deadline behavior. |
 | P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. |
 
 ## 1. Trust Assumptions
@@ -27,6 +28,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 - **Reward-round snapshots are write-once per (hook, token, round).** Accepted funding is assigned to the current reward round and records that round's snapshot block plus total stake. Later funding in the same round accumulates into the same reward pot.
 - **Late claims do not reallocate historical rewards.** Funded reward rounds are reserved for historical stakers or NFT owners and are not reassigned merely because someone claims late.
+- **Expiring rounds burn only unclaimed inventory.** `fundWithClaimDuration` records a deadline for the funded round. After that deadline, anyone can burn the funded amount that has not yet started vesting. Already-materialized vesting entries are unaffected.
+- **Same-round deadlines are singular.** To keep per-round storage compact, one hook/token/round has one claim deadline. A later same-round funding with a different deadline reverts.
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled, not burned.**
 - **Undelegated `IVotes` balances can dilute participation.**
@@ -47,6 +50,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Empty historical claims can be no-ops.** Token and 721 historical claims can succeed without creating a vesting entry when no past reward rounds are claimable or the claimant had zero eligible stake.
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
+- **Expired burns are permissionless but deadline-gated.** Any caller can clear expired inventory, but non-expired and non-expiring rounds burn zero.
 
 ## 5. Integration Risks
 
@@ -55,6 +59,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   Underpaying and overpaying both revert so terminal context accounting cannot drift from actual native value delivered.
   ERC-20 split contexts must send no native value.
 - **Fee-on-transfer handling uses balance-delta accounting.** The `transferFrom` path measures `balanceAfter - balanceBefore` to credit the actual received amount.
+- **Direct expiring funding is explicit.** `fundWithClaimDuration` is the path that sets expiration. Split funding and plain `fund` use a zero deadline and do not expire.
 - **Reward-token callbacks fail closed during funding.** While `fund` or `processSplitWith` is measuring an inbound
   ERC-20 balance delta, reentrant `fund`, `beginVesting`, `collectVestedRewards`, and `releaseForfeitedRewards` calls
   revert. This prevents both over-crediting from nested funding and under-crediting from same-token collection netting
@@ -80,6 +85,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - `totalVestingAmountOf <= _balanceOf`
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
 - round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
+- expired burns reduce tracked balance only by `amount - claimedAmount`
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only recycled through the explicit forfeiture path
 - only the encoded address can begin vesting or collect from the token distributor
@@ -88,6 +94,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   token balance delta with no accompanying `msg.value`
 - ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
 - 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
+- late claim transactions burn expired rounds instead of vesting them
 
 ## 7. Accepted Behaviors
 
@@ -101,19 +108,25 @@ Operators should treat keeper-driven `poke()` at well-known times as part of the
 
 In both concrete distributors, current-round funding is assigned to the current reward round but cannot be claimed until a later round. A claimant in round `N` only materializes rewards through round `N - 1`, and all materialized rewards start vesting at round `N`.
 
-### 7.2 Rewards can remain undistributed when stake is missing
+### 7.2 Expired unclaimed rewards are burnable
+
+Rewarders can use `fundWithClaimDuration` to attach a claim window to direct funding. The window starts when the funded reward round first becomes claimable, not when the transfer lands. After the deadline, `burnExpiredRewards` can be called by anyone. The burn amount is the round's funded amount minus the amount already materialized into vesting.
+
+This is intentionally different from late non-expiring claims. Non-expiring rounds remain reserved for historical stakers or NFT owners indefinitely. Expiring rounds trade that indefinite claimability for permissionless cleanup after the rewarder's configured window.
+
+### 7.3 Rewards can remain undistributed when stake is missing
 
 If participants have zero effective stake for a funded reward round, their share is not redirected to later claimants. It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For 721 distributions, already-materialized unvested or forfeited value can still return to the distributable pool under the 721-specific rules.
 
-### 7.3 721 and `IVotes` variants intentionally differ
+### 7.4 721 and `IVotes` variants intentionally differ
 
 They share the vesting engine but not the same ownership model.
 
-### 7.4 Distribution eligibility requires enrollment
+### 7.5 Distribution eligibility requires enrollment
 
 `JB721Checkpoints.ownerOfAt` returns `address(0)` for tokens that have never been enrolled or transferred. Unenrolled tokens are ineligible for snapshot-based distribution. Token holders enroll by calling `delegate(address delegatee, uint256[] calldata tokenIds)`, which writes per-token owner checkpoints. This keeps mint gas low — only users who want to participate in distribution pay the checkpoint storage cost. Transfers write checkpoints via `onTransfer`, so transferred tokens are eligible without explicit enrollment.
 
-### 7.5 Burned-token forfeiture follows the vesting curve
+### 7.6 Burned-token forfeiture follows the vesting curve
 
 `releaseForfeitedRewards()` does not immediately free the full nominal amount of every burned token's vesting entry. It
 uses the same linear unlock math as collection, with `ownerClaim = false`, so only the currently unlocked portion is

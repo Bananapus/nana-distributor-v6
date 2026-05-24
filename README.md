@@ -37,9 +37,11 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 
 1. a project funds the distributor, often through a payout split
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
-3. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
-4. recipients collect their vested share as the configured vesting schedule unlocks
-5. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
+3. optional direct funding can set a claim duration; split funding and plain `fund` stay non-expiring
+4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
+5. anyone can burn expired unclaimed reward rounds after their deadline
+6. recipients collect their vested share as the configured vesting schedule unlocks
+7. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -55,6 +57,10 @@ This repo does not explain why an allocation exists. It only defines how funded 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
 - ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
   token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
+- `fundWithClaimDuration` starts the claim window when the funded round first becomes claimable; incompatible
+  same-round deadlines for the same hook and reward token revert
+- `burnExpiredRewards` is permissionless and only burns the unclaimed remainder; already-materialized vesting entries
+  remain claimable on their normal vesting curve
 - `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token path
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
@@ -112,6 +118,8 @@ script/
 - distributors are only as trustworthy as the vesting parameters and funding they receive
 - operational mistakes often come from funding the wrong asset or underfunding the distributor
 - teams should review claim timing and snapshot assumptions with the same care they review the payout source
+- rewarders that set claim durations should choose a window long enough for expected claimants, because expired
+  unclaimed rewards can be burned by anyone
 
 ## For AI Agents
 

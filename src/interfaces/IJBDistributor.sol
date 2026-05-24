@@ -38,6 +38,13 @@ interface IJBDistributor {
     /// @param snapshotBlock The block number recorded as the snapshot point.
     event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock);
 
+    /// @notice Emitted when an expired reward round's unclaimed amount is burned.
+    /// @param hook The hook whose expired rewards were burned.
+    /// @param round The expired reward round.
+    /// @param token The reward token that was burned.
+    /// @param amount The unclaimed reward amount burned.
+    event ExpiredRewardsBurned(address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount);
+
     /// @notice Emitted when a snapshot is created for a round.
     /// @param hook The hook the snapshot is for.
     /// @param round The round the snapshot was created for.
@@ -134,6 +141,22 @@ interface IJBDistributor {
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
+
+    /// @notice Fund the distributor for a specific hook with expiring rewards.
+    /// @dev `claimDuration` is measured from the first timestamp at which the funded round can be claimed.
+    /// @dev A zero duration means the reward round does not expire.
+    /// @param hook The hook to fund.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund.
+    /// @param claimDuration The number of seconds claimants have after the round becomes claimable.
+    function fundWithClaimDuration(address hook, IERC20 token, uint256 amount, uint48 claimDuration) external payable;
+
+    /// @notice Burn unclaimed rewards from expired reward rounds.
+    /// @param hook The hook whose expired reward rounds should be burned.
+    /// @param token The reward token to burn.
+    /// @param rounds The reward rounds to burn.
+    /// @return amount The total amount burned.
+    function burnExpiredRewards(address hook, IERC20 token, uint256[] calldata rounds) external returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;

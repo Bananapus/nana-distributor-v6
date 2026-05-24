@@ -3,12 +3,14 @@ pragma solidity ^0.8.0;
 
 /// @notice A reward amount assigned to a specific distributor round.
 /// @custom:member amount The reward amount assigned to the round.
-/// @custom:member totalStake The aggregate stake at the round's snapshot block.
 /// @custom:member snapshotBlock The block used for per-account historical stake lookups.
-/// @custom:member initialized Whether the round has a fixed snapshot.
+/// @custom:member claimedAmount The reward amount already materialized into vesting.
+/// @custom:member claimDeadline The timestamp at which unclaimed rewards can be burned. Zero means no expiration.
+/// @custom:member totalStake The aggregate stake at the round's snapshot block.
 struct JBRewardRoundData {
-    uint256 amount;
-    uint256 totalStake;
-    uint256 snapshotBlock;
-    bool initialized;
+    uint208 amount;
+    uint48 snapshotBlock;
+    uint208 claimedAmount;
+    uint48 claimDeadline;
+    uint208 totalStake;
 }

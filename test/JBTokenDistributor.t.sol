@@ -11,6 +11,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -120,6 +121,14 @@ contract JBTokenDistributorTest is Test {
         rewardToken.mint(address(this), amount);
         rewardToken.approve(address(distributor), amount);
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), amount);
+    }
+
+    /// @notice Fund the distributor with a claim duration for expiry tests.
+    function _fundDistributorWithClaimDuration(uint256 amount, uint48 claimDuration) internal {
+        vm.roll(block.number + 1);
+        rewardToken.mint(address(this), amount);
+        rewardToken.approve(address(distributor), amount);
+        distributor.fundWithClaimDuration(address(votesToken), IERC20(address(rewardToken)), amount, claimDuration);
     }
 
     //*********************************************************************//
@@ -526,6 +535,149 @@ contract JBTokenDistributorTest is Test {
         assertEq(aliceClaimed, 1050 ether, "Prior round reward becomes claimable next round");
     }
 
+    function test_expiringRewards_claimBeforeDeadlineStartsVesting() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
+
+        uint48 claimDuration = 50;
+        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+
+        (uint256 amount,, uint256 claimedAmount, uint256 claimDeadline, uint256 totalStake) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+        assertEq(amount, 1000 ether, "round funded amount");
+        assertEq(claimedAmount, 0, "nothing claimed yet");
+        assertEq(claimDeadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline starts at claimable");
+        assertEq(totalStake, 1000 ether, "snapshot total stake");
+
+        _advanceToRound(1);
+        _beginVestingFor(alice, _singleRewardToken());
+
+        uint256 aliceClaimed =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 700 ether, "Alice claims before expiry");
+
+        (,, claimedAmount,,) = distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+        assertEq(claimedAmount, 700 ether, "claimed amount tracks materialized vesting");
+    }
+
+    function test_expiringRewards_permissionlessBurnAfterDeadline() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
+
+        uint48 claimDuration = 10;
+        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.prank(carol);
+        uint256 burned = distributor.burnExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
+        });
+
+        assertEq(burned, 1000 ether, "all unclaimed rewards burn");
+        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "pool balance burns");
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether, "burn sink receives expired rewards");
+
+        _beginVestingFor(alice, _singleRewardToken());
+
+        uint256 aliceClaimed =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 0, "late claim gets no expired rewards");
+    }
+
+    function test_expiringNativeRewards_permissionlessBurnAfterDeadline() public {
+        uint48 claimDuration = 10;
+        IERC20 nativeToken = IERC20(JBConstants.NATIVE_TOKEN);
+
+        distributor.fundWithClaimDuration{value: 1 ether}(address(votesToken), nativeToken, 0, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        uint256 burnSinkBalanceBefore = distributor.BURN_ADDRESS().balance;
+
+        vm.prank(carol);
+        uint256 burned =
+            distributor.burnExpiredRewards({hook: address(votesToken), token: nativeToken, rounds: _singleRound(0)});
+
+        assertEq(burned, 1 ether, "native reward burns");
+        assertEq(distributor.balanceOf(address(votesToken), nativeToken), 0, "native pool balance burns");
+        assertEq(address(distributor).balance, 0, "native inventory leaves distributor");
+        assertEq(distributor.BURN_ADDRESS().balance - burnSinkBalanceBefore, 1 ether, "burn sink receives native");
+    }
+
+    function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
+
+        uint48 claimDuration = 50;
+        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+
+        _advanceToRound(1);
+        _beginVestingFor(alice, _singleRewardToken());
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.prank(carol);
+        uint256 burned = distributor.burnExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
+        });
+
+        assertEq(burned, 300 ether, "only Bob's unclaimed share burns");
+        assertEq(
+            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
+            700 ether,
+            "vested inventory remains"
+        );
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 300 ether, "burn sink receives remainder");
+
+        _beginVestingFor(bob, _singleRewardToken());
+        uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
+        assertEq(bobClaimed, 0, "Bob cannot claim after the remainder burns");
+    }
+
+    function test_expiringRewards_lateClaimBurnsExpiredRound() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
+
+        uint48 claimDuration = 10;
+        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        _beginVestingFor(alice, _singleRewardToken());
+
+        uint256 aliceClaimed =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 0, "expired rewards do not vest");
+        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "late claim burns pool");
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether, "late claim sends rewards to burn sink");
+    }
+
+    function test_expiringRewards_sameRoundDeadlineMismatchReverts() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        _fundDistributorWithClaimDuration(1000 ether, 50);
+
+        rewardToken.mint(address(this), 1 ether);
+        rewardToken.approve(address(distributor), 1 ether);
+
+        vm.expectPartialRevert(JBDistributor.JBDistributor_ClaimDeadlineMismatch.selector);
+        distributor.fundWithClaimDuration(address(votesToken), IERC20(address(rewardToken)), 1 ether, 60);
+    }
+
     function test_poke_recordsSnapshotBlock() public {
         _advanceToRound(1);
 
@@ -580,6 +732,16 @@ contract JBTokenDistributorTest is Test {
     function _singleTokenId(address staker) internal pure returns (uint256[] memory tokenIds) {
         tokenIds = new uint256[](1);
         tokenIds[0] = _tokenId(staker);
+    }
+
+    function _singleRound(uint256 round) internal pure returns (uint256[] memory rounds) {
+        rounds = new uint256[](1);
+        rounds[0] = round;
+    }
+
+    function _singleRewardToken() internal view returns (IERC20[] memory tokens) {
+        tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(rewardToken));
     }
 
     function _beginVestingFor(address staker, IERC20[] memory tokens) internal {

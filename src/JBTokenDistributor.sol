@@ -127,7 +127,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             if (msg.value != 0) {
                 // Assign native split proceeds to the current reward round for this IVotes hook.
-                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value});
+                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value, claimDuration: 0});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -145,7 +145,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
             // Assign only the amount actually received to this round's reward pot.
-            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta});
+            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta, claimDuration: 0});
         }
     }
 
@@ -208,20 +208,51 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param token The reward token being funded.
     /// @param amount The nominal amount to fund. Ignored for native ETH; `msg.value` is used instead.
     function fund(address hook, IERC20 token, uint256 amount) external payable override(JBDistributor, IJBDistributor) {
-        if (address(token) == JBConstants.NATIVE_TOKEN) {
-            // Native funding is measured by msg.value, not the caller-provided amount.
-            amount = msg.value;
-        } else {
-            if (msg.value != 0) {
-                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
+        _fund({hook: hook, token: token, amount: amount, claimDuration: 0});
+    }
+
+    /// @notice Directly fund this token distributor with rewards that expire if unclaimed.
+    /// @dev The claim window starts when the funded round first becomes claimable.
+    /// @param hook The IVotes token whose stakers receive the rewards.
+    /// @param token The reward token being funded.
+    /// @param amount The nominal amount to fund. Ignored for native ETH; `msg.value` is used instead.
+    /// @param claimDuration The number of seconds stakers have to claim once the round becomes claimable.
+    function fundWithClaimDuration(
+        address hook,
+        IERC20 token,
+        uint256 amount,
+        uint48 claimDuration
+    )
+        external
+        payable
+        override(JBDistributor, IJBDistributor)
+    {
+        _fund({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+    }
+
+    /// @notice Burn unclaimed rewards from expired token-distributor reward rounds.
+    /// @param hook The IVotes token whose expired rewards should be burned.
+    /// @param token The reward token to burn.
+    /// @param rounds The reward rounds to burn.
+    /// @return amount The total amount burned.
+    function burnExpiredRewards(
+        address hook,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        override(JBDistributor, IJBDistributor)
+        returns (uint256 amount)
+    {
+        _requireNotAcceptingToken();
+
+        for (uint256 i; i < rounds.length;) {
+            amount += _burnExpiredRewardRound({hook: hook, token: token, round: rounds[i]});
+
+            unchecked {
+                ++i;
             }
-
-            // ERC-20 funding is measured by balance delta so fee-on-transfer tokens are accounted correctly.
-            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
         }
-
-        // Store the accepted amount in this round's historical reward ledger.
-        _recordRewardFunding({hook: hook, token: token, amount: amount});
     }
 
     //*********************************************************************//
@@ -239,6 +270,28 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
+
+    /// @notice Accept funds and assign them to this round's reward ledger.
+    /// @param hook The IVotes token whose stakers receive the rewards.
+    /// @param token The reward token being funded.
+    /// @param amount The nominal amount to fund.
+    /// @param claimDuration The number of seconds stakers have to claim once the round becomes claimable.
+    function _fund(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
+        if (address(token) == JBConstants.NATIVE_TOKEN) {
+            // Native funding is measured by msg.value, not the caller-provided amount.
+            amount = msg.value;
+        } else {
+            if (msg.value != 0) {
+                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: address(token)});
+            }
+
+            // ERC-20 funding is measured by balance delta so fee-on-transfer tokens are accounted correctly.
+            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
+        }
+
+        // Store the accepted amount in this round's historical reward ledger.
+        _recordRewardFunding({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+    }
 
     /// @notice Claim all past reward rounds for the given token IDs and reward tokens into fresh vesting entries.
     /// @param hook The IVotes token whose stakers are claiming.
@@ -300,7 +353,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         if (nextClaimRound > ctx.lastClaimableRound) return 0;
 
         // Sum this staker's pro-rata share from every unclaimed completed reward round.
-        tokenAmount = _claimableRewardsFor({
+        tokenAmount = _claimRewardsFor({
             hook: ctx.hook,
             tokenId: tokenId,
             token: token,
@@ -330,43 +383,77 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param hook The IVotes token whose stakers receive the rewards.
     /// @param token The reward token.
     /// @param amount The accepted funding amount.
-    function _recordRewardFunding(address hook, IERC20 token, uint256 amount) internal {
+    /// @param claimDuration The number of seconds stakers have to claim once the round becomes claimable.
+    function _recordRewardFunding(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
         // Zero-value transfers do not create reward rounds or alter tracked balances.
         if (amount == 0) return;
 
         // Funding belongs to the round in progress when the distributor receives the rewards.
         uint256 round = currentRound();
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
+        uint48 claimDeadline = _claimDeadlineFor({round: round, claimDuration: claimDuration});
 
         // First funding in a round locks that round's snapshot block and total stake for all later claims.
-        if (!rewardRound.initialized) {
+        if (rewardRound.amount == 0) {
             uint256 snapshotBlock = _ensureSnapshotBlockFor(round);
 
-            rewardRound.initialized = true;
-            rewardRound.snapshotBlock = snapshotBlock;
-            rewardRound.totalStake = _totalStake({hook: hook, blockNumber: snapshotBlock});
+            rewardRound.snapshotBlock = _toUint48(snapshotBlock);
+            rewardRound.claimDeadline = claimDeadline;
+            rewardRound.totalStake = _toUint208(_totalStake({hook: hook, blockNumber: snapshotBlock}));
+        } else if (rewardRound.claimDeadline != claimDeadline) {
+            revert JBDistributor_ClaimDeadlineMismatch({
+                existingDeadline: rewardRound.claimDeadline, newDeadline: claimDeadline
+            });
         }
 
         // Multiple fundings in the same round share the same snapshot and accumulate into one reward pot.
-        rewardRound.amount += amount;
+        rewardRound.amount = _toUint208(uint256(rewardRound.amount) + amount);
 
         // Keep the base distributor's balance accounting in sync for collection and conservation checks.
         _balanceOf[hook][token] += amount;
         _accountedBalanceOf[token] += amount;
     }
 
+    /// @notice Burn one expired reward round's unclaimed inventory.
+    /// @param hook The IVotes token whose expired rewards should be burned.
+    /// @param token The reward token to burn.
+    /// @param round The reward round to burn.
+    /// @return burnAmount The amount burned.
+    function _burnExpiredRewardRound(address hook, IERC20 token, uint256 round) internal returns (uint256 burnAmount) {
+        // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
+        JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
+
+        // Ignore rounds that either never expire or have not reached their deadline yet.
+        if (!_rewardRoundExpired(rewardRound)) return 0;
+
+        // If prior claims have already materialized the whole round, there is nothing left to burn.
+        if (rewardRound.claimedAmount >= rewardRound.amount) return 0;
+
+        // Burn only the unclaimed remainder, preserving amounts that already started vesting.
+        burnAmount = uint256(rewardRound.amount) - uint256(rewardRound.claimedAmount);
+
+        // Mark the whole round settled before transferring to close reentrancy-sensitive accounting.
+        rewardRound.claimedAmount = rewardRound.amount;
+
+        // Remove the expired remainder from distributor inventory and send it to the burn sink.
+        _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
+
+        // Surface the permissionless burn for off-chain accounting.
+        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount});
+    }
+
     //*********************************************************************//
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
-    /// @notice Calculate a staker's unclaimed rewards across a range of historical reward rounds.
+    /// @notice Claim a staker's unclaimed rewards across a range of historical reward rounds.
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenId The encoded staker address.
     /// @param token The reward token.
     /// @param firstRound The first reward round to include.
     /// @param lastRound The last reward round to include.
     /// @return tokenAmount The cumulative unclaimed reward amount.
-    function _claimableRewardsFor(
+    function _claimRewardsFor(
         address hook,
         uint256 tokenId,
         IERC20 token,
@@ -374,24 +461,38 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         uint256 lastRound
     )
         internal
-        view
         returns (uint256 tokenAmount)
     {
         // Walk every unclaimed historical round. The caller bounds this to completed rounds only.
         for (uint256 rewardRoundNumber = firstRound; rewardRoundNumber <= lastRound;) {
+            // Load this round's reward data for the hook and reward token.
             JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][rewardRoundNumber];
 
-            // Skip rounds that never received funding or had no checkpointed stake when funded.
-            if (rewardRound.initialized && rewardRound.amount != 0 && rewardRound.totalStake != 0) {
-                // Use the funding round's snapshot block, not the block at which the staker finally claims.
-                uint256 tokenStakeAmount =
-                    _tokenStakeAt({hook: hook, tokenId: tokenId, blockNumber: rewardRound.snapshotBlock});
+            // Skip rounds that never received funding.
+            if (rewardRound.amount != 0) {
+                // Expired rounds can no longer be claimed; burn their unclaimed remainder instead.
+                if (_rewardRoundExpired(rewardRound)) {
+                    _burnExpiredRewardRound({hook: hook, token: token, round: rewardRoundNumber});
+                } else if (rewardRound.totalStake != 0) {
+                    // Use the funding round's snapshot block, not the block at which the staker finally claims.
+                    uint256 tokenStakeAmount =
+                        _tokenStakeAt({hook: hook, tokenId: tokenId, blockNumber: rewardRound.snapshotBlock});
 
-                if (tokenStakeAmount != 0) {
-                    // The round's reward pot is split pro-rata across checkpointed voting power.
-                    tokenAmount += mulDiv({
-                        x: rewardRound.amount, y: tokenStakeAmount, denominator: rewardRound.totalStake
-                    });
+                    // Zero-vote stakers advance their cursor but do not consume reward inventory.
+                    if (tokenStakeAmount != 0) {
+                        // The round's reward pot is split pro-rata across checkpointed voting power.
+                        uint256 claimAmount =
+                            mulDiv({x: rewardRound.amount, y: tokenStakeAmount, denominator: rewardRound.totalStake});
+
+                        // Ignore floor-rounded zero claims to avoid unnecessary storage writes.
+                        if (claimAmount != 0) {
+                            // Track the portion that has started vesting so expiry burns only the remainder.
+                            rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + claimAmount);
+
+                            // Add this round's vested amount to the staker's cumulative claim.
+                            tokenAmount += claimAmount;
+                        }
+                    }
                 }
             }
 
@@ -399,6 +500,30 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 ++rewardRoundNumber;
             }
         }
+    }
+
+    /// @notice The deadline for a reward round with the given claim duration.
+    /// @param round The reward round.
+    /// @param claimDuration The claim duration once the round becomes claimable.
+    /// @return claimDeadline The deadline timestamp. Zero means no expiration.
+    function _claimDeadlineFor(uint256 round, uint48 claimDuration) internal view returns (uint48 claimDeadline) {
+        // Zero duration keeps the round non-expiring and backward compatible with existing fund paths.
+        if (claimDuration == 0) return 0;
+
+        // Start the window at the next round boundary, when the funded round first becomes claimable.
+        claimDeadline = _toUint48(roundStartTimestamp(round + 1) + claimDuration);
+    }
+
+    /// @notice Whether a reward round has passed its claim deadline.
+    /// @param rewardRound The reward round data.
+    /// @return expired True if unclaimed rewards can be burned.
+    function _rewardRoundExpired(JBRewardRoundData storage rewardRound) internal view returns (bool expired) {
+        // Copy the packed deadline into memory so the zero check and timestamp compare use the same value.
+        uint48 claimDeadline = rewardRound.claimDeadline;
+
+        // A zero deadline never expires; non-zero deadlines expire at or after the configured timestamp.
+        // forge-lint: disable-next-line(block-timestamp)
+        expired = claimDeadline != 0 && block.timestamp >= claimDeadline;
     }
 
     /// @notice Check if the account matches the staker address encoded in the tokenId.

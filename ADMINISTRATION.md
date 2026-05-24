@@ -24,6 +24,7 @@
 | Role | How Assigned | Scope | Notes |
 | --- | --- | --- | --- |
 | Snapshot keeper | Any caller | Per distributor | `poke` can lock snapshot blocks before funding or claims |
+| Expiry keeper | Any caller | Per expired reward round | `burnExpiredRewards` clears unclaimed inventory after a rewarder's deadline |
 | Token claimant | Encoded claimant address | Per token slot | Token distributor authority model |
 | NFT claimant | Current NFT owner | Per token ID | 721 distributor authority model |
 
@@ -43,6 +44,7 @@
 ## Operational Notes
 
 - review round timing and vesting-round count before deployment
+- choose claim durations carefully when using `fundWithClaimDuration`; plain `fund` and split funding do not expire
 - verify the distributor holds the correct asset before claimants start vesting
 - do not assume token and 721 variants behave identically
 
@@ -50,6 +52,7 @@
 
 - unclaimed reward rounds remain reserved for historical stakers or NFT owners; they do not become someone else's
   reward merely because the claimant is late
+- expiring reward rounds are the exception: after the configured deadline, anyone can burn the unclaimed remainder
 - 721 forfeiture release can recycle some value
 - bad deployment parameters usually require a new distributor instance
 

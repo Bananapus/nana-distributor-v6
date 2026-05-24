@@ -321,6 +321,12 @@ contract JB721DistributorTest is Test {
         distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
+    function _fundHookWithClaimDuration(uint256 amount, uint48 claimDuration) internal {
+        rewardToken.mint(address(this), amount);
+        rewardToken.approve(address(distributor), amount);
+        distributor.fundWithClaimDuration(address(hook), IERC20(address(rewardToken)), amount, claimDuration);
+    }
+
     function _advanceToNextRound() internal {
         _advanceToRound(distributor.currentRound() + 1);
     }
@@ -333,6 +339,11 @@ contract JB721DistributorTest is Test {
     function _singleRewardToken() internal view returns (IERC20[] memory tokens) {
         tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
+    }
+
+    function _singleRound(uint256 round) internal pure returns (uint256[] memory rounds) {
+        rounds = new uint256[](1);
+        rounds[0] = round;
     }
 
     function _beginVestingFor(uint256 tokenId, IERC20[] memory tokens) internal {
@@ -458,11 +469,10 @@ contract JB721DistributorTest is Test {
     function test_snapshotAtRoundOf() public {
         _fundHook(1000 ether);
 
-        (uint256 amount, uint256 totalStake,, bool initialized) =
+        (uint256 amount,,,, uint256 totalStake) =
             distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
         assertEq(amount, 1000 ether);
         assertEq(totalStake, 400);
-        assertTrue(initialized);
     }
 
     function test_vestingDataOf() public {
@@ -1159,6 +1169,100 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 350 ether);
     }
 
+    function test_expiringRewards_claimBeforeDeadlineStartsVesting() public {
+        uint48 claimDuration = 50;
+        _fundHookWithClaimDuration(1000 ether, claimDuration);
+
+        (uint256 amount,, uint256 claimedAmount, uint256 claimDeadline, uint256 totalStake) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        assertEq(amount, 1000 ether);
+        assertEq(claimedAmount, 0);
+        assertEq(claimDeadline, distributor.roundStartTimestamp(1) + claimDuration);
+        assertEq(totalStake, 400);
+
+        _advanceToRound(1);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+
+        (,, claimedAmount,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        assertEq(claimedAmount, 250 ether);
+    }
+
+    function test_expiringRewards_permissionlessBurnAfterDeadline() public {
+        uint48 claimDuration = 10;
+        _fundHookWithClaimDuration(1000 ether, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.prank(charlie);
+        uint256 burned = distributor.burnExpiredRewards({
+            hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
+        });
+
+        assertEq(burned, 1000 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether);
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
+    }
+
+    function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
+        uint48 claimDuration = 50;
+        _fundHookWithClaimDuration(1000 ether, claimDuration);
+
+        _advanceToRound(1);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.prank(charlie);
+        uint256 burned = distributor.burnExpiredRewards({
+            hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
+        });
+
+        assertEq(burned, 750 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 250 ether);
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 750 ether);
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), _singleTokenId(2), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 0);
+    }
+
+    function test_expiringRewards_lateClaimBurnsExpiredRound() public {
+        uint48 claimDuration = 10;
+        _fundHookWithClaimDuration(1000 ether, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
+        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether);
+    }
+
+    function test_expiringRewards_sameRoundDeadlineMismatchReverts() public {
+        _fundHookWithClaimDuration(1000 ether, 50);
+
+        rewardToken.mint(address(this), 1 ether);
+        rewardToken.approve(address(distributor), 1 ether);
+
+        vm.expectPartialRevert(JBDistributor.JBDistributor_ClaimDeadlineMismatch.selector);
+        distributor.fundWithClaimDuration(address(hook), IERC20(address(rewardToken)), 1 ether, 60);
+    }
+
     function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
         uint256[] memory tokenIds = _singleTokenId(1);
         IERC20[] memory tokens = _singleRewardToken();
@@ -1167,7 +1271,7 @@ contract JB721DistributorTest is Test {
         hook.CHECKPOINTS().setVotesOverride(charlie, 0);
 
         _fundHook(1000 ether);
-        (,, uint256 snapshotBlock,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
         hook.setHistoricalOwner(1, snapshotBlock, alice);
 
         // The NFT transfers before anyone claims, so the current owner is the only account authorized to claim.
@@ -1191,7 +1295,7 @@ contract JB721DistributorTest is Test {
         store.setTokenTier(lateTokenId, 1);
 
         _fundHook(1000 ether);
-        (,, uint256 snapshotBlock,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
 
         hook.setOwner(lateTokenId, charlie);
         store.setMintBlock(address(hook), lateTokenId, snapshotBlock + 1);
@@ -1254,7 +1358,7 @@ contract JB721DistributorTest is Test {
         // Token 1: 375e18, Token 2: 750e18. Total = 1125e18.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 1125 ether);
 
-        (uint256 amount,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        (uint256 amount,,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
         assertEq(amount, 1500 ether);
     }
 
@@ -1858,7 +1962,7 @@ contract JB721DistributorTest is Test {
         vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        (uint256 amount0,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+        (uint256 amount0,,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
         assertEq(amount0, 1000 ether);
 
         // Round 1 funding records a separate reward round.
@@ -1867,7 +1971,7 @@ contract JB721DistributorTest is Test {
         vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        (uint256 amount1,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 1);
+        (uint256 amount1,,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 1);
         assertEq(amount1, 500 ether);
     }
 
