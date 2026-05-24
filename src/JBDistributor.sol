@@ -151,7 +151,15 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param hook The hook (IVotes token or 721 hook) whose stakers are vesting.
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
-    function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external override {
+    function beginVesting(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        external
+        virtual
+        override
+    {
         // Reward accounting cannot change while an ERC-20 `transferFrom` is in progress. A callback-capable reward
         // token could otherwise snapshot, vest, or collect against balances between `balanceBefore` and
         // `balanceAfter`, distorting the delta credited to the funder.
@@ -211,7 +219,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param hook The hook to fund (determines which staker pool receives the tokens).
     /// @param token The token to fund with.
     /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
-    function fund(address hook, IERC20 token, uint256 amount) external payable override {
+    function fund(address hook, IERC20 token, uint256 amount) external payable virtual override {
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
         } else {
@@ -416,6 +424,7 @@ abstract contract JBDistributor is IJBDistributor {
         address beneficiary
     )
         public
+        virtual
         override
     {
         // Collections transfer reward tokens out. If this runs inside the same reward token's inbound transfer, the
@@ -519,14 +528,22 @@ abstract contract JBDistributor is IJBDistributor {
     /// @dev Uses `block.number - 1` because `IVotes.getPastVotes` requires a strictly past block.
     /// @param round The round to ensure a snapshot block for.
     function _ensureSnapshotBlock(uint256 round) internal {
-        if (roundSnapshotBlock[round] == 0) {
-            roundSnapshotBlock[round] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round, snapshotBlock: block.number - 1});
-        }
+        _ensureSnapshotBlockFor(round);
         // Eagerly lock the next round's snapshot to prevent first-caller manipulation.
-        if (roundSnapshotBlock[round + 1] == 0) {
-            roundSnapshotBlock[round + 1] = block.number - 1;
-            emit RoundSnapshotRecorded({round: round + 1, snapshotBlock: block.number - 1});
+        _ensureSnapshotBlockFor(round + 1);
+    }
+
+    /// @notice Ensures that a snapshot block is recorded for exactly the given round.
+    /// @dev Token-distributor funding uses this to assign rewards to the funding round without also freezing the next
+    /// round earlier than necessary.
+    /// @param round The round to ensure a snapshot block for.
+    /// @return snapshotBlock The snapshot block recorded for the round.
+    function _ensureSnapshotBlockFor(uint256 round) internal returns (uint256 snapshotBlock) {
+        snapshotBlock = roundSnapshotBlock[round];
+        if (snapshotBlock == 0) {
+            snapshotBlock = block.number - 1;
+            roundSnapshotBlock[round] = snapshotBlock;
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock});
         }
     }
 

@@ -181,7 +181,8 @@ contract RegressionFreshRoundVerificationTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
-        distributor.beginVesting(address(votes), tokenIds, tokens);
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+
         vm.prank(alice);
         distributor.collectVestedRewards(address(votes), tokenIds, tokens, alice);
 

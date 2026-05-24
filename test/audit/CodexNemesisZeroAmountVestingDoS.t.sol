@@ -75,7 +75,6 @@ contract CodexNemesisZeroAmountVestingDoSTest is Test {
             vm.startPrank(attacker);
             reward.approve(address(distributor), 1);
             distributor.fund(address(votes), IERC20(address(reward)), 1);
-            distributor.beginVesting(address(votes), tokenIds, tokens);
             vm.stopPrank();
         }
 

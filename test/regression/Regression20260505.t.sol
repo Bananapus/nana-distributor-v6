@@ -111,9 +111,12 @@ contract Regression20260505Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(alice);
         distributor.beginVesting(address(votes), tokenIds, tokens);
 
-        vm.warp(block.timestamp + 3);
+        vm.warp(distributor.roundStartTimestamp(4) + 1);
         vm.roll(block.number + 1);
 
         vm.prank(alice);
@@ -132,17 +135,20 @@ contract Regression20260505Test is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(reward));
 
+        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        vm.roll(block.number + 1);
+        vm.prank(alice);
         distributor.beginVesting(address(votes), tokenIds, tokens);
 
-        // Round 1: partial vesting — claimAmount rounds to 0, shareClaimed stays at 0.
-        vm.warp(distributor.roundStartTimestamp(1) + 1);
+        // Round 2: partial vesting — claimAmount rounds to 0, shareClaimed stays at 0.
+        vm.warp(distributor.roundStartTimestamp(2) + 1);
         vm.roll(block.number + 1);
         vm.prank(alice);
         distributor.collectVestedRewards(address(votes), tokenIds, tokens, alice);
         assertEq(reward.balanceOf(alice), 0, "dust should not transfer during partial vesting");
 
         // Advance past all vesting rounds so dust is fully vested.
-        vm.warp(distributor.roundStartTimestamp(3) + 1);
+        vm.warp(distributor.roundStartTimestamp(4) + 1);
         vm.roll(block.number + 1);
         vm.prank(alice);
         distributor.collectVestedRewards(address(votes), tokenIds, tokens, alice);

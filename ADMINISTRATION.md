@@ -48,14 +48,16 @@
 
 ## Recovery
 
-- unclaimed value can remain for future rounds
+- unclaimed token-distributor reward rounds remain reserved for historical stakers; 721 unclaimed or forfeited value can
+  remain available under the 721 rules
 - 721 forfeiture release can recycle some value
 - bad deployment parameters usually require a new distributor instance
 
 ## Admin Boundaries
 
 - this repo does not create upstream entitlement logic
-- permissionless vesting means operators do not fully control snapshot timing
+- token vesting is claimant-initiated, while 721 vesting remains permissionless; operators still need to manage
+  snapshot timing with `poke` where predictable snapshots matter
 - the distributor cannot make a missing or wrong stake source correct
 
 ## Source Map

@@ -25,8 +25,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 2. Economic Risks
 
-- **Round snapshots are write-once per (hook, token, round).** A zero balance at first-snapshot time is a valid snapshot value, not a signal to re-snapshot. Tracked via an explicit init flag so mid-round deposits cannot leak into the current round's allocation.
-- **Unclaimed value stays in the pool.**
+- **Round snapshots are write-once per (hook, token, round).** A zero balance at first-snapshot time is a valid snapshot value, not a signal to re-snapshot. The 721 distributor tracks this with an explicit init flag so mid-round deposits cannot leak into the current round's allocation. The token distributor assigns accepted funding directly to the funding round.
+- **Unclaimed value differs by distributor.** In the 721 distributor, unclaimed distributable balance can remain available for later rounds. In the token distributor, funded reward rounds are reserved for historical stakers and are not reallocated merely because a staker claims late.
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled, not burned.**
 - **Undelegated `IVotes` balances can dilute participation.**
@@ -35,7 +35,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 3. Access Control And Caller Risks
 
-- **Vesting is permissionless.**
+- **Vesting authority differs by distributor.** The 721 distributor permits third-party vesting calls. The token distributor only lets the encoded staker address start its own vesting clock.
 - **Claim authority differs by distributor type.**
 - **721 claim batches are brittle to invalid token IDs.**
 - **Forfeiture release is effectively 721-only.**
@@ -44,7 +44,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 ## 4. DoS And Liveness Risks
 
 - **Zero stake reverts vesting.**
-- **Zero distributable balance reverts vesting.** The `beginVesting` call reverts with `JBDistributor_NothingToDistribute` if the distributable balance for a token is zero.
+- **Zero distributable balance reverts 721/shared vesting.** The shared `beginVesting` flow reverts with `JBDistributor_NothingToDistribute` if the distributable balance for a token is zero. Token-distributor historical claims can be no-ops when no past reward rounds are claimable.
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
 
@@ -66,6 +66,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Token distributor rewards follow delegated voting power.** For `IVotes` hooks, the encoded claimant address is the
   delegate/account whose `getPastVotes` are used. This may differ from underlying token ownership if holders delegate
   to someone else.
+- **Token distributor hooks must be IVotes-compatible at funding time.** Funding records the current reward round's
+  `getPastTotalSupply` snapshot, so arbitrary non-IVotes hook addresses are not valid token-distributor hooks.
 - **Unaccounted direct sends are outside the reward ledger.** Plain ETH sent to `receive()` and direct ERC-20 transfers
   that bypass `fund`/`processSplitWith` are not credited into `_balanceOf`. Rebasing or otherwise balance-mutating
   tokens can also desynchronize actual token balances from the distributor's local accounting.
@@ -77,7 +79,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only recycled through the explicit forfeiture path
-- only the encoded address can collect from the token distributor
+- only the encoded address can begin vesting or collect from the token distributor
 - native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
   token balance delta with no accompanying `msg.value`
 - ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
@@ -87,20 +89,17 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ### 7.1 Anyone can trigger a round snapshot
 
-`poke()`, `beginVesting`, and `collectVestedRewards` all call `_ensureSnapshotBlock`, which writes `roundSnapshotBlock[round] = block.number - 1` on first interaction. This is permissionless by design — keepers or frontends can call `poke()` early in a round to lock the snapshot block before any claims occur.
+`poke()` and the shared 721 vesting flow call `_ensureSnapshotBlock`, which writes `roundSnapshotBlock[round] = block.number - 1` on first interaction. Token-distributor funding records only the current round's snapshot block. Keepers or frontends can call `poke()` early in a round to lock the current and next snapshot block before funding or claims occur.
 
 The trade-off: the first caller chooses *when* in the round the snapshot is anchored, so any legitimate stake changes that occur later in the same round are excluded from that round's reward math. An adversary who pokes early can therefore freeze the round's stake universe before later participants act. `_ensureSnapshotBlock` also eagerly pre-fills `round + 1` from the same call, which prevents a separate first-caller race on the next round but anchors `round + 1` at a block in `round`'s timeframe.
 
 Operators should treat keeper-driven `poke()` at well-known times as part of the deployment runbook. Round rewards are mis-allocated only across the within-round delta of legitimate stake changes, not across the entire reward pool.
 
-`collectVestedRewards()` can also initialize the current round's token-balance snapshot while auto-vesting. If no value
-is currently distributable, the zero snapshot is still sticky and later same-round funding rolls into a future round
-instead of being added to the already-open round. This preserves the write-once snapshot invariant, but operators should
-fund before the intended snapshot moment when same-round distribution matters.
+In the token distributor, current-round funding is assigned to the current reward round but cannot be claimed until a later round. A token staker claiming in round `N` only materializes rewards through round `N - 1`, and all materialized rewards start vesting at round `N`.
 
 ### 7.2 Rewards can remain undistributed when stake is missing
 
-If some potential participants have zero effective stake for a round, the corresponding value stays in the distributor for future rounds.
+If token-distributor participants have zero effective stake for a funded reward round, their share is not redirected to later claimants. It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For 721 distributions, unvested or forfeited value can still return to the distributable pool under the 721-specific rules.
 
 ### 7.3 721 and `IVotes` variants intentionally differ
 

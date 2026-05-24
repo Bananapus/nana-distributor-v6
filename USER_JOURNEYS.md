@@ -2,7 +2,7 @@
 
 ## Repo Purpose
 
-This repo distributes already-owned assets over time. It snapshots stake, starts vesting rounds, and lets eligible recipients collect what has unlocked.
+This repo distributes already-owned assets over time. Token rewards are assigned to historical funding rounds and start vesting when the staker claims; 721 rewards use the shared round snapshot and vesting flow.
 
 ## Primary Actors
 
@@ -14,7 +14,7 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 ## Key Surfaces
 
 - `JBDistributor`: shared round and vesting engine
-- `JBTokenDistributor`: ERC-20 distributor using `IVotes`
+- `JBTokenDistributor`: ERC-20 distributor using historical `IVotes` reward rounds
 - `JB721Distributor`: NFT distributor using tier voting units
 
 ## Journey 1: Fund A Distributor
@@ -29,8 +29,10 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 
 **Main Flow**
 1. Fund the distributor directly or through a payout split.
-2. Confirm the tracked balance matches what the distributor received.
-3. Use the distributor as the vesting surface, not as the source of entitlement logic.
+2. Token distributor: the accepted amount is assigned to the current reward round.
+3. 721 distributor: the accepted amount is added to the hook's distributable pool.
+4. Confirm the tracked balance matches what the distributor received.
+5. Use the distributor as the vesting surface, not as the source of entitlement logic.
 
 **Failure Modes**
 - wrong asset funded
@@ -38,32 +40,36 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 - caller assumes funding alone starts vesting
 
 **Postconditions**
-- the distributor holds the asset inventory for future rounds
+- token rewards are reserved for the funding round's historical `IVotes` stakers
+- 721 rewards are held as inventory for the next vesting snapshot
 
 ## Journey 2: Start A Vesting Round
 
-**Actor:** any caller.
+**Actor:** for token rewards, the encoded staker; for 721 rewards, any caller.
 
-**Intent:** snapshot the current round and begin vesting.
+**Intent:** materialize rewards into vesting.
 
 **Preconditions**
 - the round timing and parameters are valid
 - the stake source is usable and non-zero
+- token stakers are claiming their own encoded address
 
 **Main Flow**
 1. Call `beginVesting`.
-2. The distributor snapshots the relevant balance and stake source.
-3. Vesting entries become claimable over the configured schedule.
+2. Token distributor: claim past funded reward rounds through `currentRound - 1` into a fresh vesting entry.
+3. 721 distributor: snapshot the relevant balance and stake source for the current round.
+4. Vesting entries become claimable over the configured schedule.
 
-**Snapshot timing:** The snapshot for each round is taken when the previous round first sees activity (`poke`, `beginVesting`, or `collectVestedRewards`). To be included in round N's distribution, make sure your tokens are held and delegated before anyone interacts with round N-1. In practice, keep your delegation current — if it is set before the previous round's activity begins, your voting power will be counted for the next round.
+**Snapshot timing:** Token-distributor funding records the funding round's snapshot block and total `IVotes` supply. A token staker who claims in round N only starts vesting rewards from rounds `<= N - 1`. The 721 distributor still uses the shared round snapshot flow; `poke` can be used to lock the current and next round snapshots.
 
 **Failure Modes**
-- zero total stake
+- zero total stake or zero historical voting power
 - bad deployment parameters such as zero round duration or zero vesting rounds
 - stake snapshot is stale or surprising to operators
 
 **Postconditions**
-- a new vesting round exists with fixed snapshot assumptions
+- token distributor: one fresh vesting entry exists for the staker's cumulative past rewards, if any
+- 721 distributor: new vesting entries exist with fixed snapshot assumptions
 
 ## Journey 3: Collect Vested Rewards
 
@@ -73,12 +79,13 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 
 **Preconditions**
 - the recipient is authorized under the distributor type
-- some share has already vested
+- either some share has already vested, or the token recipient has unclaimed past reward rounds to materialize
 
 **Main Flow**
 1. Call the relevant claim function.
-2. The distributor checks authority and unlocked amount.
-3. The vested share transfers to the claimant.
+2. Token distributor first materializes unclaimed past reward rounds into a new vesting entry.
+3. The distributor checks authority and unlocked amount.
+4. The vested share transfers to the claimant.
 
 **Failure Modes**
 - invalid claimant
@@ -87,6 +94,7 @@ This repo distributes already-owned assets over time. It snapshots stake, starts
 
 **Postconditions**
 - vested rewards move to the claimant
+- for token rewards, any newly materialized past rewards begin vesting from this claim round
 
 ## Journey 4: Recycle Forfeited 721 Rewards
 

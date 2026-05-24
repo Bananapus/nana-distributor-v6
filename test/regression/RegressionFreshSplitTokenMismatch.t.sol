@@ -78,18 +78,27 @@ contract RegressionDirectory is IJBDirectory {
         RegressionDirectory directory;
         RegressionRewardToken reward;
         RegressionStakeToken stake;
+        RegressionStakeToken victimStake;
 
         address attacker = address(0xA11CE);
         address attackerTerminal = address(0xBEEF);
-        address victimHook = address(0xCAFE);
+        address victim = address(0xCAFE);
+        address victimHook;
 
         function setUp() public {
             directory = new RegressionDirectory();
             distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 1);
             reward = new RegressionRewardToken();
             stake = new RegressionStakeToken();
+            victimStake = new RegressionStakeToken();
 
             directory.setTerminal(1, IJBTerminal(attackerTerminal));
+
+            victimStake.mint(victim, 1 ether);
+            vm.prank(victim);
+            victimStake.delegate(victim);
+            victimHook = address(victimStake);
+            vm.roll(block.number + 1);
 
             reward.mint(address(this), 100 ether);
             reward.approve(address(distributor), 100 ether);

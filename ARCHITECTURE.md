@@ -6,7 +6,7 @@
 
 ## System Overview
 
-`JBDistributor` is the shared vesting engine. `JBTokenDistributor` changes stake measurement to checkpointed voting power. `JB721Distributor` changes stake measurement to checkpointed voting power from the hook's `CHECKPOINTS()` module, ensuring only NFTs held at round start are eligible.
+`JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` uses the shared permissionless vesting flow with checkpointed voting power from the hook's `CHECKPOINTS()` module, ensuring only NFTs held at round start are eligible.
 
 Both variants can be used as `IJBSplitHook` receivers.
 
@@ -35,13 +35,23 @@ Both variants can be used as `IJBSplitHook` receivers.
 
 ## Critical Flows
 
-### Begin Vesting
+### Token Funding And Claim
 
 ```text
-funded distributor
+fund token distributor
+  -> assign accepted amount to current reward round
+  -> record snapshot block and total IVotes supply for that round
+  -> staker later claims rounds <= currentRound - 1
+  -> one fresh vesting entry starts at claim time
+```
+
+### 721 Begin Vesting
+
+```text
+funded 721 distributor
   -> begin a round
   -> snapshot stake and tracked balance for that round
-  -> record vesting entries for the requested token IDs
+  -> record vesting entries for requested token IDs
 ```
 
 ### Collect

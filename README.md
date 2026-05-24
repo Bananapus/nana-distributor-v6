@@ -36,9 +36,10 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 ## Mental Model
 
 1. a project funds the distributor, often through a payout split
-2. a vesting round begins and snapshots the eligible stake state
-3. recipients collect their pro-rata share as that round vests
-4. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
+2. token-distributor funding is assigned to the funding round; 721 distributions snapshot when vesting begins
+3. token stakers later claim all past reward rounds into a fresh vesting entry
+4. recipients collect their vested share as the configured vesting schedule unlocks
+5. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -52,7 +53,8 @@ This repo does not explain why an allocation exists. It only defines how funded 
 ## Integration Traps
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
-- ERC-20 and ERC-721 distributions share a mental model, but their edge cases are different
+- ERC-20 and ERC-721 distributions share vesting math, but token rewards are now historical and owner-claimed while
+  721 rewards use the shared permissionless vesting flow
 - `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token path
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct

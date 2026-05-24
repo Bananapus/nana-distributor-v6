@@ -115,6 +115,16 @@ contract RegressionFixesTest is Test {
         vm.roll(block.number + 1);
     }
 
+    function _beginVestingFor(address staker, IERC20[] memory tokens) internal {
+        vm.prank(staker);
+        distributor.beginVesting(address(votesToken), _singleTokenId(staker), tokens);
+    }
+
+    function _singleTokenId(address staker) internal pure returns (uint256[] memory tokenIds) {
+        tokenIds = new uint256[](1);
+        tokenIds[0] = _tokenId(staker);
+    }
+
     /// @notice Build a JBSplitHookContext for the given token and amount.
     function _buildContext(address token, uint256 amount) internal view returns (JBSplitHookContext memory) {
         JBSplit memory split = JBSplit({
@@ -188,6 +198,7 @@ contract RegressionFixesTest is Test {
         votesToken.delegate(alice);
         vm.prank(bob);
         votesToken.delegate(bob);
+        vm.roll(block.number + 1);
 
         // Controller approves and calls processSplitWith.
         JBSplitHookContext memory context = _buildContext(address(rewardToken), amount);
@@ -200,13 +211,11 @@ contract RegressionFixesTest is Test {
         // Advance to round 1 and begin vesting.
         _advanceToRound(1);
 
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = _tokenId(alice);
-        tokenIds[1] = _tokenId(bob);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        _beginVestingFor(alice, tokens);
+        _beginVestingFor(bob, tokens);
 
         // Advance past full vesting.
         _advanceToRound(1 + VESTING_ROUNDS);
@@ -250,7 +259,8 @@ contract RegressionFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // Should NOT revert even though totalStake == 0. Funds carry over.
+        // Should NOT revert even though Alice has no votes at the reward snapshot.
+        vm.prank(alice);
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
         // No vesting should have occurred.
@@ -268,8 +278,8 @@ contract RegressionFixesTest is Test {
         );
     }
 
-    /// @notice After zero-stake round passes, a round with stakers should distribute normally.
-    function test_zeroTotalStake_zeroTotalStake_fundsCarryOverToNextRound() public {
+    /// @notice Rewards funded before a staker delegates are not claimable retroactively.
+    function test_zeroTotalStake_lateDelegationDoesNotClaimPastRewards() public {
         // Fund the distributor.
         rewardToken.mint(address(this), 1000 ether);
         rewardToken.approve(address(distributor), 1000 ether);
@@ -283,27 +293,22 @@ contract RegressionFixesTest is Test {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
 
-        // beginVesting with zero stake — silently returns. eagerly locks round 2 snapshot.
+        // Alice has no votes at the reward snapshot, so her claim is a no-op.
+        vm.prank(alice);
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Alice delegates (after round 2 snapshot is already locked by eager fix).
+        // Alice delegates after the reward snapshot.
         vm.prank(alice);
         votesToken.delegate(alice);
 
-        // Round 2: Alice's delegation not captured (round 2 snapshot precedes her delegation).
-        // Zero stake again — silently returns. eagerly locks round 3 snapshot (AFTER delegation).
+        // The old round remains unclaimable for Alice.
         _advanceToRound(2);
+        vm.prank(alice);
         distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
-        // Round 3: Alice IS eligible (round 3 snapshot was set after her delegation).
-        // Funds from rounds 1 and 2 carry over since no vesting was recorded.
-        _advanceToRound(3);
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
-
-        // Alice should have claimed her share of the full 1000 ether (700/1000 total supply).
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 700 ether, "Alice should claim 70% of carried-over funds");
+        assertEq(aliceClaimed, 0, "Alice should not claim rewards from before delegation");
     }
 
     //*********************************************************************//
@@ -362,8 +367,8 @@ contract RegressionFixesTest is Test {
         assertGt(distributor.roundSnapshotBlock(2), 0, "Round 2 snapshot should be eagerly set by poke()");
     }
 
-    /// @notice beginVesting locks the next round's snapshot. A later call in round N+1
-    /// should use that same snapshot, not overwrite it with a fresher block.
+    /// @notice poke locks the next round's snapshot. Later funding in round N+1 should use that same snapshot, not
+    /// overwrite it with a fresher block.
     function test_h25_lateJoinerCannotManipulateSnapshot() public {
         // Alice delegates to self so she has voting power.
         vm.prank(alice);
@@ -374,15 +379,9 @@ contract RegressionFixesTest is Test {
         rewardToken.approve(address(distributor), 1000 ether);
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 1000 ether);
 
-        // Advance to round 1 and call beginVesting — this locks round 1 AND eagerly locks round 2 snapshot.
+        // Advance to round 1 and poke — this locks round 1 AND eagerly locks round 2 snapshot.
         _advanceToRound(1);
-
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = _tokenId(alice);
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(rewardToken));
-
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
+        distributor.poke();
 
         // Record the eagerly-set round 2 snapshot.
         uint256 eagerSnapshot = distributor.roundSnapshotBlock(2);
@@ -394,13 +393,10 @@ contract RegressionFixesTest is Test {
         // Advance to round 2.
         _advanceToRound(2);
 
-        // Fund more so beginVesting has something to distribute.
+        // Funding in round 2 should NOT overwrite the eagerly-set snapshot.
         rewardToken.mint(address(this), 500 ether);
         rewardToken.approve(address(distributor), 500 ether);
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 500 ether);
-
-        // beginVesting in round 2 should NOT overwrite the eagerly-set snapshot.
-        distributor.beginVesting(address(votesToken), tokenIds, tokens);
 
         assertEq(
             distributor.roundSnapshotBlock(2),

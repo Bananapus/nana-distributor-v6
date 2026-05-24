@@ -175,7 +175,6 @@ contract RegressionFreshVerificationTest is Test {
     /// with context.token set to an ERC-20 address reverts with TokenMismatch.
     function test_nativeValueCanCreateUnbackedErc20CreditAndDrainOtherHookInventory() public {
         address attacker = makeAddr("attacker");
-        address victimHook = makeAddr("victimHook");
         uint256 rewardAmount = 100_000_000; // 100 units of a 6-decimal token.
 
         RegressionDirectory directory = new RegressionDirectory();
@@ -185,8 +184,12 @@ contract RegressionFreshVerificationTest is Test {
             new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
         RegressionToken reward = new RegressionToken();
         RegressionVotes stake = new RegressionVotes();
+        RegressionVotes victimStake = new RegressionVotes();
+        address victimHook = address(victimStake);
         stake.setVotes(attacker, 1 ether);
         stake.setTotalSupply(1 ether);
+        victimStake.setVotes(makeAddr("victim"), 1 ether);
+        victimStake.setTotalSupply(1 ether);
 
         reward.mint(address(this), rewardAmount);
         reward.approve(address(distributor), rewardAmount);
