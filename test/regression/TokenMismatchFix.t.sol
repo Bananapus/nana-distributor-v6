@@ -109,7 +109,7 @@ contract TokenMismatchTokenDistributorTest is Test {
 
         directory.setTerminal(projectId, terminal, true);
 
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         hook = address(votesToken);
     }
@@ -269,7 +269,7 @@ contract TokenMismatch721DistributorTest is Test {
         directory.setTerminal(projectId, terminal, true);
 
         hook = new TM721Hook();
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
     }
 
     /// @notice Helper to build a JBSplitHookContext.

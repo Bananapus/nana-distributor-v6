@@ -132,7 +132,8 @@ contract ReentrantRewardCollectionGuardTest is Test {
         _distributor = new JB721Distributor({
             directory: IJBDirectory(address(new CollectionReentryDirectory())),
             initialRoundDuration: ROUND_DURATION,
-            initialVestingRounds: VESTING_ROUNDS
+            initialVestingRounds: VESTING_ROUNDS,
+            initialClaimDuration: 0
         });
         _reward = new CollectionReentryRewardToken();
         _hook = new CollectionReentryHook({

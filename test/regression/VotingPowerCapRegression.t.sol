@@ -214,7 +214,7 @@ contract VotingPowerCapRegressionTest is Test {
         hook = new VotingCapMockHook(store);
         directory = new VotingCapMockDirectory();
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
         directory.setTerminal(PROJECT_ID, address(this), true);

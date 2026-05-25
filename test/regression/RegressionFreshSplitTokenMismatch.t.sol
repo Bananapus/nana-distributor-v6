@@ -87,7 +87,7 @@ contract RegressionDirectory is IJBDirectory {
 
         function setUp() public {
             directory = new RegressionDirectory();
-            distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 1);
+            distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 1, 0);
             reward = new RegressionRewardToken();
             stake = new RegressionStakeToken();
             victimStake = new RegressionStakeToken();

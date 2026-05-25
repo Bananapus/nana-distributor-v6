@@ -242,7 +242,7 @@ contract JB721DistributorTest is Test {
         hook = new MockHook(store);
         directory = new MockDirectory();
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
         directory.setTerminal(PROJECT_ID, address(this), true);
@@ -321,10 +321,15 @@ contract JB721DistributorTest is Test {
         distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
-    function _fundHookWithClaimDuration(uint256 amount, uint48 claimDuration) internal {
+    function _fundExpiringHook(uint256 amount, uint48 claimDuration) internal {
+        if (distributor.CLAIM_DURATION() != claimDuration) {
+            distributor =
+                new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+        }
+
         rewardToken.mint(address(this), amount);
         rewardToken.approve(address(distributor), amount);
-        distributor.fundWithClaimDuration(address(hook), IERC20(address(rewardToken)), amount, claimDuration);
+        distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
     function _advanceToNextRound() internal {
@@ -399,9 +404,9 @@ contract JB721DistributorTest is Test {
     // =====================================================================
 
     function test_constructor() public view {
-        assertEq(distributor.roundDuration(), ROUND_DURATION);
-        assertEq(distributor.vestingRounds(), VESTING_ROUNDS);
-        assertEq(distributor.startingTimestamp(), block.timestamp);
+        assertEq(distributor.ROUND_DURATION(), ROUND_DURATION);
+        assertEq(distributor.VESTING_ROUNDS(), VESTING_ROUNDS);
+        assertEq(distributor.STARTING_TIMESTAMP(), block.timestamp);
         assertEq(distributor.MAX_SHARE(), MAX_SHARE);
     }
 
@@ -422,9 +427,9 @@ contract JB721DistributorTest is Test {
     }
 
     function test_roundStartTimestamp() public view {
-        assertEq(distributor.roundStartTimestamp(0), distributor.startingTimestamp());
-        assertEq(distributor.roundStartTimestamp(1), distributor.startingTimestamp() + ROUND_DURATION);
-        assertEq(distributor.roundStartTimestamp(5), distributor.startingTimestamp() + ROUND_DURATION * 5);
+        assertEq(distributor.roundStartTimestamp(0), distributor.STARTING_TIMESTAMP());
+        assertEq(distributor.roundStartTimestamp(1), distributor.STARTING_TIMESTAMP() + ROUND_DURATION);
+        assertEq(distributor.roundStartTimestamp(5), distributor.STARTING_TIMESTAMP() + ROUND_DURATION * 5);
     }
 
     function test_claimedFor_beforeVesting() public view {
@@ -1182,7 +1187,7 @@ contract JB721DistributorTest is Test {
 
     function test_expiringRewards_claimBeforeDeadlineStartsVesting() public {
         uint48 claimDuration = 50;
-        _fundHookWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringHook(1000 ether, claimDuration);
 
         (uint256 amount,, uint256 claimedAmount, uint256 claimDeadline, uint256 totalStake) =
             distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
@@ -1203,7 +1208,7 @@ contract JB721DistributorTest is Test {
 
     function test_expiringRewards_permissionlessBurnAfterDeadline() public {
         uint48 claimDuration = 10;
-        _fundHookWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringHook(1000 ether, claimDuration);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
@@ -1225,7 +1230,7 @@ contract JB721DistributorTest is Test {
 
     function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
         uint48 claimDuration = 50;
-        _fundHookWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringHook(1000 ether, claimDuration);
 
         _advanceToRound(1);
         vm.prank(alice);
@@ -1251,7 +1256,7 @@ contract JB721DistributorTest is Test {
 
     function test_expiringRewards_lateClaimBurnsExpiredRound() public {
         uint48 claimDuration = 10;
-        _fundHookWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringHook(1000 ether, claimDuration);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
@@ -1262,16 +1267,6 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
         assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether);
-    }
-
-    function test_expiringRewards_sameRoundDeadlineMismatchReverts() public {
-        _fundHookWithClaimDuration(1000 ether, 50);
-
-        rewardToken.mint(address(this), 1 ether);
-        rewardToken.approve(address(distributor), 1 ether);
-
-        vm.expectPartialRevert(JBDistributor.JBDistributor_ClaimDeadlineMismatch.selector);
-        distributor.fundWithClaimDuration(address(hook), IERC20(address(rewardToken)), 1 ether, 60);
     }
 
     function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
@@ -2282,6 +2277,30 @@ contract JB721DistributorTest is Test {
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 25 ether);
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 50 ether);
+    }
+
+    function test_processSplitWith_afterDirectDustFundingUsesFixedClaimDuration() public {
+        uint48 claimDuration = 50;
+        uint256 splitAmount = 100 ether;
+
+        distributor =
+            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+
+        rewardToken.mint(charlie, 1);
+        vm.startPrank(charlie);
+        rewardToken.approve(address(distributor), 1);
+        distributor.fund(address(hook), IERC20(address(rewardToken)), 1);
+        vm.stopPrank();
+
+        rewardToken.mint(address(this), splitAmount);
+        rewardToken.approve(address(distributor), splitAmount);
+        distributor.processSplitWith(_splitContext(address(rewardToken), splitAmount));
+
+        (uint256 amount,,, uint256 deadline,) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+
+        assertEq(amount, splitAmount + 1, "dust and split funding share one bucket");
+        assertEq(deadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline is contract-fixed");
     }
 
     /// @notice supportsInterface returns true for IJBSplitHook, IJB721Distributor, and IERC165.

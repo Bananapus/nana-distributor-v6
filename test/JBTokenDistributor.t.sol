@@ -87,7 +87,7 @@ contract JBTokenDistributorTest is Test {
 
         directory.setTerminal(projectId, terminal, true);
 
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         // Mint staking tokens.
         votesToken.mint(alice, 700 ether);
@@ -123,12 +123,35 @@ contract JBTokenDistributorTest is Test {
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), amount);
     }
 
-    /// @notice Fund the distributor with a claim duration for expiry tests.
-    function _fundDistributorWithClaimDuration(uint256 amount, uint48 claimDuration) internal {
+    /// @notice Fund a distributor deployed with a nonzero claim duration for expiry tests.
+    function _fundExpiringDistributor(uint256 amount, uint48 claimDuration) internal {
+        if (distributor.CLAIM_DURATION() != claimDuration) {
+            distributor =
+                new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+        }
+
         vm.roll(block.number + 1);
         rewardToken.mint(address(this), amount);
         rewardToken.approve(address(distributor), amount);
-        distributor.fundWithClaimDuration(address(votesToken), IERC20(address(rewardToken)), amount, claimDuration);
+        distributor.fund(address(votesToken), IERC20(address(rewardToken)), amount);
+    }
+
+    function _splitContext(address token, uint256 amount) internal view returns (JBSplitHookContext memory) {
+        return JBSplitHookContext({
+            token: token,
+            amount: amount,
+            decimals: 18,
+            projectId: projectId,
+            groupId: 0,
+            split: JBSplit({
+                percent: 1_000_000_000,
+                projectId: 0,
+                beneficiary: payable(address(votesToken)),
+                preferAddToBalance: false,
+                lockedUntil: 0,
+                hook: IJBSplitHook(address(distributor))
+            })
+        });
     }
 
     //*********************************************************************//
@@ -267,18 +290,7 @@ contract JBTokenDistributorTest is Test {
     }
 
     function test_processSplitWith_onlyAuthorized() public {
-        JBSplit memory split = JBSplit({
-            percent: 1_000_000_000,
-            projectId: 0,
-            beneficiary: payable(address(votesToken)),
-            preferAddToBalance: false,
-            lockedUntil: 0,
-            hook: IJBSplitHook(address(distributor))
-        });
-
-        JBSplitHookContext memory context = JBSplitHookContext({
-            token: address(rewardToken), amount: 100 ether, decimals: 18, projectId: projectId, groupId: 0, split: split
-        });
+        JBSplitHookContext memory context = _splitContext(address(rewardToken), 100 ether);
 
         // Unauthorized caller should revert.
         vm.expectRevert(
@@ -300,6 +312,32 @@ contract JBTokenDistributorTest is Test {
             100 ether,
             "Balance credited after processSplitWith"
         );
+    }
+
+    function test_processSplitWith_afterDirectDustFundingUsesFixedClaimDuration() public {
+        uint48 claimDuration = 50;
+        uint256 splitAmount = 100 ether;
+
+        distributor =
+            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+
+        rewardToken.mint(carol, 1);
+        vm.startPrank(carol);
+        rewardToken.approve(address(distributor), 1);
+        distributor.fund(address(votesToken), IERC20(address(rewardToken)), 1);
+        vm.stopPrank();
+
+        rewardToken.mint(terminal, splitAmount);
+        vm.startPrank(terminal);
+        rewardToken.approve(address(distributor), splitAmount);
+        distributor.processSplitWith(_splitContext(address(rewardToken), splitAmount));
+        vm.stopPrank();
+
+        (uint256 amount,,, uint256 deadline,) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+
+        assertEq(amount, splitAmount + 1, "dust and split funding share one bucket");
+        assertEq(deadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline is contract-fixed");
     }
 
     function test_releaseForfeitedRewards_alwaysReverts() public {
@@ -542,7 +580,7 @@ contract JBTokenDistributorTest is Test {
         votesToken.delegate(bob);
 
         uint48 claimDuration = 50;
-        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringDistributor(1000 ether, claimDuration);
 
         (uint256 amount,, uint256 claimedAmount, uint256 claimDeadline, uint256 totalStake) =
             distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
@@ -569,7 +607,7 @@ contract JBTokenDistributorTest is Test {
         votesToken.delegate(bob);
 
         uint48 claimDuration = 10;
-        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringDistributor(1000 ether, claimDuration);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
@@ -594,7 +632,10 @@ contract JBTokenDistributorTest is Test {
         uint48 claimDuration = 10;
         IERC20 nativeToken = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor.fundWithClaimDuration{value: 1 ether}(address(votesToken), nativeToken, 0, claimDuration);
+        distributor =
+            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+
+        distributor.fund{value: 1 ether}(address(votesToken), nativeToken, 0);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
@@ -618,7 +659,7 @@ contract JBTokenDistributorTest is Test {
         votesToken.delegate(bob);
 
         uint48 claimDuration = 50;
-        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringDistributor(1000 ether, claimDuration);
 
         _advanceToRound(1);
         _beginVestingFor(alice, _singleRewardToken());
@@ -651,7 +692,7 @@ contract JBTokenDistributorTest is Test {
         votesToken.delegate(bob);
 
         uint48 claimDuration = 10;
-        _fundDistributorWithClaimDuration(1000 ether, claimDuration);
+        _fundExpiringDistributor(1000 ether, claimDuration);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
@@ -663,19 +704,6 @@ contract JBTokenDistributorTest is Test {
         assertEq(aliceClaimed, 0, "expired rewards do not vest");
         assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "late claim burns pool");
         assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether, "late claim sends rewards to burn sink");
-    }
-
-    function test_expiringRewards_sameRoundDeadlineMismatchReverts() public {
-        vm.prank(alice);
-        votesToken.delegate(alice);
-
-        _fundDistributorWithClaimDuration(1000 ether, 50);
-
-        rewardToken.mint(address(this), 1 ether);
-        rewardToken.approve(address(distributor), 1 ether);
-
-        vm.expectPartialRevert(JBDistributor.JBDistributor_ClaimDeadlineMismatch.selector);
-        distributor.fundWithClaimDuration(address(votesToken), IERC20(address(rewardToken)), 1 ether, 60);
     }
 
     function test_poke_recordsSnapshotBlock() public {

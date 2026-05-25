@@ -176,7 +176,7 @@ contract RegressionAccountingTest is Test {
 
     function test_controllerCannotCreditUndeliveredTokens() public {
         JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
         RegressionVotesToken votesToken = new RegressionVotesToken();
 
         votesToken.mint(attacker, 10 ether);
@@ -226,7 +226,7 @@ contract RegressionAccountingTest is Test {
 
     function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
         JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
         RegressionStore store = new RegressionStore();
         RegressionCheckpoints checkpoints = new RegressionCheckpoints();
         RegressionHook hook = new RegressionHook(store, checkpoints);
@@ -287,7 +287,7 @@ contract RegressionAccountingTest is Test {
 
     function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
         JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
         RegressionStore store = new RegressionStore();
         RegressionCheckpoints checkpoints = new RegressionCheckpoints();
         RegressionHook hook = new RegressionHook(store, checkpoints);

@@ -57,7 +57,7 @@ contract CodexNemesisZeroAmountVestingDoSTest is Test {
         address voter = makeAddr("voter");
 
         JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(new CodexNemesisZeroDirectory())), 1 days, 1);
+            new JBTokenDistributor(IJBDirectory(address(new CodexNemesisZeroDirectory())), 1 days, 1, 0);
         CodexNemesisZeroRewardToken reward = new CodexNemesisZeroRewardToken();
         CodexNemesisVotes votes = new CodexNemesisVotes();
 
