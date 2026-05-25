@@ -8,7 +8,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
@@ -127,9 +130,9 @@ contract JBTokenDistributorTest is Test {
 
         distributor = new JBTokenDistributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             0
@@ -174,9 +177,9 @@ contract JBTokenDistributorTest is Test {
         if (distributor.CLAIM_DURATION() != claimDuration) {
             distributor = new JBTokenDistributor(
                 IJBDirectory(address(directory)),
-                address(burnController),
-                address(0),
-                address(0),
+                IJBController(address(burnController)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
                 ROUND_DURATION,
                 VESTING_ROUNDS,
                 claimDuration
@@ -373,9 +376,9 @@ contract JBTokenDistributorTest is Test {
 
         distributor = new JBTokenDistributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             claimDuration
@@ -695,9 +698,9 @@ contract JBTokenDistributorTest is Test {
 
         distributor = new JBTokenDistributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             claimDuration
@@ -724,9 +727,9 @@ contract JBTokenDistributorTest is Test {
 
         distributor = new JBTokenDistributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             claimDuration

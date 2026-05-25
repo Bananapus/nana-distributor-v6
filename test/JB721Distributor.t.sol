@@ -8,7 +8,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
@@ -285,9 +288,9 @@ contract JB721DistributorTest is Test {
 
         distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             0
@@ -376,9 +379,9 @@ contract JB721DistributorTest is Test {
         if (distributor.CLAIM_DURATION() != claimDuration) {
             distributor = new JB721Distributor(
                 IJBDirectory(address(directory)),
-                address(burnController),
-                address(0),
-                address(0),
+                IJBController(address(burnController)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
                 ROUND_DURATION,
                 VESTING_ROUNDS,
                 claimDuration
@@ -2355,9 +2358,9 @@ contract JB721DistributorTest is Test {
 
         distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
-            address(burnController),
-            address(0),
-            address(0),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
             claimDuration

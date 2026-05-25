@@ -167,6 +167,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Preconditions**
 - the distributor was deployed with a Revnet loans contract and REVOwner
+- the distributor has a nonzero vesting period
 - the reward token is a JB project token whose project is owned by REVOwner
 - exactly one token ID and one reward token are passed
 - the caller is authorized to claim that token ID
@@ -183,6 +184,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Failure Modes**
 - caller tries to borrow against more than one token ID or more than one reward token
+- the distributor has `VESTING_ROUNDS == 0`, so rewards are immediately collectible instead of loanable
 - reward token is not a REVOwner-owned revnet token
 - caller tries to repay the loan directly from Revnet loans; the distributor owns the loan NFT
 - Revnet loans returns less collateral than was borrowed

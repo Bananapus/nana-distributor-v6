@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -57,7 +60,13 @@ contract CodexNemesisZeroAmountVestingDoSTest is Test {
         address voter = makeAddr("voter");
 
         JBTokenDistributor distributor = new JBTokenDistributor(
-            IJBDirectory(address(new CodexNemesisZeroDirectory())), address(0), address(0), address(0), 1 days, 1, 0
+            IJBDirectory(address(new CodexNemesisZeroDirectory())),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            1,
+            0
         );
         CodexNemesisZeroRewardToken reward = new CodexNemesisZeroRewardToken();
         CodexNemesisVotes votes = new CodexNemesisVotes();

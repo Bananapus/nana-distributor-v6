@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
@@ -10,6 +11,8 @@ import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
@@ -74,9 +77,9 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
         IJBDirectory directory,
-        address controller,
-        address revLoans,
-        address revOwner,
+        IJBController controller,
+        IREVLoans revLoans,
+        IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
         uint48 initialClaimDuration

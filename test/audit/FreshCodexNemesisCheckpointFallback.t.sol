@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -135,7 +138,13 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
         address bob = address(0xB0B);
 
         JB721Distributor distributor = new JB721Distributor(
-            IJBDirectory(address(new FreshCodexNemesisDirectory())), address(0), address(0), address(0), 1 days, 1, 0
+            IJBDirectory(address(new FreshCodexNemesisDirectory())),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            1,
+            0
         );
         FreshCodexNemesisRewardToken reward = new FreshCodexNemesisRewardToken();
         FreshCodexNemesis721Hook hook = new FreshCodexNemesis721Hook();

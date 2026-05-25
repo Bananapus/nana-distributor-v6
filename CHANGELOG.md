@@ -5,8 +5,10 @@
 - Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's
   uncollected vesting rewards while the distributor keeps the loan NFT, blocks collection, and restores the same
   vesting schedule on repayment.
+- Disable vesting loans when `VESTING_ROUNDS == 0`, because those rewards are immediately collectible.
+- Depend on `@rev-net/core-v6` for Revnet loan and owner interfaces instead of defining local loan types.
 - Add regression tests covering loan custody, direct repayment bypass prevention, active-loan collection locks,
-  collateral shortfall reverts, and repayment reward-token excess handling.
+  zero-vesting loan rejection, collateral shortfall reverts, and repayment reward-token excess handling.
 
 ## 0.0.16 — Bump v6 deps to nana-core-v6 0.0.53 cohort
 

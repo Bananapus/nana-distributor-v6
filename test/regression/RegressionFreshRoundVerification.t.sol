@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -128,8 +131,15 @@ contract RegressionFreshRoundVerificationTest is Test {
     function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierVotes() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1 days, 1, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            1,
+            0
+        );
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFresh721Store store = new RegressionFresh721Store();
         RegressionFresh721Checkpoints checkpoints = new RegressionFresh721Checkpoints();
@@ -170,8 +180,15 @@ contract RegressionFreshRoundVerificationTest is Test {
     function test_zeroVestingRoundsMakesRewardsImmediatelyCollectable() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1 days, 0, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            0,
+            0
+        );
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFreshVotes votes = new RegressionFreshVotes();
 

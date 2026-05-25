@@ -3,8 +3,9 @@ pragma solidity ^0.8.0;
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
-import {IREVLoans} from "./IREVLoans.sol";
 import {JBTokenSnapshotData} from "../structs/JBTokenSnapshotData.sol";
 import {JBVestingLoan} from "../structs/JBVestingLoan.sol";
 
@@ -140,7 +141,7 @@ interface IJBDistributor {
     function REV_LOANS() external view returns (IREVLoans);
 
     /// @notice The REVOwner contract that must own a reward token's project to enable loan-backed collection.
-    function REV_OWNER() external view returns (address);
+    function REV_OWNER() external view returns (IREVOwner);
 
     /// @notice The starting timestamp of the distributor.
     function STARTING_TIMESTAMP() external view returns (uint256);

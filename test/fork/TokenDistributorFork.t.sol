@@ -19,7 +19,10 @@ import {JBFeelessAddresses} from "@bananapus/core-v6/src/JBFeelessAddresses.sol"
 import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
 
 // Core interfaces.
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBRulesetApprovalHook} from "@bananapus/core-v6/src/interfaces/IJBRulesetApprovalHook.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
@@ -482,7 +485,13 @@ contract TokenDistributorForkTest is Test {
 
     function _deployDistributor() internal {
         distributor = new JBTokenDistributor(
-            IJBDirectory(address(jbDirectory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+            IJBDirectory(address(jbDirectory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
         );
 
         // Mark the distributor as feeless so payouts to it aren't reduced by the 2.5% fee.

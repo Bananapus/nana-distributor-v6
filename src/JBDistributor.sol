@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBPermissioned} from "@bananapus/core-v6/src/interfaces/IJBPermissioned.sol";
+import {IJBPermissions} from "@bananapus/core-v6/src/interfaces/IJBPermissions.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBPermissionsData} from "@bananapus/core-v6/src/structs/JBPermissionsData.sol";
@@ -11,12 +12,13 @@ import {JBPermissionIds} from "@bananapus/permission-ids-v6/src/JBPermissionIds.
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
+import {REVLoan} from "@rev-net/core-v6/src/structs/REVLoan.sol";
 
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
-import {IREVLoans} from "./interfaces/IREVLoans.sol";
 import {JBVestingMath} from "./libraries/JBVestingMath.sol";
 import {JBBorrowContext} from "./structs/JBBorrowContext.sol";
-import {JBRevnetLoan} from "./structs/JBRevnetLoan.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
@@ -84,6 +86,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when a token ID has an outstanding loan against its vesting rewards.
     error JBDistributor_VestingLoanOutstanding(address hook, uint256 tokenId, address token, uint256 loanId);
 
+    /// @notice Thrown when vesting loans are requested from a distributor with no vesting period.
+    error JBDistributor_VestingLoansDisabled();
+
     /// @notice Thrown when rewards cannot be burned by the JB controller.
     error JBDistributor_TokenNotBurnable(address token);
 
@@ -125,7 +130,7 @@ abstract contract JBDistributor is IJBDistributor {
     IREVLoans public immutable override REV_LOANS;
 
     /// @notice The REVOwner contract that must own a reward token's project to enable loan-backed collection.
-    address public immutable override REV_OWNER;
+    IREVOwner public immutable override REV_OWNER;
 
     /// @notice The starting timestamp of the distributor.
     uint256 public immutable override STARTING_TIMESTAMP;
@@ -227,9 +232,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
-        address controller,
-        address revLoans,
-        address revOwner,
+        IJBController controller,
+        IREVLoans revLoans,
+        IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
         uint48 initialClaimDuration
@@ -238,21 +243,23 @@ abstract contract JBDistributor is IJBDistributor {
             revert JBDistributor_InvalidRoundDuration({roundDuration: initialRoundDuration});
         }
         CLAIM_DURATION = initialClaimDuration;
-        CONTROLLER = IJBController(controller);
-        REV_LOANS = IREVLoans(revLoans);
+        CONTROLLER = controller;
+        REV_LOANS = revLoans;
         REV_OWNER = revOwner;
         STARTING_TIMESTAMP = block.timestamp;
         ROUND_DURATION = initialRoundDuration;
         VESTING_ROUNDS = initialVestingRounds;
 
         // Let the trusted Revnet loans contract burn this distributor's project-token rewards as collateral.
-        if (revLoans != address(0)) {
+        if (address(revLoans) != address(0)) {
             uint8[] memory permissionIds = new uint8[](1);
             permissionIds[0] = JBPermissionIds.BURN_TOKENS;
-            IJBPermissioned(controller).PERMISSIONS()
-                .setPermissionsFor({
+            IJBPermissions permissions = IJBPermissioned(address(controller)).PERMISSIONS();
+            permissions.setPermissionsFor({
                 account: address(this),
-                permissionsData: JBPermissionsData({operator: revLoans, projectId: 0, permissionIds: permissionIds})
+                permissionsData: JBPermissionsData({
+                    operator: address(revLoans), projectId: 0, permissionIds: permissionIds
+                })
             });
         }
     }
@@ -651,6 +658,9 @@ abstract contract JBDistributor is IJBDistributor {
         // One loan collateralizes one revnet reward token.
         if (tokens.length != 1) revert JBDistributor_UnexpectedTokenCount({tokenCount: tokens.length});
 
+        // Zero vesting means rewards are immediately collectible, so there is no locked position to borrow against.
+        if (VESTING_ROUNDS == 0) revert JBDistributor_VestingLoansDisabled();
+
         // Revnet loan-backed collection is disabled unless a trusted loans contract was set at deployment.
         if (address(REV_LOANS) == address(0)) revert JBDistributor_RevnetLoansNotConfigured();
 
@@ -695,7 +705,7 @@ abstract contract JBDistributor is IJBDistributor {
         if (vestingLoan.hook == address(0)) revert JBDistributor_NoVestingLoan({loanId: loanId});
 
         // Use Revnet's current fee quote to determine the amount needed to repay this loan now.
-        JBRevnetLoan memory loan = REV_LOANS.loanOf(loanId);
+        REVLoan memory loan = REV_LOANS.loanOf(loanId);
         uint256 repayBorrowAmount =
             uint256(loan.amount) + REV_LOANS.determineSourceFeeAmount({loan: loan, amount: loan.amount});
 
@@ -841,7 +851,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
     function _repayLoanSource(
         uint256 loanId,
-        JBRevnetLoan memory loan,
+        REVLoan memory loan,
         uint256 repayBorrowAmount,
         uint256 collateralCount
     )
@@ -1122,7 +1132,7 @@ abstract contract JBDistributor is IJBDistributor {
         revnetId = CONTROLLER.TOKENS().projectIdOf({token: IJBToken(address(token))});
 
         // The project must be owned by the configured REVOwner.
-        if (revnetId == 0 || CONTROLLER.PROJECTS().ownerOf(revnetId) != REV_OWNER) {
+        if (revnetId == 0 || CONTROLLER.PROJECTS().ownerOf(revnetId) != address(REV_OWNER)) {
             revert JBDistributor_NotRevnetRewardToken({token: address(token)});
         }
     }

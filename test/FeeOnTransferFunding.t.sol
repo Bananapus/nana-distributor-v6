@@ -4,7 +4,10 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
@@ -57,7 +60,13 @@ contract FeeOnTransferFundingTest is Test {
         directory = new _FotDirectory();
         hook = new _Fot721Hook();
         distributor = new JB721Distributor(
-            IJBDirectory(address(directory)), address(0), address(0), address(0), _ROUND_DURATION, _VESTING_ROUNDS, 0
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            _ROUND_DURATION,
+            _VESTING_ROUNDS,
+            0
         );
         fotToken = new MockFeeOnTransferToken({_feeBps: 100}); // 1%
         fotToken.mint(funder, 1000e18);

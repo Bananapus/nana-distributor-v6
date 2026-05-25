@@ -5,7 +5,10 @@ import {Test} from "forge-std/Test.sol";
 
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -131,9 +134,9 @@ contract ReentrantRewardCollectionGuardTest is Test {
     function setUp() public {
         _distributor = new JB721Distributor({
             directory: IJBDirectory(address(new CollectionReentryDirectory())),
-            controller: address(0),
-            revLoans: address(0),
-            revOwner: address(0),
+            controller: IJBController(address(0)),
+            revLoans: IREVLoans(address(0)),
+            revOwner: IREVOwner(address(0)),
             initialRoundDuration: ROUND_DURATION,
             initialVestingRounds: VESTING_ROUNDS,
             initialClaimDuration: 0

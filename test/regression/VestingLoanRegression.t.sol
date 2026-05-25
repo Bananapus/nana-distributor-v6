@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
@@ -13,11 +14,13 @@ import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Vo
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
+import {REVLoan} from "@rev-net/core-v6/src/structs/REVLoan.sol";
 
 import {JBDistributor} from "../../src/JBDistributor.sol";
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
-import {IREVLoans} from "../../src/interfaces/IREVLoans.sol";
-import {JBRevnetLoan} from "../../src/structs/JBRevnetLoan.sol";
 
 contract VestingLoanDirectory {
     function controllerOf(uint256) external pure returns (IERC165) {
@@ -113,7 +116,9 @@ contract VestingLoanController {
     }
 }
 
-contract VestingLoanREVLoans is IREVLoans {
+contract VestingLoanREVLoans {
+    using SafeCast for uint256;
+
     error VestingLoanREVLoans_NotLoanOwner(uint256 loanId, address owner, address caller);
 
     VestingLoanERC20 public immutable rewardToken;
@@ -124,7 +129,7 @@ contract VestingLoanREVLoans is IREVLoans {
     uint256 public sourceFeeAmount;
 
     mapping(uint256 loanId => address owner) public ownerOf;
-    mapping(uint256 loanId => JBRevnetLoan) internal _loanOf;
+    mapping(uint256 loanId => REVLoan) internal _loanOf;
 
     constructor(VestingLoanERC20 rewardToken_) {
         rewardToken = rewardToken_;
@@ -140,16 +145,15 @@ contract VestingLoanREVLoans is IREVLoans {
         address holder
     )
         external
-        override
-        returns (uint256 loanId, JBRevnetLoan memory loan)
+        returns (uint256 loanId, REVLoan memory loan)
     {
         loanId = nextLoanId++;
 
-        loan = JBRevnetLoan({
-            amount: uint112(minBorrowAmount),
-            collateral: uint112(collateralCount),
-            createdAt: uint48(block.timestamp),
-            prepaidFeePercent: uint16(prepaidFeePercent),
+        loan = REVLoan({
+            amount: minBorrowAmount.toUint112(),
+            collateral: collateralCount.toUint112(),
+            createdAt: block.timestamp.toUint48(),
+            prepaidFeePercent: prepaidFeePercent.toUint16(),
             prepaidDuration: 0,
             sourceToken: token
         });
@@ -160,7 +164,7 @@ contract VestingLoanREVLoans is IREVLoans {
         VestingLoanERC20(token).transfer({to: beneficiary, value: minBorrowAmount});
     }
 
-    function determineSourceFeeAmount(JBRevnetLoan memory, uint256) external view override returns (uint256) {
+    function determineSourceFeeAmount(REVLoan memory, uint256) external view returns (uint256) {
         return sourceFeeAmount;
     }
 
@@ -173,8 +177,7 @@ contract VestingLoanREVLoans is IREVLoans {
     )
         external
         payable
-        override
-        returns (uint256 paidOffLoanId, JBRevnetLoan memory paidOffLoan)
+        returns (uint256 paidOffLoanId, REVLoan memory paidOffLoan)
     {
         allowance;
 
@@ -183,7 +186,7 @@ contract VestingLoanREVLoans is IREVLoans {
             revert VestingLoanREVLoans_NotLoanOwner({loanId: loanId, owner: owner, caller: msg.sender});
         }
 
-        JBRevnetLoan memory loan = _loanOf[loanId];
+        REVLoan memory loan = _loanOf[loanId];
         VestingLoanERC20(loan.sourceToken)
             .transferFrom({from: msg.sender, to: address(this), value: maxRepayBorrowAmount});
 
@@ -197,7 +200,7 @@ contract VestingLoanREVLoans is IREVLoans {
         paidOffLoan = loan;
     }
 
-    function loanOf(uint256 loanId) external view override returns (JBRevnetLoan memory) {
+    function loanOf(uint256 loanId) external view returns (REVLoan memory) {
         return _loanOf[loanId];
     }
 
@@ -250,9 +253,9 @@ contract VestingLoanRegressionTest is Test {
 
         _distributor = new JBTokenDistributor({
             directory: IJBDirectory(address(new VestingLoanDirectory())),
-            controller: address(_controller),
-            revLoans: address(_revLoans),
-            revOwner: _revOwner,
+            controller: IJBController(address(_controller)),
+            revLoans: IREVLoans(address(_revLoans)),
+            revOwner: IREVOwner(_revOwner),
             initialRoundDuration: _ROUND_DURATION,
             initialVestingRounds: _VESTING_ROUNDS,
             initialClaimDuration: 0
@@ -400,6 +403,51 @@ contract VestingLoanRegressionTest is Test {
         assertEq(_rewardToken.balanceOf(_alice), 3 ether);
         assertEq(_distributor.balanceOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
         assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
+    }
+
+    function test_borrowAgainstVesting_revertsWhenVestingRoundsAreZero() public {
+        JBTokenDistributor zeroVestingDistributor = new JBTokenDistributor({
+            directory: IJBDirectory(address(new VestingLoanDirectory())),
+            controller: IJBController(address(_controller)),
+            revLoans: IREVLoans(address(_revLoans)),
+            revOwner: IREVOwner(_revOwner),
+            initialRoundDuration: _ROUND_DURATION,
+            initialVestingRounds: 0,
+            initialClaimDuration: 0
+        });
+
+        _stakeToken.mint({account: _alice, amount: 100 ether});
+        vm.prank(_alice);
+        _stakeToken.delegate(_alice);
+
+        vm.roll(block.number + 1);
+
+        _rewardToken.mint({account: address(this), amount: _REWARD_AMOUNT});
+        _rewardToken.approve({spender: address(zeroVestingDistributor), value: _REWARD_AMOUNT});
+
+        zeroVestingDistributor.fund({hook: address(_stakeToken), token: _rewardToken, amount: _REWARD_AMOUNT});
+
+        skip(_ROUND_DURATION);
+        vm.roll(block.number + 1);
+
+        vm.expectRevert(JBDistributor.JBDistributor_VestingLoansDisabled.selector);
+        vm.prank(_alice);
+        zeroVestingDistributor.borrowAgainstVesting({
+            hook: address(_stakeToken),
+            tokenIds: _tokenIds(),
+            tokens: _rewardTokens(),
+            sourceToken: address(_sourceToken),
+            minBorrowAmount: 10 ether,
+            prepaidFeePercent: 0,
+            beneficiary: payable(_borrowBeneficiary)
+        });
+
+        vm.prank(_alice);
+        zeroVestingDistributor.collectVestedRewards({
+            hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens(), beneficiary: _alice
+        });
+
+        assertEq(_rewardToken.balanceOf(_alice), _REWARD_AMOUNT);
     }
 
     function _fundAndBorrow() internal returns (uint256 loanId, uint256 collateralCount) {

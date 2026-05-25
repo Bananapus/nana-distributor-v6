@@ -9,7 +9,10 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 
@@ -159,9 +162,9 @@ contract CodexNemesisForfeitedRewardsBurnedTest is Test {
 
         JB721Distributor distributor = new JB721Distributor({
             directory: IJBDirectory(address(new CodexNemesisDirectory())),
-            controller: address(new CodexNemesisJBController(jbTokens)),
-            revLoans: address(0),
-            revOwner: address(0),
+            controller: IJBController(address(new CodexNemesisJBController(jbTokens))),
+            revLoans: IREVLoans(address(0)),
+            revOwner: IREVOwner(address(0)),
             initialRoundDuration: ROUND_DURATION,
             initialVestingRounds: VESTING_ROUNDS,
             initialClaimDuration: 0

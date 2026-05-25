@@ -37,6 +37,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Revnet loans are a liquidity path, not a vesting bypass.** Borrowed vesting collateral is removed from active
   inventory and tracked as `totalLoanedVestingAmountOf`, but the vesting entries are not advanced or deleted. Repayment
   restores the collateral to the distributor, then the same original vesting schedule determines what can be collected.
+  Distributors with `VESTING_ROUNDS == 0` reject vesting loans because there is no locked vesting period to finance.
 - **Undelegated `IVotes` balances can dilute participation.**
 - **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
   must not consume the owner's per-round voting cap.
