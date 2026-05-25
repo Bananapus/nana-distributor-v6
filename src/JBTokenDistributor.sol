@@ -68,12 +68,14 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param directory The JB directory used to verify terminal/controller callers.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
+    /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
         IJBDirectory directory,
         uint256 initialRoundDuration,
-        uint256 initialVestingRounds
+        uint256 initialVestingRounds,
+        uint48 initialClaimDuration
     )
-        JBDistributor(initialRoundDuration, initialVestingRounds)
+        JBDistributor(initialRoundDuration, initialVestingRounds, initialClaimDuration)
     {
         DIRECTORY = directory;
     }
@@ -111,7 +113,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             if (msg.value != 0) {
                 // Assign native split proceeds to the current reward round for this IVotes hook.
-                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value, claimDuration: 0});
+                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -129,7 +131,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
             // Assign only the amount actually received to this round's reward pot.
-            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta, claimDuration: 0});
+            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta});
         }
     }
 
@@ -213,7 +215,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
         // Current-round funding is excluded. It becomes claimable only after a later round starts.
         JBClaimContext memory ctx =
-            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + vestingRounds});
+            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + VESTING_ROUNDS});
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {

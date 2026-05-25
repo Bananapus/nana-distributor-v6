@@ -116,8 +116,8 @@ contract FreshCodexNemesisZeroRewardReplayTest is Test {
         store.setTokenTier(1, 40);
         store.setTokenTier(2, 60);
 
-        JB721Distributor control = new JB721Distributor(directory, 1 days, 4);
-        JB721Distributor attacked = new JB721Distributor(directory, 1 days, 4);
+        JB721Distributor control = new JB721Distributor(directory, 1 days, 4, 0);
+        JB721Distributor attacked = new JB721Distributor(directory, 1 days, 4, 0);
 
         rewardToken.mint(address(this), 4);
         rewardToken.approve(address(control), 2);

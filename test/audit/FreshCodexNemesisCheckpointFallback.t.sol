@@ -135,7 +135,7 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
         address bob = address(0xB0B);
 
         JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(new FreshCodexNemesisDirectory())), 1 days, 1);
+            new JB721Distributor(IJBDirectory(address(new FreshCodexNemesisDirectory())), 1 days, 1, 0);
         FreshCodexNemesisRewardToken reward = new FreshCodexNemesisRewardToken();
         FreshCodexNemesis721Hook hook = new FreshCodexNemesis721Hook();
 

@@ -481,7 +481,7 @@ contract TokenDistributorForkTest is Test {
     }
 
     function _deployDistributor() internal {
-        distributor = new JBTokenDistributor(IJBDirectory(address(jbDirectory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JBTokenDistributor(IJBDirectory(address(jbDirectory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         // Mark the distributor as feeless so payouts to it aren't reduced by the 2.5% fee.
         vm.prank(multisig);

@@ -339,7 +339,7 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
         hook = new InvariantMockHook(store);
         directory = new InvariantMockDirectory();
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         rewardToken = new InvariantToken();
 

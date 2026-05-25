@@ -107,7 +107,7 @@ contract ReentrantRewardFundingGuard is Test {
         _directory = new ReentrantRewardDirectory();
         _directory.setTerminal(_projectId, _terminal);
 
-        _distributor = new JBTokenDistributor(IJBDirectory(address(_directory)), 1, 1);
+        _distributor = new JBTokenDistributor(IJBDirectory(address(_directory)), 1, 1, 0);
         _reward = new ReentrantRewardToken();
         _stake = new ReentrantVotesToken();
         _victimStake = new ReentrantVotesToken();

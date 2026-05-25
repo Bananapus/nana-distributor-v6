@@ -32,19 +32,19 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 1. Fund the distributor directly or through a payout split.
 2. The accepted amount is assigned to the current reward round for the chosen stake source.
 3. The distributor records that round's snapshot block and total checkpointed stake.
-4. If direct funding should expire, use `fundWithClaimDuration`; split funding and plain `fund` create non-expiring reward rounds.
+4. The distributor's immutable claim duration determines whether the funded round expires.
 5. Confirm the tracked balance matches what the distributor received.
 6. Use the distributor as the vesting surface, not as the source of entitlement logic.
 
 **Round assignment:** If a rewarder sends money to the distributor during round N, that accepted amount is reserved for the historical stakers or NFT owners at round N's snapshot. It does not vest immediately and does not get split among whoever shows up first. It becomes claimable starting in round N + 1, and each eligible claimant can show up later to materialize their own historical share into a vesting entry.
 
-**Expiring rewards:** With `fundWithClaimDuration`, the claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero duration means no expiration. Fundings merged into the same hook/token/round must use the same deadline.
+**Expiring rewards:** The claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero deployment claim duration means no expiration. Direct funding and split funding use the same immutable duration, so permissionless direct funding cannot choose an incompatible deadline for a shared hook/token/round bucket.
 
 **Failure Modes**
 - wrong asset funded
 - underfunded distributor
 - caller assumes funding alone starts vesting
-- rewarder sets too short a claim duration and unclaimed rewards become burnable
+- deployer sets too short a claim duration and unclaimed rewards become burnable
 
 **Postconditions**
 - rewards are reserved for the funding round's historical stakers or NFT owners
@@ -113,7 +113,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Intent:** clear expired unclaimed reward inventory from the distributor.
 
 **Preconditions**
-- the reward round was funded through `fundWithClaimDuration`
+- the distributor was deployed with a nonzero claim duration
 - the claim deadline has passed
 - some funded amount has not yet started vesting
 
@@ -126,7 +126,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Failure Modes**
 - round is not expired, so nothing burns
 - the whole round has already been claimed into vesting, so nothing burns
-- same-round funders attempted incompatible deadlines and the later funding reverted
+- the distributor was deployed with an unintended claim duration
 
 **Postconditions**
 - the expired unclaimed remainder is no longer available to late claimants

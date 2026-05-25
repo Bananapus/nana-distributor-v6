@@ -115,7 +115,8 @@ contract DistributorRegressionFixesTest is Test {
         tokenDirectory.setTerminal(projectId, terminal, true);
         tokenDirectory.setController(projectId, controller);
 
-        tokenDistributor = new JBTokenDistributor(IJBDirectory(address(tokenDirectory)), ROUND_DURATION, VESTING_ROUNDS);
+        tokenDistributor =
+            new JBTokenDistributor(IJBDirectory(address(tokenDirectory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         votesToken.mint(alice, 1000 ether);
         vm.prank(alice);
@@ -126,7 +127,7 @@ contract DistributorRegressionFixesTest is Test {
         hook = new VotingCapMockHook(store);
         nftDirectory = new VotingCapMockDirectory();
 
-        nftDistributor = new JB721Distributor(IJBDirectory(address(nftDirectory)), ROUND_DURATION, VESTING_ROUNDS);
+        nftDistributor = new JB721Distributor(IJBDirectory(address(nftDirectory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         nftDirectory.setTerminal(projectId, address(this), true);
 

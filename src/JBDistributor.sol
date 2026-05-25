@@ -15,7 +15,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// @notice Abstract base for reward distributors. Manages round-based distribution of ERC-20 tokens (or native ETH)
 /// to stakers with linear vesting. Each round, a snapshot is taken of the distributable balance, and stakers can
 /// claim their pro-rata share based on their stake weight at the snapshot block. Claimed tokens vest linearly over
-/// `vestingRounds` rounds and can be collected as they unlock.
+/// `VESTING_ROUNDS` rounds and can be collected as they unlock.
 /// @dev Subclasses define how stake is measured (`_tokenStake`, `_totalStake`), who can claim (`_canClaim`), and
 /// what "burned" means (`_tokenBurned`). Two concrete implementations exist: `JBTokenDistributor` (IVotes tokens)
 /// and `JB721Distributor` (Juicebox 721 NFTs).
@@ -53,9 +53,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when a value cannot fit in a uint48 reward-round field.
     error JBDistributor_Uint48Overflow(uint256 value);
 
-    /// @notice Thrown when fundings in the same reward round use different claim deadlines.
-    error JBDistributor_ClaimDeadlineMismatch(uint256 existingDeadline, uint256 newDeadline);
-
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
@@ -70,14 +67,18 @@ abstract contract JBDistributor is IJBDistributor {
     // ---------------- public immutable stored properties --------------- //
     //*********************************************************************//
 
+    /// @notice The number of seconds after a reward round becomes claimable before unclaimed rewards expire.
+    /// @dev A zero duration means reward rounds do not expire.
+    uint48 public immutable override CLAIM_DURATION;
+
     /// @notice The duration of each round, specified in seconds.
-    uint256 public immutable override roundDuration;
+    uint256 public immutable override ROUND_DURATION;
 
     /// @notice The starting timestamp of the distributor.
-    uint256 public immutable startingTimestamp;
+    uint256 public immutable override STARTING_TIMESTAMP;
 
     /// @notice The number of rounds until tokens are fully vested.
-    uint256 public immutable override vestingRounds;
+    uint256 public immutable override VESTING_ROUNDS;
 
     //*********************************************************************//
     // --------------------- public stored properties -------------------- //
@@ -151,13 +152,15 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
-    constructor(uint256 initialRoundDuration, uint256 initialVestingRounds) {
+    /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
+    constructor(uint256 initialRoundDuration, uint256 initialVestingRounds, uint48 initialClaimDuration) {
         if (initialRoundDuration == 0) {
             revert JBDistributor_InvalidRoundDuration({roundDuration: initialRoundDuration});
         }
-        startingTimestamp = block.timestamp;
-        roundDuration = initialRoundDuration;
-        vestingRounds = initialVestingRounds;
+        CLAIM_DURATION = initialClaimDuration;
+        STARTING_TIMESTAMP = block.timestamp;
+        ROUND_DURATION = initialRoundDuration;
+        VESTING_ROUNDS = initialVestingRounds;
     }
 
     //*********************************************************************//
@@ -166,7 +169,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Snapshot the current round's distributable balance and begin vesting for the specified token IDs.
     /// Each token ID's share is proportional to its stake weight relative to the total stake at the snapshot block.
-    /// Vesting completes after `vestingRounds` rounds. Reverts if there's nothing to distribute.
+    /// Vesting completes after `VESTING_ROUNDS` rounds. Reverts if there's nothing to distribute.
     /// @param hook The hook (IVotes token or 721 hook) whose stakers are vesting.
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
@@ -219,7 +222,7 @@ abstract contract JBDistributor is IJBDistributor {
                 token: token,
                 distributable: distributable,
                 totalStakeAmount: totalStakeAmount,
-                vestingReleaseRound: round + vestingRounds
+                vestingReleaseRound: round + VESTING_ROUNDS
             });
 
             unchecked {
@@ -239,27 +242,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param token The token to fund with.
     /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
     function fund(address hook, IERC20 token, uint256 amount) external payable virtual override {
-        _fund({hook: hook, token: token, amount: amount, claimDuration: 0});
-    }
-
-    /// @notice Fund the distributor for a specific hook with expiring rewards.
-    /// @dev The claim window starts when the funded round first becomes claimable.
-    /// @param hook The hook to fund.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund.
-    /// @param claimDuration The number of seconds claimants have after the round becomes claimable.
-    function fundWithClaimDuration(
-        address hook,
-        IERC20 token,
-        uint256 amount,
-        uint48 claimDuration
-    )
-        external
-        payable
-        virtual
-        override
-    {
-        _fund({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+        _fund({hook: hook, token: token, amount: amount});
     }
 
     /// @notice Burn unclaimed rewards from expired reward rounds.
@@ -413,7 +396,7 @@ abstract contract JBDistributor is IJBDistributor {
             lockedShare = JBVestingMath.lockedShareOf({
                 releaseRound: vesting.releaseRound,
                 currentRound: round,
-                vestingRounds: vestingRounds,
+                vestingRounds: VESTING_ROUNDS,
                 maxShare: MAX_SHARE
             });
 
@@ -456,13 +439,13 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The number of the current round.
     function currentRound() public view override returns (uint256) {
-        return (block.timestamp - startingTimestamp) / roundDuration;
+        return (block.timestamp - STARTING_TIMESTAMP) / ROUND_DURATION;
     }
 
     /// @notice The timestamp at which a round started.
     /// @param round The round to get the start timestamp of.
     function roundStartTimestamp(uint256 round) public view override returns (uint256) {
-        return startingTimestamp + roundDuration * round;
+        return STARTING_TIMESTAMP + ROUND_DURATION * round;
     }
 
     //*********************************************************************//
@@ -528,7 +511,7 @@ abstract contract JBDistributor is IJBDistributor {
                     token: token,
                     distributable: distributable,
                     totalStakeAmount: totalStakeAmount,
-                    vestingReleaseRound: round + vestingRounds
+                    vestingReleaseRound: round + VESTING_ROUNDS
                 });
 
                 unchecked {
@@ -587,8 +570,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param hook The stake source whose stakers receive the rewards.
     /// @param token The reward token being funded.
     /// @param amount The nominal amount to fund.
-    /// @param claimDuration The number of seconds claimants have once the round becomes claimable.
-    function _fund(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
+    function _fund(address hook, IERC20 token, uint256 amount) internal {
         // Native funding is measured by msg.value, not the caller-provided amount.
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
@@ -603,15 +585,14 @@ abstract contract JBDistributor is IJBDistributor {
         }
 
         // Store the accepted amount in this round's historical reward ledger.
-        _recordRewardFunding({hook: hook, token: token, amount: amount, claimDuration: claimDuration});
+        _recordRewardFunding({hook: hook, token: token, amount: amount});
     }
 
     /// @notice Record accepted funding as the current round's reward pot.
     /// @param hook The stake source whose stakers receive the rewards.
     /// @param token The reward token.
     /// @param amount The accepted funding amount.
-    /// @param claimDuration The number of seconds claimants have once the round becomes claimable.
-    function _recordRewardFunding(address hook, IERC20 token, uint256 amount, uint48 claimDuration) internal {
+    function _recordRewardFunding(address hook, IERC20 token, uint256 amount) internal {
         // Zero-value transfers do not create reward rounds or alter tracked balances.
         if (amount == 0) return;
 
@@ -621,8 +602,8 @@ abstract contract JBDistributor is IJBDistributor {
         // Load the current round's ledger entry for this hook and reward token.
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
 
-        // A zero deadline means no expiration; otherwise the clock starts once this round becomes claimable.
-        uint48 claimDeadline = _claimDeadlineFor({round: round, claimDuration: claimDuration});
+        // Every funding source in this contract uses the same immutable claim duration.
+        uint48 claimDeadline = _claimDeadlineFor(round);
 
         // First funding in a round locks that round's snapshot block and total stake for all later claims.
         if (rewardRound.amount == 0) {
@@ -632,16 +613,11 @@ abstract contract JBDistributor is IJBDistributor {
             // Store the snapshot block in the packed uint48 field.
             rewardRound.snapshotBlock = _toUint48(snapshotBlock);
 
-            // Store the packed claim deadline chosen by the rewarder.
+            // Store the packed claim deadline fixed for this distributor.
             rewardRound.claimDeadline = claimDeadline;
 
             // Store the packed total stake that shares this round's reward pot.
             rewardRound.totalStake = _toUint208(_totalStake({hook: hook, blockNumber: snapshotBlock}));
-        } else if (rewardRound.claimDeadline != claimDeadline) {
-            // All fundings merged into the same round must have one deadline for deterministic expiry.
-            revert JBDistributor_ClaimDeadlineMismatch({
-                existingDeadline: rewardRound.claimDeadline, newDeadline: claimDeadline
-            });
         }
 
         // Multiple fundings in the same round share the same snapshot and accumulate into one reward pot.
@@ -781,16 +757,15 @@ abstract contract JBDistributor is IJBDistributor {
         });
     }
 
-    /// @notice The deadline for a reward round with the given claim duration.
+    /// @notice The deadline for a reward round using this distributor's immutable claim duration.
     /// @param round The reward round.
-    /// @param claimDuration The claim duration once the round becomes claimable.
     /// @return claimDeadline The deadline timestamp. Zero means no expiration.
-    function _claimDeadlineFor(uint256 round, uint48 claimDuration) internal view returns (uint48 claimDeadline) {
+    function _claimDeadlineFor(uint256 round) internal view returns (uint48 claimDeadline) {
         // Zero duration keeps the round non-expiring and backward compatible with existing fund paths.
-        if (claimDuration == 0) return 0;
+        if (CLAIM_DURATION == 0) return 0;
 
         // Start the window at the next round boundary, when the funded round first becomes claimable.
-        claimDeadline = _toUint48(roundStartTimestamp(round + 1) + claimDuration);
+        claimDeadline = _toUint48(roundStartTimestamp(round + 1) + CLAIM_DURATION);
     }
 
     /// @notice Whether a reward round has passed its claim deadline.
@@ -898,7 +873,7 @@ abstract contract JBDistributor is IJBDistributor {
                 uint256 lockedShare = JBVestingMath.lockedShareOf({
                     releaseRound: vesting.releaseRound,
                     currentRound: round,
-                    vestingRounds: vestingRounds,
+                    vestingRounds: VESTING_ROUNDS,
                     maxShare: MAX_SHARE
                 });
 

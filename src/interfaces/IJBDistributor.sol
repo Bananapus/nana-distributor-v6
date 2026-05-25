@@ -81,6 +81,19 @@ interface IJBDistributor {
     // ----------------------------- views ------------------------------- //
     //*********************************************************************//
 
+    /// @notice The number of seconds after a reward round becomes claimable before unclaimed rewards expire.
+    /// @dev A zero duration means reward rounds do not expire.
+    function CLAIM_DURATION() external view returns (uint48);
+
+    /// @notice The duration of each round, specified in seconds.
+    function ROUND_DURATION() external view returns (uint256);
+
+    /// @notice The starting timestamp of the distributor.
+    function STARTING_TIMESTAMP() external view returns (uint256);
+
+    /// @notice The number of rounds until tokens are fully vested.
+    function VESTING_ROUNDS() external view returns (uint256);
+
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @param hook The hook whose balance to check.
     /// @param token The token to check the balance of.
@@ -100,9 +113,6 @@ interface IJBDistributor {
 
     /// @notice The number of the current round.
     function currentRound() external view returns (uint256);
-
-    /// @notice The duration of each round, specified in seconds.
-    function roundDuration() external view returns (uint256);
 
     /// @notice The block number recorded as the snapshot point for a round.
     /// @dev Returns 0 if no snapshot block has been recorded yet for this round.
@@ -130,9 +140,6 @@ interface IJBDistributor {
     /// @param hook The hook whose vesting amount to check.
     /// @param token The address of the token that is vesting.
     function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
-
-    /// @notice The number of rounds until tokens are fully vested.
-    function vestingRounds() external view returns (uint256);
 
     //*********************************************************************//
     // ---------------------------- transactions ------------------------- //
@@ -163,15 +170,6 @@ interface IJBDistributor {
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
-
-    /// @notice Fund the distributor for a specific hook with expiring rewards.
-    /// @dev `claimDuration` is measured from the first timestamp at which the funded round can be claimed.
-    /// @dev A zero duration means the reward round does not expire.
-    /// @param hook The hook to fund.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund.
-    /// @param claimDuration The number of seconds claimants have after the round becomes claimable.
-    function fundWithClaimDuration(address hook, IERC20 token, uint256 amount, uint48 claimDuration) external payable;
 
     /// @notice Burn unclaimed rewards from expired reward rounds.
     /// @param hook The hook whose expired reward rounds should be burned.

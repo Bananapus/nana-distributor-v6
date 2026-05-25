@@ -8,7 +8,7 @@
 
 `JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` now follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
-Both variants can be used as `IJBSplitHook` receivers. Split funding and plain `fund` create non-expiring reward rounds. Direct `fundWithClaimDuration` creates a reward round whose unclaimed remainder can be burned permissionlessly after the configured claim window.
+Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets unclaimed remainders be burned permissionlessly after the configured claim window.
 
 ## Core Invariants
 
@@ -42,7 +42,7 @@ Both variants can be used as `IJBSplitHook` receivers. Split funding and plain `
 fund token distributor
   -> assign accepted amount to current reward round
   -> record snapshot block and total IVotes supply for that round
-  -> optionally record a claim deadline when funded with claim duration
+  -> record the deployment's fixed claim deadline when the duration is nonzero
   -> staker later claims rounds <= currentRound - 1
   -> one fresh vesting entry starts at claim time
 ```
@@ -53,7 +53,7 @@ fund token distributor
 fund 721 distributor
   -> assign accepted amount to current reward round
   -> record snapshot block and total 721 checkpointed stake for that round
-  -> optionally record a claim deadline when funded with claim duration
+  -> record the deployment's fixed claim deadline when the duration is nonzero
   -> current NFT owner later claims rounds <= currentRound - 1
   -> one fresh vesting entry starts at claim time
 ```

@@ -88,7 +88,7 @@ contract RegressionFixesTest is Test {
         directory.setTerminal(projectId, terminal, true);
         directory.setController(projectId, controller);
 
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS);
+        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
 
         // Mint staking tokens and delegate.
         votesToken.mint(alice, 700 ether);

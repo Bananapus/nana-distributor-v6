@@ -129,7 +129,7 @@ contract FreshCodexNemesisDuplicate721ClaimTest is Test {
         address mallory = makeAddr("mallory");
 
         JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(new FreshNemesisDirectory())), 1 days, 4);
+            new JB721Distributor(IJBDirectory(address(new FreshNemesisDirectory())), 1 days, 4, 0);
         FreshNemesisRewardToken reward = new FreshNemesisRewardToken();
         FreshNemesis721Store store = new FreshNemesis721Store();
         FreshNemesis721Checkpoints checkpoints = new FreshNemesis721Checkpoints();
