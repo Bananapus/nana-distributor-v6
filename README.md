@@ -67,6 +67,8 @@ This repo does not explain why an allocation exists. It only defines how funded 
 - revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
   distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
   collateral immediately
+- if Revnet liquidates a distributor-held vesting loan, anyone can call `writeOffLiquidatedVestingLoan` to clear the
+  stale collection lock and forfeit only the vesting rewards that were collateralized by that loan
 - distributors deployed with `VESTING_ROUNDS == 0` disable revnet vesting loans because rewards are immediately
   collectible instead of locked in a vesting position
 - `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token

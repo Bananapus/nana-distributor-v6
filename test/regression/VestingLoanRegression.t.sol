@@ -204,6 +204,11 @@ contract VestingLoanREVLoans {
         return _loanOf[loanId];
     }
 
+    function liquidateLoan(uint256 loanId) external {
+        delete ownerOf[loanId];
+        delete _loanOf[loanId];
+    }
+
     function setCollateralShortfall(uint256 collateralShortfall_) external {
         collateralShortfall = collateralShortfall_;
     }
@@ -369,6 +374,57 @@ contract VestingLoanRegressionTest is Test {
         assertEq(_revLoans.ownerOf(loanId), address(_distributor));
     }
 
+    function test_writeOffLiquidatedVestingLoan_clearsStaleLockAndPreservesNewRewards() public {
+        (uint256 loanId,) = _fundAndBorrow();
+
+        _fundRewards(_REWARD_AMOUNT);
+
+        skip(_ROUND_DURATION);
+        vm.roll(block.number + 1);
+
+        vm.prank(_alice);
+        _distributor.beginVesting({hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens()});
+
+        assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT * 2);
+        assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
+        assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT * 2);
+
+        _revLoans.liquidateLoan(loanId);
+
+        vm.prank(makeAddr("keeper"));
+        uint256 writtenOffAmount = _distributor.writeOffLiquidatedVestingLoan(loanId);
+
+        assertEq(writtenOffAmount, _REWARD_AMOUNT);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), 0);
+        assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
+        assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), 0);
+        assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT);
+
+        (,, uint256 writtenOffShare) = _distributor.vestingDataOf(address(_stakeToken), _tokenId(), _rewardToken, 0);
+        (,, uint256 preservedShare) = _distributor.vestingDataOf(address(_stakeToken), _tokenId(), _rewardToken, 1);
+
+        assertEq(writtenOffShare, _distributor.MAX_SHARE());
+        assertEq(preservedShare, 0);
+
+        skip(_ROUND_DURATION * _VESTING_ROUNDS);
+        vm.roll(block.number + 1);
+
+        vm.prank(_alice);
+        _distributor.collectVestedRewards({
+            hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens(), beneficiary: _alice
+        });
+
+        assertEq(_rewardToken.balanceOf(_alice), _REWARD_AMOUNT);
+        assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), 0);
+    }
+
+    function test_writeOffLiquidatedVestingLoan_revertsWhileLoanIsLive() public {
+        (uint256 loanId,) = _fundAndBorrow();
+
+        vm.expectRevert(abi.encodeWithSelector(JBDistributor.JBDistributor_VestingLoanNotLiquidated.selector, loanId));
+        _distributor.writeOffLiquidatedVestingLoan(loanId);
+    }
+
     function test_repayVestingLoan_revertsIfCollateralIsNotReturned() public {
         (uint256 loanId,) = _fundAndBorrow();
 
@@ -457,10 +513,7 @@ contract VestingLoanRegressionTest is Test {
 
         vm.roll(block.number + 1);
 
-        _rewardToken.mint({account: address(this), amount: _REWARD_AMOUNT});
-        _rewardToken.approve({spender: address(_distributor), value: _REWARD_AMOUNT});
-
-        _distributor.fund({hook: address(_stakeToken), token: _rewardToken, amount: _REWARD_AMOUNT});
+        _fundRewards(_REWARD_AMOUNT);
 
         skip(_ROUND_DURATION);
         vm.roll(block.number + 1);
@@ -477,6 +530,13 @@ contract VestingLoanRegressionTest is Test {
             prepaidFeePercent: 0,
             beneficiary: payable(_borrowBeneficiary)
         });
+    }
+
+    function _fundRewards(uint256 amount) internal {
+        _rewardToken.mint({account: address(this), amount: amount});
+        _rewardToken.approve({spender: address(_distributor), value: amount});
+
+        _distributor.fund({hook: address(_stakeToken), token: _rewardToken, amount: amount});
     }
 
     function _rewardTokens() internal view returns (IERC20[] memory tokens) {

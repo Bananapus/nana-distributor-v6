@@ -86,6 +86,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when a token ID has an outstanding loan against its vesting rewards.
     error JBDistributor_VestingLoanOutstanding(address hook, uint256 tokenId, address token, uint256 loanId);
 
+    /// @notice Thrown when a vesting loan is written off before Revnet has liquidated it.
+    error JBDistributor_VestingLoanNotLiquidated(uint256 loanId);
+
     /// @notice Thrown when vesting loans are requested from a distributor with no vesting period.
     error JBDistributor_VestingLoansDisabled();
 
@@ -95,7 +98,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when a value cannot fit in a uint208 reward-round field.
     error JBDistributor_Uint208Overflow(uint256 value);
 
-    /// @notice Thrown when a value cannot fit in a uint48 reward-round field.
+    /// @notice Thrown when a value cannot fit in a uint48 field.
     error JBDistributor_Uint48Overflow(uint256 value);
 
     //*********************************************************************//
@@ -737,6 +740,26 @@ abstract contract JBDistributor is IJBDistributor {
         });
     }
 
+    /// @notice Write off a distributor-held Revnet loan after Revnet liquidation permanently destroys its collateral.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @return collateralCount The amount of vesting rewards forfeited by liquidation.
+    function writeOffLiquidatedVestingLoan(uint256 loanId) public virtual override returns (uint256 collateralCount) {
+        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
+        _requireNotAcceptingToken();
+
+        // Load the distributor-local position that was locked when the loan opened.
+        JBVestingLoan memory vestingLoan = _vestingLoanOf[loanId];
+
+        // Only distributor-tracked vesting loans can be written off.
+        if (vestingLoan.hook == address(0)) revert JBDistributor_NoVestingLoan({loanId: loanId});
+
+        // Revnet liquidation deletes the loan data. A live loan can still be repaid, so do not write it off.
+        if (REV_LOANS.loanOf(loanId).createdAt != 0) revert JBDistributor_VestingLoanNotLiquidated({loanId: loanId});
+
+        // Clear the stale distributor lock and forfeit only the collateralized vesting entries.
+        collateralCount = _writeOffLiquidatedVestingLoan({loanId: loanId, vestingLoan: vestingLoan});
+    }
+
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
@@ -780,6 +803,9 @@ abstract contract JBDistributor is IJBDistributor {
         // Use the remaining uncollected vesting amount as collateral without advancing the vesting schedule.
         collateralCount = _unclaimedVestingAmountOf({hook: ctx.hook, tokenId: ctx.tokenId, token: ctx.token});
 
+        // Remember the vesting-entry boundary so liquidation write-off cannot consume later rewards.
+        uint48 vestingDataCount = _toUint48(vestingDataOf[ctx.hook][ctx.tokenId][ctx.token].length);
+
         // A zero-collateral loan would revert in Revnet, but this local error explains why.
         if (collateralCount == 0) {
             revert JBDistributor_NothingToBorrow({hook: ctx.hook, token: address(ctx.token)});
@@ -801,8 +827,13 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Track the distributor-held loan so repayment can restore the same vesting position.
         activeVestingLoanIdOf[ctx.hook][ctx.tokenId][ctx.token] = loanId;
-        _vestingLoanOf[loanId] =
-            JBVestingLoan({hook: ctx.hook, tokenId: ctx.tokenId, token: ctx.token, collateralCount: collateralCount});
+        _vestingLoanOf[loanId] = JBVestingLoan({
+            hook: ctx.hook,
+            tokenId: ctx.tokenId,
+            token: ctx.token,
+            vestingDataCount: vestingDataCount,
+            collateralCount: collateralCount
+        });
 
         _emitBorrowAgainstVesting({ctx: ctx, loanId: loanId, collateralCount: collateralCount});
     }
@@ -957,6 +988,64 @@ abstract contract JBDistributor is IJBDistributor {
             token: vestingLoan.token,
             collateralCount: vestingLoan.collateralCount,
             repayBorrowAmount: repayBorrowAmount,
+            caller: msg.sender
+        });
+    }
+
+    /// @notice Clear a stale vesting-loan lock after liquidation permanently destroys the collateral.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @param vestingLoan The distributor-local vesting position that backed the loan.
+    /// @return collateralCount The amount of vesting rewards forfeited by liquidation.
+    function _writeOffLiquidatedVestingLoan(
+        uint256 loanId,
+        JBVestingLoan memory vestingLoan
+    )
+        internal
+        returns (uint256 collateralCount)
+    {
+        // Cache the collateral amount because it is used for accounting and the event.
+        collateralCount = vestingLoan.collateralCount;
+
+        // Load the vesting entries for the token ID whose rewards were collateralized.
+        JBVestingData[] storage vestings = vestingDataOf[vestingLoan.hook][vestingLoan.tokenId][vestingLoan.token];
+
+        // Start at the first unexhausted vesting entry.
+        uint256 vestedIndex = latestVestedIndexOf[vestingLoan.hook][vestingLoan.tokenId][vestingLoan.token];
+
+        // Stop at the boundary recorded when the loan opened, preserving newer vesting entries.
+        uint256 vestingDataCount = vestingLoan.vestingDataCount;
+
+        // Mark each collateralized entry fully claimed because Revnet liquidation destroyed its backing tokens.
+        while (vestedIndex < vestingDataCount) {
+            vestings[vestedIndex].shareClaimed = MAX_SHARE;
+
+            unchecked {
+                // Safe because the loop is bounded by the recorded vesting-entry count.
+                ++vestedIndex;
+            }
+        }
+
+        // Skip over the written-off vesting entries without ever moving the cursor backwards.
+        latestVestedIndexOf[vestingLoan.hook][vestingLoan.tokenId][vestingLoan.token] = vestedIndex;
+
+        // Remove the liquidated collateral from the amount still considered vesting.
+        totalVestingAmountOf[vestingLoan.hook][vestingLoan.token] -= collateralCount;
+
+        // Remove the liquidated collateral from the loaned-vesting inventory.
+        totalLoanedVestingAmountOf[vestingLoan.hook][vestingLoan.token] -= collateralCount;
+
+        // Clear the active loan lock for this token ID and reward token.
+        delete activeVestingLoanIdOf[vestingLoan.hook][vestingLoan.tokenId][vestingLoan.token];
+
+        // Clear the loan metadata so it cannot be written off or repaid again.
+        delete _vestingLoanOf[loanId];
+
+        emit LiquidatedVestingLoanWrittenOff({
+            hook: vestingLoan.hook,
+            tokenId: vestingLoan.tokenId,
+            token: vestingLoan.token,
+            loanId: loanId,
+            collateralCount: collateralCount,
             caller: msg.sender
         });
     }
@@ -1146,7 +1235,7 @@ abstract contract JBDistributor is IJBDistributor {
         castValue = uint208(value);
     }
 
-    /// @notice Cast a reward-round value to uint48.
+    /// @notice Cast a value to uint48.
     /// @param value The value to cast.
     /// @return castValue The cast value.
     function _toUint48(uint256 value) internal pure returns (uint48 castValue) {

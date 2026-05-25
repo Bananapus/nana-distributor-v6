@@ -68,6 +68,17 @@ any caller
   -> unclaimed remainder leaves tracked inventory and is burned through JBController.burnTokensOf
 ```
 
+### Revnet Vesting Loan Write-Off
+
+```text
+any caller
+  -> liquidate an expired distributor-held loan through Revnet loans
+  -> call writeOffLiquidatedVestingLoan with the liquidated loan ID
+  -> distributor confirms Revnet deleted the loan data
+  -> collateralized vesting entries are marked forfeited
+  -> the stale collection lock is cleared while newer vesting entries remain collectable
+```
+
 ### Collect
 
 ```text

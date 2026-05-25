@@ -182,17 +182,26 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 7. The distributor repays the Revnet loan, receives the returned collateral, restores it to inventory, and clears the loan lock.
 8. The original vesting entries remain unchanged, so the claimant can collect only the amount unlocked by the same schedule that existed before the loan.
 
+**Liquidation Cleanup**
+1. If the Revnet loan expires, anyone can liquidate it through Revnet loans.
+2. Revnet liquidation permanently destroys the loan collateral and deletes the Revnet loan data.
+3. Anyone can call `writeOffLiquidatedVestingLoan` on the distributor with the liquidated loan ID.
+4. The distributor verifies the Revnet loan is no longer live, marks the collateralized vesting entries as fully forfeited, and clears the collection lock.
+5. Vesting rewards that materialized after the loan was opened remain on their normal vesting schedule.
+
 **Failure Modes**
 - caller tries to borrow against more than one token ID or more than one reward token
 - the distributor has `VESTING_ROUNDS == 0`, so rewards are immediately collectible instead of loanable
 - reward token is not a REVOwner-owned revnet token
 - caller tries to repay the loan directly from Revnet loans; the distributor owns the loan NFT
 - Revnet loans returns less collateral than was borrowed
+- caller tries to write off a loan before Revnet liquidation has deleted it
 - caller expects repayment to unlock all collateral immediately
 
 **Postconditions**
 - the loan stays custodied by the distributor until repayment
 - repayment restores the same vesting schedule instead of bypassing it
+- liquidation write-off clears stale locks without releasing or re-minting collateral
 - any reward-token excess returned during repayment is sent to the repayer without entering vesting accounting
 
 ## Trust Boundaries

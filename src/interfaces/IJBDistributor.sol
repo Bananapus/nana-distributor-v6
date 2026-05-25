@@ -91,6 +91,22 @@ interface IJBDistributor {
         address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
     );
 
+    /// @notice Emitted when a liquidated distributor-held Revnet loan is written off.
+    /// @param hook The hook whose vesting rewards were collateralized.
+    /// @param tokenId The token ID whose vesting rewards were collateralized.
+    /// @param token The revnet reward token whose collateral was liquidated.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @param collateralCount The amount of vesting rewards forfeited by liquidation.
+    /// @param caller The address that triggered the write-off.
+    event LiquidatedVestingLoanWrittenOff(
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 indexed token,
+        uint256 loanId,
+        uint256 collateralCount,
+        address caller
+    );
+
     /// @notice Emitted when a distributor-held Revnet loan is repaid and its collateral resumes vesting.
     /// @param loanId The Revnet loan NFT ID that was repaid.
     /// @param paidOffLoanId The paid-off loan ID returned by Revnet loans.
@@ -297,4 +313,9 @@ interface IJBDistributor {
         address beneficiary
     )
         external;
+
+    /// @notice Write off a distributor-held Revnet loan after Revnet liquidation permanently destroys its collateral.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @return collateralCount The amount of vesting rewards forfeited by liquidation.
+    function writeOffLiquidatedVestingLoan(uint256 loanId) external returns (uint256 collateralCount);
 }

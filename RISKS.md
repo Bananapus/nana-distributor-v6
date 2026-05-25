@@ -37,7 +37,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Revnet loans are a liquidity path, not a vesting bypass.** Borrowed vesting collateral is removed from active
   inventory and tracked as `totalLoanedVestingAmountOf`, but the vesting entries are not advanced or deleted. Repayment
   restores the collateral to the distributor, then the same original vesting schedule determines what can be collected.
-  Distributors with `VESTING_ROUNDS == 0` reject vesting loans because there is no locked vesting period to finance.
+  If Revnet liquidates the loan, anyone can write it off so the destroyed collateral is forfeited and the local
+  collection lock is cleared. Distributors with `VESTING_ROUNDS == 0` reject vesting loans because there is no locked
+  vesting period to finance.
 - **Undelegated `IVotes` balances can dilute participation.**
 - **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
   must not consume the owner's per-round voting cap.
@@ -60,7 +62,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Burn paths depend on the configured JB controller.** `burnExpiredRewards` and `releaseForfeitedRewards` use
   `JBController.burnTokensOf`; they do not transfer to a burn address.
 - **Loan-backed collection is intentionally locked while a loan is active.** If a token ID's vesting rewards are
-  collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid.
+  collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid or
+  liquidated and written off.
 
 ## 5. Integration Risks
 
@@ -91,12 +94,14 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   tokens can also desynchronize actual token balances from the distributor's local accounting.
 - **Revnet loan-backed vesting trusts the configured loans contract.** The distributor checks that the reward token is a
   REVOwner-owned revnet token, grants the loans contract burn permission at deployment, and verifies that repayment
-  returns at least the borrowed collateral. It still relies on that configured loans contract for loan accounting.
+  returns at least the borrowed collateral. It also relies on `loanOf(loanId).createdAt == 0` as the signal that a
+  tracked loan was liquidated and can be written off.
 
 ## 6. Invariants To Verify
 
 - `totalVestingAmountOf - totalLoanedVestingAmountOf <= _balanceOf`
-- `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment
+- `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment,
+  or is removed from vesting inventory on liquidation write-off
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
 - round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
 - expired burns reduce tracked balance only by `amount - claimedAmount`
