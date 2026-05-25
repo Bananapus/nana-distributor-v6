@@ -35,6 +35,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
+    /// @notice Thrown when a claim batch repeats an NFT token ID.
+    error JB721Distributor_DuplicateTokenId(uint256 tokenId);
+
     /// @notice Thrown when native ETH does not match the split hook context amount.
     error JB721Distributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
 
@@ -544,10 +547,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to check.
     function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view {
-        // Each requested NFT must currently belong to msg.sender.
+        // Each requested NFT must currently belong to msg.sender and appear only once in the batch.
         for (uint256 i; i < tokenIds.length;) {
-            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {
-                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+            uint256 tokenId = tokenIds[i];
+
+            if (!_canClaim({hook: hook, tokenId: tokenId, account: msg.sender})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: msg.sender});
+            }
+
+            // Reject duplicates before reward accounting so one NFT cannot replay the same historical round.
+            for (uint256 j = i + 1; j < tokenIds.length;) {
+                if (tokenIds[j] == tokenId) revert JB721Distributor_DuplicateTokenId({tokenId: tokenId});
+
+                unchecked {
+                    ++j;
+                }
             }
 
             unchecked {
