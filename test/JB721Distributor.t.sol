@@ -409,6 +409,19 @@ contract JB721DistributorTest is Test {
         tokenIds[2] = tokenId;
     }
 
+    function _decreasingTokenIds(
+        uint256 firstTokenId,
+        uint256 secondTokenId
+    )
+        internal
+        pure
+        returns (uint256[] memory tokenIds)
+    {
+        tokenIds = new uint256[](2);
+        tokenIds[0] = firstTokenId;
+        tokenIds[1] = secondTokenId;
+    }
+
     function _singleRewardToken() internal view returns (IERC20[] memory tokens) {
         tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
@@ -1390,7 +1403,7 @@ contract JB721DistributorTest is Test {
         _advanceToRound(1);
 
         vm.prank(charlie);
-        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_DuplicateTokenId.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 1, 1));
         distributor.beginVesting(address(hook), _duplicateTokenIds(1), tokens);
 
         uint256[] memory bobTokenIds = new uint256[](2);
@@ -1411,8 +1424,16 @@ contract JB721DistributorTest is Test {
         _advanceToRound(1);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_DuplicateTokenId.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 1, 1));
         distributor.collectVestedRewards(address(hook), _duplicateTokenIds(1), _singleRewardToken(), alice);
+    }
+
+    function test_beginVesting_unorderedTokenIdsReverts() public {
+        hook.setOwner(2, alice);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 2, 1));
+        distributor.beginVesting(address(hook), _decreasingTokenIds(2, 1), _singleRewardToken());
     }
 
     function test_lateMintCannotClaimHistoricalRewardRound() public {

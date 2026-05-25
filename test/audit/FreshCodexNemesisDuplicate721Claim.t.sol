@@ -178,7 +178,7 @@ contract FreshCodexNemesisDuplicate721ClaimTest is Test {
         tokens[0] = IERC20(address(reward));
 
         vm.prank(mallory);
-        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_DuplicateTokenId.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 1, 1));
         distributor.beginVesting(address(hook), duplicateIds, tokens);
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(reward))), 0);
