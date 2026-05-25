@@ -34,7 +34,7 @@ import {
 } from "./VotingPowerCapRegression.t.sol";
 
 // =========================================================================
-// Mock contracts for JBTokenDistributor tests ()
+// Mock contracts for JBTokenDistributor tests.
 // =========================================================================
 
 /// @notice Mock JB directory for distributor regression tests.
@@ -87,13 +87,13 @@ contract DistributorMockVotesToken is ERC20, ERC20Votes {
 
 /// @notice Tests for distributor regression fixes.
 contract DistributorRegressionFixesTest is Test {
-    // --- Token Distributor setup () ---
+    // --- Token Distributor setup ---
     DistributorMockDirectory tokenDirectory;
     DistributorMockRewardToken rewardToken;
     DistributorMockVotesToken votesToken;
     JBTokenDistributor tokenDistributor;
 
-    // --- 721 Distributor setup () ---
+    // --- 721 Distributor setup ---
     VotingCapMockStore store;
     VotingCapMockHook hook;
     VotingCapMockDirectory nftDirectory;

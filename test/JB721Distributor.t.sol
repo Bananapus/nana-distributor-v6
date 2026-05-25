@@ -1951,7 +1951,7 @@ contract JB721DistributorTest is Test {
 
         uint256 actualCollected = rewardToken.balanceOf(alice);
 
-        // After fix: actual collection matches the preview.
+        // Actual collection should match the preview.
         assertEq(actualCollected, preview);
     }
 
