@@ -418,6 +418,62 @@ contract VestingLoanRegressionTest is Test {
         assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), 0);
     }
 
+    function test_writeOffLiquidatedVestingLoan_forfeitsOnlyRemainingCollateralAfterPartialCollection() public {
+        _prepareStake();
+        _fundRewards(_REWARD_AMOUNT);
+
+        skip(_ROUND_DURATION);
+        vm.roll(block.number + 1);
+
+        vm.prank(_alice);
+        _distributor.beginVesting({hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens()});
+
+        skip(_ROUND_DURATION * 2);
+        vm.roll(block.number + 1);
+
+        vm.prank(_alice);
+        _distributor.collectVestedRewards({
+            hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens(), beneficiary: _alice
+        });
+
+        assertEq(_rewardToken.balanceOf(_alice), _REWARD_AMOUNT / 2);
+        assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT / 2);
+
+        _sourceToken.mint({account: address(_revLoans), amount: 1000 ether});
+
+        vm.prank(_alice);
+        (uint256 loanId, uint256 collateralCount) = _distributor.borrowAgainstVesting({
+            hook: address(_stakeToken),
+            tokenIds: _tokenIds(),
+            tokens: _rewardTokens(),
+            sourceToken: address(_sourceToken),
+            minBorrowAmount: 10 ether,
+            prepaidFeePercent: 0,
+            beneficiary: payable(_borrowBeneficiary)
+        });
+
+        assertEq(collateralCount, _REWARD_AMOUNT / 2);
+        assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT / 2);
+        assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT / 2);
+
+        _revLoans.liquidateLoan(loanId);
+
+        assertEq(_distributor.writeOffLiquidatedVestingLoan(loanId), _REWARD_AMOUNT / 2);
+        assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), 0);
+        assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), 0);
+        assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), 0);
+
+        skip(_ROUND_DURATION * _VESTING_ROUNDS);
+        vm.roll(block.number + 1);
+
+        vm.prank(_alice);
+        _distributor.collectVestedRewards({
+            hook: address(_stakeToken), tokenIds: _tokenIds(), tokens: _rewardTokens(), beneficiary: _alice
+        });
+
+        assertEq(_rewardToken.balanceOf(_alice), _REWARD_AMOUNT / 2);
+    }
+
     function test_writeOffLiquidatedVestingLoan_revertsWhileLoanIsLive() public {
         (uint256 loanId,) = _fundAndBorrow();
 
@@ -507,11 +563,7 @@ contract VestingLoanRegressionTest is Test {
     }
 
     function _fundAndBorrow() internal returns (uint256 loanId, uint256 collateralCount) {
-        _stakeToken.mint({account: _alice, amount: 100 ether});
-        vm.prank(_alice);
-        _stakeToken.delegate(_alice);
-
-        vm.roll(block.number + 1);
+        _prepareStake();
 
         _fundRewards(_REWARD_AMOUNT);
 
@@ -530,6 +582,14 @@ contract VestingLoanRegressionTest is Test {
             prepaidFeePercent: 0,
             beneficiary: payable(_borrowBeneficiary)
         });
+    }
+
+    function _prepareStake() internal {
+        _stakeToken.mint({account: _alice, amount: 100 ether});
+        vm.prank(_alice);
+        _stakeToken.delegate(_alice);
+
+        vm.roll(block.number + 1);
     }
 
     function _fundRewards(uint256 amount) internal {
