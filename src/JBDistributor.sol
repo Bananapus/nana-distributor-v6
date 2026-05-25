@@ -1,16 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
+import {IJBPermissioned} from "@bananapus/core-v6/src/interfaces/IJBPermissioned.sol";
+import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
+import {JBPermissionsData} from "@bananapus/core-v6/src/structs/JBPermissionsData.sol";
+import {JBSingleAllowance} from "@bananapus/core-v6/src/structs/JBSingleAllowance.sol";
+import {JBPermissionIds} from "@bananapus/permission-ids-v6/src/JBPermissionIds.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
 
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
+import {IREVLoans} from "./interfaces/IREVLoans.sol";
 import {JBVestingMath} from "./libraries/JBVestingMath.sol";
+import {JBBorrowContext} from "./structs/JBBorrowContext.sol";
+import {JBRevnetLoan} from "./structs/JBRevnetLoan.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBTokenSnapshotData} from "./structs/JBTokenSnapshotData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
+import {JBVestingLoan} from "./structs/JBVestingLoan.sol";
 
 /// @notice Abstract base for reward distributors. Manages round-based distribution of ERC-20 tokens (or native ETH)
 /// to stakers with linear vesting. Each round, a snapshot is taken of the distributable balance, and stakers can
@@ -29,6 +39,15 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when an empty tokenIds array is passed.
     error JBDistributor_EmptyTokenIds(uint256 tokenIdCount);
 
+    /// @notice Thrown when a repaid Revnet loan returned less collateral than it originally borrowed.
+    error JBDistributor_InsufficientRepaidCollateral(uint256 expectedAmount, uint256 actualAmount);
+
+    /// @notice Thrown when the provided repayment amount is less than the amount needed to repay a loan.
+    error JBDistributor_InsufficientRepayAmount(uint256 amount, uint256 requiredAmount);
+
+    /// @notice Thrown when the Revnet loans contract returns a reserved loan ID.
+    error JBDistributor_InvalidVestingLoanId(uint256 loanId);
+
     /// @notice Thrown when the round duration is zero.
     error JBDistributor_InvalidRoundDuration(uint256 roundDuration);
 
@@ -41,11 +60,32 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when there is nothing to distribute for a token in the current round.
     error JBDistributor_NothingToDistribute(address hook, address token, uint256 round);
 
+    /// @notice Thrown when there are no uncollected vesting revnet tokens to collateralize a loan.
+    error JBDistributor_NothingToBorrow(address hook, address token);
+
+    /// @notice Thrown when a loan ID is not tracking distributor-owned vesting collateral.
+    error JBDistributor_NoVestingLoan(uint256 loanId);
+
+    /// @notice Thrown when a reward token is not a revnet token owned by the configured REVOwner.
+    error JBDistributor_NotRevnetRewardToken(address token);
+
     /// @notice Thrown when an ERC-20 reenters a funding balance-delta measurement.
     error JBDistributor_ReentrantTokenTransfer(address token);
 
+    /// @notice Thrown when revnet loan-backed collection has not been configured.
+    error JBDistributor_RevnetLoansNotConfigured();
+
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
+
+    /// @notice Thrown when a function requires exactly one reward token.
+    error JBDistributor_UnexpectedTokenCount(uint256 tokenCount);
+
+    /// @notice Thrown when a token ID has an outstanding loan against its vesting rewards.
+    error JBDistributor_VestingLoanOutstanding(address hook, uint256 tokenId, address token, uint256 loanId);
+
+    /// @notice Thrown when rewards cannot be burned by the JB controller.
+    error JBDistributor_TokenNotBurnable(address token);
 
     /// @notice Thrown when a value cannot fit in a uint208 reward-round field.
     error JBDistributor_Uint208Overflow(uint256 value);
@@ -60,8 +100,12 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice The number of shares that represent 100%.
     uint256 public constant MAX_SHARE = 100_000;
 
-    /// @notice Asset-agnostic burn sink for expired rewards.
-    address public constant BURN_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
+    //*********************************************************************//
+    // ----------------------- internal constants ------------------------ //
+    //*********************************************************************//
+
+    /// @notice Sentinel used before `REV_LOANS.borrowFrom` returns the real loan ID.
+    uint256 internal constant _PENDING_VESTING_LOAN_ID = type(uint256).max;
 
     //*********************************************************************//
     // ---------------- public immutable stored properties --------------- //
@@ -71,8 +115,17 @@ abstract contract JBDistributor is IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     uint48 public immutable override CLAIM_DURATION;
 
+    /// @notice The JB controller used to burn expired or forfeited project-token rewards.
+    IJBController public immutable override CONTROLLER;
+
     /// @notice The duration of each round, specified in seconds.
     uint256 public immutable override ROUND_DURATION;
+
+    /// @notice The Revnet loans contract used to borrow against vested revnet rewards.
+    IREVLoans public immutable override REV_LOANS;
+
+    /// @notice The REVOwner contract that must own a reward token's project to enable loan-backed collection.
+    address public immutable override REV_OWNER;
 
     /// @notice The starting timestamp of the distributor.
     uint256 public immutable override STARTING_TIMESTAMP;
@@ -83,6 +136,14 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
     // --------------------- public stored properties -------------------- //
     //*********************************************************************//
+
+    /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
+    /// @custom:param hook The hook the token ID belongs to.
+    /// @custom:param tokenId The token ID whose vesting rewards are collateralized.
+    /// @custom:param token The reward token used as loan collateral.
+    mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
+        public
+        override activeVestingLoanIdOf;
 
     /// @notice The index within `vestingDataOf` of the latest vest.
     /// @custom:param hook The hook the tokenId belongs to.
@@ -105,6 +166,11 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param token The address of the token that is vesting.
     mapping(address hook => mapping(IERC20 token => uint256 amount)) public override totalVestingAmountOf;
 
+    /// @notice The amount of vesting inventory currently collateralized in Revnet loans.
+    /// @custom:param hook The hook whose stakers own the vesting rewards.
+    /// @custom:param token The reward token used as loan collateral.
+    mapping(address hook => mapping(IERC20 token => uint256 amount)) public override totalLoanedVestingAmountOf;
+
     /// @notice All vesting data of a tokenId for any number of vesting tokens.
     /// @custom:param hook The hook the tokenId belongs to.
     /// @custom:param tokenId The ID of the token to which the vests belong.
@@ -123,6 +189,10 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param hook The hook whose balance to check.
     /// @custom:param token The token to check the balance of.
     mapping(address hook => mapping(IERC20 token => uint256)) internal _balanceOf;
+
+    /// @notice The vesting position collateralized by a Revnet loan.
+    /// @custom:param loanId The Revnet loan NFT ID.
+    mapping(uint256 loanId => JBVestingLoan) internal _vestingLoanOf;
 
     /// @notice The snapshot data of the token information for each round.
     /// @custom:param hook The hook the snapshot is for.
@@ -150,17 +220,41 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
+    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
+    /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
-    constructor(uint256 initialRoundDuration, uint256 initialVestingRounds, uint48 initialClaimDuration) {
+    constructor(
+        address controller,
+        address revLoans,
+        address revOwner,
+        uint256 initialRoundDuration,
+        uint256 initialVestingRounds,
+        uint48 initialClaimDuration
+    ) {
         if (initialRoundDuration == 0) {
             revert JBDistributor_InvalidRoundDuration({roundDuration: initialRoundDuration});
         }
         CLAIM_DURATION = initialClaimDuration;
+        CONTROLLER = IJBController(controller);
+        REV_LOANS = IREVLoans(revLoans);
+        REV_OWNER = revOwner;
         STARTING_TIMESTAMP = block.timestamp;
         ROUND_DURATION = initialRoundDuration;
         VESTING_ROUNDS = initialVestingRounds;
+
+        // Let the trusted Revnet loans contract burn this distributor's project-token rewards as collateral.
+        if (revLoans != address(0)) {
+            uint8[] memory permissionIds = new uint8[](1);
+            permissionIds[0] = JBPermissionIds.BURN_TOKENS;
+            IJBPermissioned(controller).PERMISSIONS()
+                .setPermissionsFor({
+                account: address(this),
+                permissionsData: JBPermissionsData({operator: revLoans, projectId: 0, permissionIds: permissionIds})
+            });
+        }
     }
 
     //*********************************************************************//
@@ -281,13 +375,13 @@ abstract contract JBDistributor is IJBDistributor {
         _ensureSnapshotBlock(currentRound());
     }
 
-    /// @notice Release unvested rewards tied to burned tokens. When an NFT is burned, its pending vesting entries
-    /// become stranded — this function unlocks them and returns them to the hook's distributable pool (they are NOT
-    /// sent to the beneficiary). Anyone can call this for burned tokens.
+    /// @notice Burn unlocked rewards tied to burned tokens. When an NFT is burned, its pending vesting entries become
+    /// stranded — this function unlocks and burns them instead of sending them to the beneficiary. Anyone can call
+    /// this for burned tokens.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
     /// @param tokens The reward tokens to release.
-    /// @param beneficiary Unused for forfeiture — tokens return to the pool. Kept for interface compatibility.
+    /// @param beneficiary Unused for forfeiture — tokens are burned. Kept for interface compatibility.
     function releaseForfeitedRewards(
         address hook,
         uint256[] calldata tokenIds,
@@ -310,7 +404,7 @@ abstract contract JBDistributor is IJBDistributor {
             }
         }
 
-        // Unlock the rewards and send them to the beneficiary.
+        // Unlock the rewards and burn the forfeited amount.
         _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: false});
     }
 
@@ -341,25 +435,7 @@ abstract contract JBDistributor is IJBDistributor {
         override
         returns (uint256 tokenAmount)
     {
-        // Keep a reference to the latest vested index.
-        uint256 vestedIndex = latestVestedIndexOf[hook][tokenId][token];
-
-        // Keep a reference to the number of vesting rounds for the tokenId and token.
-        uint256 numberOfVestingRounds = vestingDataOf[hook][tokenId][token].length;
-
-        while (vestedIndex < numberOfVestingRounds) {
-            // Keep a reference to the vested data being iterated on.
-            JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
-
-            // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
-            tokenAmount += JBVestingMath.unclaimedAmountOf({
-                amount: vesting.amount, shareClaimed: vesting.shareClaimed, maxShare: MAX_SHARE
-            });
-
-            unchecked {
-                ++vestedIndex;
-            }
-        }
+        tokenAmount = _unclaimedVestingAmountOf({hook: hook, tokenId: tokenId, token: token});
     }
 
     /// @notice Calculate how much of a reward token is currently unlocked and ready to be collected for a given
@@ -378,6 +454,9 @@ abstract contract JBDistributor is IJBDistributor {
         override
         returns (uint256 tokenAmount)
     {
+        // A loan keeps this token ID's vesting rewards in collateral custody until the loan is repaid.
+        if (activeVestingLoanIdOf[hook][tokenId][token] != 0) return 0;
+
         // The round that we are in right now.
         uint256 round = currentRound();
 
@@ -431,6 +510,12 @@ abstract contract JBDistributor is IJBDistributor {
         returns (JBTokenSnapshotData memory)
     {
         return _snapshotAtRoundOf[hook][token][round];
+    }
+
+    /// @notice The vesting position collateralized by a Revnet loan.
+    /// @param loanId The Revnet loan NFT ID.
+    function vestingLoanOf(uint256 loanId) external view override returns (JBVestingLoan memory) {
+        return _vestingLoanOf[loanId];
     }
 
     //*********************************************************************//
@@ -528,9 +613,343 @@ abstract contract JBDistributor is IJBDistributor {
         _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true});
     }
 
+    /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
+    /// @dev The distributor keeps custody of the loan NFT. Collection is blocked until repayment restores the
+    /// collateral to the original vesting schedule.
+    /// @param hook The hook whose staker is borrowing against vesting rewards.
+    /// @param tokenIds The single token ID to borrow against.
+    /// @param tokens The single revnet reward token to collateralize.
+    /// @param sourceToken The token to borrow from the revnet.
+    /// @param minBorrowAmount The minimum amount to borrow, denominated in `sourceToken`.
+    /// @param prepaidFeePercent The fee percent to charge upfront.
+    /// @param beneficiary The recipient of the borrowed funds.
+    /// @return loanId The Revnet loan NFT ID held by this distributor.
+    /// @return collateralCount The amount of vesting rewards used as collateral.
+    function borrowAgainstVesting(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address sourceToken,
+        uint256 minBorrowAmount,
+        uint256 prepaidFeePercent,
+        address payable beneficiary
+    )
+        public
+        virtual
+        override
+        returns (uint256 loanId, uint256 collateralCount)
+    {
+        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
+        _requireNotAcceptingToken();
+
+        // Revert if no token IDs are provided.
+        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
+
+        // One distributor-held Revnet loan tracks one token ID so one repayment restores one vesting schedule.
+        if (tokenIds.length != 1) revert JBDistributor_UnexpectedTokenCount({tokenCount: tokenIds.length});
+
+        // One loan collateralizes one revnet reward token.
+        if (tokens.length != 1) revert JBDistributor_UnexpectedTokenCount({tokenCount: tokens.length});
+
+        // Revnet loan-backed collection is disabled unless a trusted loans contract was set at deployment.
+        if (address(REV_LOANS) == address(0)) revert JBDistributor_RevnetLoansNotConfigured();
+
+        // Make sure that all tokens can be claimed by this sender.
+        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
+
+        // Bundle the remaining borrow parameters to keep the loan workflow readable and stack-safe.
+        JBBorrowContext memory ctx = JBBorrowContext({
+            hook: hook,
+            tokenId: tokenIds[0],
+            token: tokens[0],
+            sourceToken: sourceToken,
+            minBorrowAmount: minBorrowAmount,
+            prepaidFeePercent: prepaidFeePercent,
+            beneficiary: beneficiary,
+            revnetId: _revnetIdOf(tokens[0])
+        });
+
+        // Open and track the distributor-owned loan.
+        (loanId, collateralCount) = _borrowAgainstVesting({ctx: ctx, tokenIds: tokenIds, tokens: tokens});
+    }
+
+    /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
+    /// @param loanId The Revnet loan NFT ID to repay.
+    /// @param maxRepayBorrowAmount The maximum source-token amount the caller is willing to repay.
+    /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    function repayVestingLoan(
+        uint256 loanId,
+        uint256 maxRepayBorrowAmount
+    )
+        public
+        payable
+        virtual
+        override
+        returns (uint256 paidOffLoanId)
+    {
+        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
+        _requireNotAcceptingToken();
+
+        // Load the vesting position that this distributor locked when it opened the loan.
+        JBVestingLoan memory vestingLoan = _vestingLoanOf[loanId];
+        if (vestingLoan.hook == address(0)) revert JBDistributor_NoVestingLoan({loanId: loanId});
+
+        // Use Revnet's current fee quote to determine the amount needed to repay this loan now.
+        JBRevnetLoan memory loan = REV_LOANS.loanOf(loanId);
+        uint256 repayBorrowAmount =
+            uint256(loan.amount) + REV_LOANS.determineSourceFeeAmount({loan: loan, amount: loan.amount});
+
+        // Respect the caller's maximum repayment limit.
+        if (repayBorrowAmount > maxRepayBorrowAmount) {
+            revert JBDistributor_InsufficientRepayAmount({
+                amount: maxRepayBorrowAmount, requiredAmount: repayBorrowAmount
+            });
+        }
+
+        // Measure any returned project tokens while excluding any source-token payment effects.
+        uint256 rewardBalanceBefore = vestingLoan.token.balanceOf(address(this));
+
+        // Repay through this distributor because it owns the loan NFT and must receive the returned collateral.
+        paidOffLoanId = _repayLoanSource({
+            loanId: loanId,
+            loan: loan,
+            repayBorrowAmount: repayBorrowAmount,
+            collateralCount: vestingLoan.collateralCount
+        });
+
+        // Restore the collateral to inventory while preserving the original vesting data untouched.
+        _restoreVestingCollateral({
+            loanId: loanId,
+            paidOffLoanId: paidOffLoanId,
+            vestingLoan: vestingLoan,
+            rewardBalanceBefore: rewardBalanceBefore,
+            repayBorrowAmount: repayBorrowAmount
+        });
+    }
+
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
+
+    /// @notice Claim all past reward rounds for the given token IDs and reward tokens into fresh vesting entries.
+    /// @param hook The hook whose stakers are claiming.
+    /// @param tokenIds The token IDs to claim for.
+    /// @param tokens The reward tokens to claim.
+    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal virtual;
+
+    /// @notice Revert unless the caller is authorized to claim each token ID.
+    /// @param hook The hook whose token IDs are being checked.
+    /// @param tokenIds The token IDs to check.
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual;
+
+    /// @notice Open and track a distributor-held Revnet loan against one vesting position.
+    /// @param ctx The borrow context.
+    /// @param tokenIds The single token ID being collateralized.
+    /// @param tokens The single reward token being collateralized.
+    /// @return loanId The Revnet loan NFT ID held by this distributor.
+    /// @return collateralCount The amount of vesting rewards used as collateral.
+    function _borrowAgainstVesting(
+        JBBorrowContext memory ctx,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        internal
+        returns (uint256 loanId, uint256 collateralCount)
+    {
+        // One vesting position cannot be collateralized by two outstanding loans.
+        uint256 activeLoanId = activeVestingLoanIdOf[ctx.hook][ctx.tokenId][ctx.token];
+        if (activeLoanId != 0) {
+            revert JBDistributor_VestingLoanOutstanding({
+                hook: ctx.hook, tokenId: ctx.tokenId, token: address(ctx.token), loanId: activeLoanId
+            });
+        }
+
+        // Bring the claimant current before measuring collateral.
+        _claimPastRewards({hook: ctx.hook, tokenIds: tokenIds, tokens: tokens});
+
+        // Use the remaining uncollected vesting amount as collateral without advancing the vesting schedule.
+        collateralCount = _unclaimedVestingAmountOf({hook: ctx.hook, tokenId: ctx.tokenId, token: ctx.token});
+
+        // A zero-collateral loan would revert in Revnet, but this local error explains why.
+        if (collateralCount == 0) {
+            revert JBDistributor_NothingToBorrow({hook: ctx.hook, token: address(ctx.token)});
+        }
+
+        // The collateralized tokens leave the hook's distributable inventory.
+        _balanceOf[ctx.hook][ctx.token] -= collateralCount;
+        _accountedBalanceOf[ctx.token] -= collateralCount;
+        totalLoanedVestingAmountOf[ctx.hook][ctx.token] += collateralCount;
+
+        // Block same-position reentrancy before the loan contract burns collateral and returns the real loan ID.
+        activeVestingLoanIdOf[ctx.hook][ctx.tokenId][ctx.token] = _PENDING_VESTING_LOAN_ID;
+
+        // Open the Revnet loan with this distributor as the holder whose tokens are burned as collateral.
+        loanId = _openVestingLoan({ctx: ctx, collateralCount: collateralCount});
+        if (loanId == 0 || loanId == _PENDING_VESTING_LOAN_ID) {
+            revert JBDistributor_InvalidVestingLoanId({loanId: loanId});
+        }
+
+        // Track the distributor-held loan so repayment can restore the same vesting position.
+        activeVestingLoanIdOf[ctx.hook][ctx.tokenId][ctx.token] = loanId;
+        _vestingLoanOf[loanId] =
+            JBVestingLoan({hook: ctx.hook, tokenId: ctx.tokenId, token: ctx.token, collateralCount: collateralCount});
+
+        _emitBorrowAgainstVesting({ctx: ctx, loanId: loanId, collateralCount: collateralCount});
+    }
+
+    /// @notice Emit the borrow event for a distributor-owned vesting loan.
+    /// @param ctx The borrow context.
+    /// @param loanId The Revnet loan NFT ID held by this distributor.
+    /// @param collateralCount The amount of vesting rewards used as collateral.
+    function _emitBorrowAgainstVesting(JBBorrowContext memory ctx, uint256 loanId, uint256 collateralCount) internal {
+        emit BorrowAgainstVesting({
+            hook: ctx.hook,
+            tokenId: ctx.tokenId,
+            token: ctx.token,
+            loanId: loanId,
+            revnetId: ctx.revnetId,
+            collateralCount: collateralCount,
+            sourceToken: ctx.sourceToken,
+            minBorrowAmount: ctx.minBorrowAmount,
+            prepaidFeePercent: ctx.prepaidFeePercent,
+            beneficiary: ctx.beneficiary,
+            caller: msg.sender
+        });
+    }
+
+    /// @notice Open a Revnet loan against this distributor's vesting reward inventory.
+    /// @param ctx The borrow context.
+    /// @param collateralCount The amount of vesting rewards used as collateral.
+    /// @return loanId The Revnet loan NFT ID held by this distributor.
+    function _openVestingLoan(JBBorrowContext memory ctx, uint256 collateralCount) internal returns (uint256 loanId) {
+        (loanId,) = REV_LOANS.borrowFrom({
+            revnetId: ctx.revnetId,
+            token: ctx.sourceToken,
+            minBorrowAmount: ctx.minBorrowAmount,
+            collateralCount: collateralCount,
+            beneficiary: ctx.beneficiary,
+            prepaidFeePercent: ctx.prepaidFeePercent,
+            holder: address(this)
+        });
+    }
+
+    /// @notice Repay a Revnet loan with the source token it borrowed.
+    /// @param loanId The Revnet loan NFT ID to repay.
+    /// @param loan The Revnet loan data.
+    /// @param repayBorrowAmount The amount of source token needed to repay the loan.
+    /// @param collateralCount The amount of collateral to return.
+    /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    function _repayLoanSource(
+        uint256 loanId,
+        JBRevnetLoan memory loan,
+        uint256 repayBorrowAmount,
+        uint256 collateralCount
+    )
+        internal
+        returns (uint256 paidOffLoanId)
+    {
+        JBSingleAllowance memory allowance;
+
+        if (loan.sourceToken == JBConstants.NATIVE_TOKEN) {
+            // Native repayments must provide enough ETH for the exact current payoff.
+            if (msg.value < repayBorrowAmount) {
+                revert JBDistributor_InsufficientRepayAmount({amount: msg.value, requiredAmount: repayBorrowAmount});
+            }
+
+            // Repay the loan and route returned collateral back to the distributor.
+            (paidOffLoanId,) = REV_LOANS.repayLoan{value: repayBorrowAmount}({
+                loanId: loanId,
+                maxRepayBorrowAmount: repayBorrowAmount,
+                collateralCountToReturn: collateralCount,
+                beneficiary: payable(address(this)),
+                allowance: allowance
+            });
+
+            // Return any native overpayment to the caller.
+            uint256 refundAmount = msg.value - repayBorrowAmount;
+            if (refundAmount != 0) {
+                (bool success,) = msg.sender.call{value: refundAmount}("");
+                if (!success) {
+                    revert JBDistributor_NativeTransferFailed({beneficiary: msg.sender, amount: refundAmount});
+                }
+            }
+        } else {
+            // ERC-20 repayments must not carry native ETH.
+            if (msg.value != 0) {
+                revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: loan.sourceToken});
+            }
+
+            // Pull the exact current payoff from the caller.
+            IERC20 sourceToken = IERC20(loan.sourceToken);
+            sourceToken.safeTransferFrom({from: msg.sender, to: address(this), value: repayBorrowAmount});
+
+            // Approve only the exact amount needed for this repayment.
+            sourceToken.forceApprove({spender: address(REV_LOANS), value: repayBorrowAmount});
+
+            // Repay the loan and route returned collateral back to the distributor.
+            (paidOffLoanId,) = REV_LOANS.repayLoan({
+                loanId: loanId,
+                maxRepayBorrowAmount: repayBorrowAmount,
+                collateralCountToReturn: collateralCount,
+                beneficiary: payable(address(this)),
+                allowance: allowance
+            });
+
+            // Clear the temporary allowance for tokens that require explicit reset.
+            sourceToken.forceApprove({spender: address(REV_LOANS), value: 0});
+        }
+    }
+
+    /// @notice Restore repaid loan collateral to distributor inventory without changing vesting entries.
+    /// @param loanId The Revnet loan NFT ID that was repaid.
+    /// @param paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    /// @param vestingLoan The vesting position that was collateralized.
+    /// @param rewardBalanceBefore The reward token balance before repayment.
+    /// @param repayBorrowAmount The amount repaid in the loan's source token.
+    function _restoreVestingCollateral(
+        uint256 loanId,
+        uint256 paidOffLoanId,
+        JBVestingLoan memory vestingLoan,
+        uint256 rewardBalanceBefore,
+        uint256 repayBorrowAmount
+    )
+        internal
+    {
+        // Measure the returned collateral and any same-token source-fee overflow.
+        uint256 rewardBalanceAfter = vestingLoan.token.balanceOf(address(this));
+        uint256 restoredAmount = rewardBalanceAfter > rewardBalanceBefore ? rewardBalanceAfter - rewardBalanceBefore : 0;
+
+        // Full repayment must return at least the collateral that was removed from inventory.
+        if (restoredAmount < vestingLoan.collateralCount) {
+            revert JBDistributor_InsufficientRepaidCollateral({
+                expectedAmount: vestingLoan.collateralCount, actualAmount: restoredAmount
+            });
+        }
+
+        // Put the collateral back into the hook's tracked inventory.
+        _balanceOf[vestingLoan.hook][vestingLoan.token] += vestingLoan.collateralCount;
+        _accountedBalanceOf[vestingLoan.token] += vestingLoan.collateralCount;
+        totalLoanedVestingAmountOf[vestingLoan.hook][vestingLoan.token] -= vestingLoan.collateralCount;
+
+        // Clear the lock that prevented this position from being collected while collateralized.
+        delete activeVestingLoanIdOf[vestingLoan.hook][vestingLoan.tokenId][vestingLoan.token];
+        delete _vestingLoanOf[loanId];
+
+        // Return any excess reward tokens created during source-fee payment to the repayer.
+        uint256 excessRewardAmount = restoredAmount - vestingLoan.collateralCount;
+        if (excessRewardAmount != 0) {
+            vestingLoan.token.safeTransfer({to: msg.sender, value: excessRewardAmount});
+        }
+
+        emit RepayVestingLoan({
+            loanId: loanId,
+            paidOffLoanId: paidOffLoanId,
+            token: vestingLoan.token,
+            collateralCount: vestingLoan.collateralCount,
+            repayBorrowAmount: repayBorrowAmount,
+            caller: msg.sender
+        });
+    }
 
     /// @notice Accepts an ERC-20 funding transfer and returns the actual balance delta.
     /// @param token The ERC-20 token to accept.
@@ -596,16 +1015,32 @@ abstract contract JBDistributor is IJBDistributor {
         // Zero-value transfers do not create reward rounds or alter tracked balances.
         if (amount == 0) return;
 
-        // Funding belongs to the round in progress when the distributor receives the rewards.
+        // Add the accepted amount to the current reward ledger.
+        _recordRewardRound({hook: hook, token: token, amount: amount});
+
+        // Keep the base distributor's balance accounting in sync for collection and conservation checks.
+        _balanceOf[hook][token] += amount;
+        _accountedBalanceOf[token] += amount;
+    }
+
+    /// @notice Record rewards as the current round's claimable historical reward pot.
+    /// @param hook The stake source whose stakers receive the rewards.
+    /// @param token The reward token.
+    /// @param amount The amount to add to the current reward round.
+    function _recordRewardRound(address hook, IERC20 token, uint256 amount) internal {
+        // Zero-value rewards do not create reward rounds.
+        if (amount == 0) return;
+
+        // Rewards belong to the round in progress when they enter the ledger.
         uint256 round = currentRound();
 
         // Load the current round's ledger entry for this hook and reward token.
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
 
-        // Every funding source in this contract uses the same immutable claim duration.
+        // Every reward round in this contract uses the same immutable claim duration.
         uint48 claimDeadline = _claimDeadlineFor(round);
 
-        // First funding in a round locks that round's snapshot block and total stake for all later claims.
+        // First value in a round locks that round's snapshot block and total stake.
         if (rewardRound.amount == 0) {
             // Record the exact historical block used for all stake lookups in this round.
             uint256 snapshotBlock = _ensureSnapshotBlockFor(round);
@@ -620,12 +1055,8 @@ abstract contract JBDistributor is IJBDistributor {
             rewardRound.totalStake = _toUint208(_totalStake({hook: hook, blockNumber: snapshotBlock}));
         }
 
-        // Multiple fundings in the same round share the same snapshot and accumulate into one reward pot.
+        // Multiple additions in the same round share the same snapshot and reward pot.
         rewardRound.amount = _toUint208(uint256(rewardRound.amount) + amount);
-
-        // Keep the base distributor's balance accounting in sync for collection and conservation checks.
-        _balanceOf[hook][token] += amount;
-        _accountedBalanceOf[token] += amount;
     }
 
     /// @notice Burn one expired reward round's unclaimed inventory.
@@ -649,14 +1080,14 @@ abstract contract JBDistributor is IJBDistributor {
         // Mark the whole round settled before transferring to close reentrancy-sensitive accounting.
         rewardRound.claimedAmount = rewardRound.amount;
 
-        // Remove the expired remainder from distributor inventory and send it to the burn sink.
+        // Remove the expired remainder from distributor inventory and burn it through the JB controller.
         _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
 
         // Surface the permissionless burn for off-chain accounting.
         emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
     }
 
-    /// @notice Burn reward inventory by transferring it to the burn sink.
+    /// @notice Burn reward inventory using the JB controller.
     /// @param hook The hook whose tracked balance is being burned.
     /// @param token The reward token to burn.
     /// @param amount The amount to burn.
@@ -664,22 +1095,35 @@ abstract contract JBDistributor is IJBDistributor {
         // No-op zero burns so callers can batch empty or already-settled rounds safely.
         if (amount == 0) return;
 
+        // A missing controller means there is no burn authority for any reward token.
+        if (address(CONTROLLER) == address(0)) revert JBDistributor_TokenNotBurnable({token: address(token)});
+
+        // Only JB project tokens can be burned through `JBController.burnTokensOf`.
+        uint256 projectId = CONTROLLER.TOKENS().projectIdOf({token: IJBToken(address(token))});
+
+        // Revert instead of sending unsupported rewards to a burn address.
+        if (projectId == 0) revert JBDistributor_TokenNotBurnable({token: address(token)});
+
         // Remove the burned amount from the hook's reward inventory.
         _balanceOf[hook][token] -= amount;
 
         // Remove the same amount from the global inventory tracked for this token.
         _accountedBalanceOf[token] -= amount;
 
-        // Native rewards cannot be ERC-20-burned, so send them to the shared burn sink.
-        if (address(token) == JBConstants.NATIVE_TOKEN) {
-            // Forward the exact expired native amount to the burn sink.
-            (bool success,) = BURN_ADDRESS.call{value: amount}("");
+        // Burn from this distributor's project-token balance or token credits.
+        CONTROLLER.burnTokensOf({holder: address(this), projectId: projectId, tokenCount: amount, memo: ""});
+    }
 
-            // Revert if the native sink transfer fails, preserving accounting by reverting the whole burn.
-            if (!success) revert JBDistributor_NativeTransferFailed({beneficiary: BURN_ADDRESS, amount: amount});
-        } else {
-            // ERC-20 rewards are removed from usable inventory by sending them to the same burn sink.
-            token.safeTransfer({to: BURN_ADDRESS, value: amount});
+    /// @notice Resolve the revnet project ID for a reward token.
+    /// @param token The reward token to resolve.
+    /// @return revnetId The token's revnet project ID.
+    function _revnetIdOf(IERC20 token) internal view returns (uint256 revnetId) {
+        // The reward token must be registered as a JB project token.
+        revnetId = CONTROLLER.TOKENS().projectIdOf({token: IJBToken(address(token))});
+
+        // The project must be owned by the configured REVOwner.
+        if (revnetId == 0 || CONTROLLER.PROJECTS().ownerOf(revnetId) != REV_OWNER) {
+            revert JBDistributor_NotRevnetRewardToken({token: address(token)});
         }
     }
 
@@ -739,9 +1183,11 @@ abstract contract JBDistributor is IJBDistributor {
             return _snapshotAtRoundOf[hook][token][round];
         }
 
+        // Exclude collateralized vesting inventory because those tokens have been burned into distributor-held loans.
+        uint256 vestingAmount = totalVestingAmountOf[hook][token] - totalLoanedVestingAmountOf[hook][token];
+
         // Take a snapshot using the hook's tracked balance.
-        snapshot =
-            JBTokenSnapshotData({balance: _balanceOf[hook][token], vestingAmount: totalVestingAmountOf[hook][token]});
+        snapshot = JBTokenSnapshotData({balance: _balanceOf[hook][token], vestingAmount: vestingAmount});
 
         // Store the snapshot and mark it initialized.
         _snapshotAtRoundOf[hook][token][round] = snapshot;
@@ -827,9 +1273,10 @@ abstract contract JBDistributor is IJBDistributor {
                     } else {
                         token.safeTransfer({to: beneficiary, value: totalTokenAmount});
                     }
+                } else {
+                    // If forfeiture: remove the unlocked amount from inventory and burn it through the JB controller.
+                    _burnRewardTokens({hook: hook, token: token, amount: totalTokenAmount});
                 }
-                // If forfeiture: _balanceOf is NOT decremented so the forfeited tokens
-                // return to the hook's distributable pool for future rounds.
             }
 
             unchecked {
@@ -855,6 +1302,9 @@ abstract contract JBDistributor is IJBDistributor {
     {
         for (uint256 j; j < tokenIds.length;) {
             uint256 tokenId = tokenIds[j];
+
+            // Loan collateral stays locked until repayment restores it to this distributor.
+            _requireNoActiveVestingLoan({hook: hook, tokenId: tokenId, token: token});
 
             // Keep a reference to the latest vested index.
             uint256 vestedIndex = latestVestedIndexOf[hook][tokenId][token];
@@ -1004,6 +1454,41 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
+    /// @notice The remaining uncollected vesting amount for one token ID and reward token.
+    /// @param hook The hook the token ID belongs to.
+    /// @param tokenId The token ID to check.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The amount still locked or unlocked-but-uncollected.
+    function _unclaimedVestingAmountOf(
+        address hook,
+        uint256 tokenId,
+        IERC20 token
+    )
+        internal
+        view
+        returns (uint256 tokenAmount)
+    {
+        // Keep a reference to the latest fully vested index.
+        uint256 vestedIndex = latestVestedIndexOf[hook][tokenId][token];
+
+        // Keep a reference to the number of vesting entries for the token ID and token.
+        uint256 numberOfVestingRounds = vestingDataOf[hook][tokenId][token].length;
+
+        while (vestedIndex < numberOfVestingRounds) {
+            // Keep a reference to the vested data being iterated on.
+            JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
+
+            // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
+            tokenAmount += JBVestingMath.unclaimedAmountOf({
+                amount: vesting.amount, shareClaimed: vesting.shareClaimed, maxShare: MAX_SHARE
+            });
+
+            unchecked {
+                ++vestedIndex;
+            }
+        }
+    }
+
     /// @notice Check whether an account is authorized to collect vested rewards for the given token ID. For 721
     /// distributors this is ownership; for token distributors this is address-encoding match.
     /// @param hook The hook the token belongs to.
@@ -1018,6 +1503,19 @@ abstract contract JBDistributor is IJBDistributor {
     function _requireNotAcceptingToken() internal view {
         address token = _acceptingToken;
         if (token != address(0)) revert JBDistributor_ReentrantTokenTransfer(token);
+    }
+
+    /// @notice Revert if a token ID's vesting rewards are locked in a distributor-owned loan.
+    /// @param hook The hook the token ID belongs to.
+    /// @param tokenId The token ID to check.
+    /// @param token The reward token to check.
+    function _requireNoActiveVestingLoan(address hook, uint256 tokenId, IERC20 token) internal view {
+        uint256 loanId = activeVestingLoanIdOf[hook][tokenId][token];
+        if (loanId != 0) {
+            revert JBDistributor_VestingLoanOutstanding({
+                hook: hook, tokenId: tokenId, token: address(token), loanId: loanId
+            });
+        }
     }
 
     /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations

@@ -65,7 +65,7 @@ any caller
   -> provide hook, reward token, and expired reward rounds
   -> distributor skips non-expired or already-settled rounds
   -> unclaimed remainder is funded amount minus amount already materialized into vesting
-  -> unclaimed remainder leaves tracked inventory and is sent to the burn sink
+  -> unclaimed remainder leaves tracked inventory and is burned through JBController.burnTokensOf
 ```
 
 ### Collect

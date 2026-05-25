@@ -56,7 +56,9 @@ contract FeeOnTransferFundingTest is Test {
     function setUp() public {
         directory = new _FotDirectory();
         hook = new _Fot721Hook();
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), _ROUND_DURATION, _VESTING_ROUNDS, 0);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), _ROUND_DURATION, _VESTING_ROUNDS, 0
+        );
         fotToken = new MockFeeOnTransferToken({_feeBps: 100}); // 1%
         fotToken.mint(funder, 1000e18);
         vm.prank(funder);

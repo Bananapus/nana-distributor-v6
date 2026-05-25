@@ -66,16 +66,22 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
+    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
+    /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
         IJBDirectory directory,
+        address controller,
+        address revLoans,
+        address revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
         uint48 initialClaimDuration
     )
-        JBDistributor(initialRoundDuration, initialVestingRounds, initialClaimDuration)
+        JBDistributor(controller, revLoans, revOwner, initialRoundDuration, initialVestingRounds, initialClaimDuration)
     {
         DIRECTORY = directory;
     }
@@ -208,7 +214,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenIds The encoded staker addresses to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal {
+    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
@@ -400,7 +406,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @notice Revert unless the caller is authorized to claim each token ID.
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenIds The encoded staker addresses to check.
-    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view {
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
         // Each tokenId is an encoded address, so every requested claim must belong to msg.sender.
         for (uint256 i; i < tokenIds.length;) {
             if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {

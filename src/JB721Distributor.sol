@@ -26,7 +26,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their 721 hook)`.
 /// @dev The stake weight of each NFT is its tier's `votingUnits`. Burned NFTs are excluded from the total stake
-/// calculation and their unvested rewards can be reclaimed via `releaseForfeitedRewards`.
+/// calculation and their unlocked forfeited rewards can be burned via `releaseForfeitedRewards`.
 /// @dev Funded rewards are assigned to the funding round. NFT owners claim historical rounds lazily; all unclaimed
 /// past rewards begin vesting when the current NFT owner claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
@@ -82,16 +82,22 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
+    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
+    /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
         IJBDirectory directory,
+        address controller,
+        address revLoans,
+        address revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
         uint48 initialClaimDuration
     )
-        JBDistributor(initialRoundDuration, initialVestingRounds, initialClaimDuration)
+        JBDistributor(controller, revLoans, revOwner, initialRoundDuration, initialVestingRounds, initialClaimDuration)
     {
         DIRECTORY = directory;
     }
@@ -225,7 +231,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal {
+    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
@@ -548,7 +554,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Revert unless the caller is authorized to claim each NFT token ID.
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to check.
-    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view {
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
         // Each requested NFT must currently belong to msg.sender and appear only once in the batch.
         for (uint256 i; i < tokenIds.length;) {
             uint256 tokenId = tokenIds[i];

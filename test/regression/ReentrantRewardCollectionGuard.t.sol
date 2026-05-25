@@ -131,6 +131,9 @@ contract ReentrantRewardCollectionGuardTest is Test {
     function setUp() public {
         _distributor = new JB721Distributor({
             directory: IJBDirectory(address(new CollectionReentryDirectory())),
+            controller: address(0),
+            revLoans: address(0),
+            revOwner: address(0),
             initialRoundDuration: ROUND_DURATION,
             initialVestingRounds: VESTING_ROUNDS,
             initialClaimDuration: 0

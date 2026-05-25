@@ -191,7 +191,9 @@ contract VotingPowerCapSufficiencyTest is Test {
         store = new VPCapMockStore();
         hook = new VPCapMockHook(store);
         directory = new VPCapMockDirectory();
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
 
         directory.setTerminal(1, address(this), true);
         rewardToken = new VPCapMockToken();

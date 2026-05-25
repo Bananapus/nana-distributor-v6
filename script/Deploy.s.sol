@@ -13,6 +13,9 @@ contract Deploy is Script {
 
         // Configure these values before deploying.
         IJBDirectory directory = IJBDirectory(vm.envAddress("DIRECTORY_ADDRESS"));
+        address controller = vm.envAddress("CONTROLLER_ADDRESS");
+        address revLoans = vm.envOr("REV_LOANS_ADDRESS", address(0));
+        address revOwner = vm.envOr("REV_OWNER_ADDRESS", address(0));
         uint256 roundDuration = vm.envUint("ROUND_DURATION");
         uint256 vestingRounds = vm.envUint("VESTING_ROUNDS");
         uint256 rawClaimDuration = vm.envUint("CLAIM_DURATION");
@@ -25,6 +28,9 @@ contract Deploy is Script {
 
         new JB721Distributor({
             directory: directory,
+            controller: controller,
+            revLoans: revLoans,
+            revOwner: revOwner,
             initialRoundDuration: roundDuration,
             initialVestingRounds: vestingRounds,
             initialClaimDuration: claimDuration

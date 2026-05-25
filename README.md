@@ -41,7 +41,8 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
 5. anyone can burn expired unclaimed reward rounds after their deadline
 6. recipients collect their vested share as the configured vesting schedule unlocks
-7. some unclaimable value can be reclaimed through explicit recovery paths, depending on the distributor type
+7. eligible claimants can borrow against vesting revnet rewards without bypassing the vesting schedule
+8. some unclaimable value can be burned through explicit cleanup paths, depending on the distributor type
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -61,7 +62,13 @@ This repo does not explain why an allocation exists. It only defines how funded 
   same deadline measured from when the funded round first becomes claimable
 - `burnExpiredRewards` is permissionless and only burns the unclaimed remainder; already-materialized vesting entries
   remain claimable on their normal vesting curve
-- `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token path
+- expired and forfeited rewards are burned with `JBController.burnTokensOf`; rewards that are not registered project
+  tokens in the configured controller cannot use those burn paths
+- revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
+  distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
+  collateral immediately
+- `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token
+  forfeiture path
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 
@@ -77,6 +84,7 @@ This repo does not explain why an allocation exists. It only defines how funded 
 1. `test/JBTokenDistributor.t.sol`
 2. `test/JB721Distributor.t.sol`
 3. `test/invariant/JB721DistributorInvariant.t.sol`
+4. `test/regression/VestingLoanRegression.t.sol`
 
 ## Install
 

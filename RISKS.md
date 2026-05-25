@@ -16,6 +16,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs can brick an instance; zero total stake can leave reward rounds unclaimable. | Deployment-time validation and operator runbooks. |
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
 | P1 | Expiry window misconfiguration | Too-short claim durations make otherwise valid unclaimed rewards burnable by anyone. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
+| P1 | Revnet loan custody mismatch | If the claimant receives the loan NFT, they can repay directly and bypass vesting. | The distributor owns loan NFTs, blocks collection while collateralized, and restores collateral only through `repayVestingLoan`. |
 | P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. |
 
 ## 1. Trust Assumptions
@@ -31,7 +32,11 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Expiring rounds burn only unclaimed inventory.** A nonzero immutable claim duration records a deadline for each funded round. After that deadline, anyone can burn the funded amount that has not yet started vesting. Already-materialized vesting entries are unaffected.
 - **Claim duration is deployment-wide.** To keep per-round storage compact, one hook/token/round has one claim deadline. Funding calls do not accept caller-chosen deadlines.
 - **Partial-round claims are linear, not cliff-based.**
-- **Forfeited 721 rewards are recycled, not burned.**
+- **Forfeited 721 rewards are burned through the configured controller.** Burn paths require reward tokens to be
+  project tokens registered in `CONTROLLER.TOKENS()`. Unsupported ERC-20s and native rewards cannot be burned.
+- **Revnet loans are a liquidity path, not a vesting bypass.** Borrowed vesting collateral is removed from active
+  inventory and tracked as `totalLoanedVestingAmountOf`, but the vesting entries are not advanced or deleted. Repayment
+  restores the collateral to the distributor, then the same original vesting schedule determines what can be collected.
 - **Undelegated `IVotes` balances can dilute participation.**
 - **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
   must not consume the owner's per-round voting cap.
@@ -51,6 +56,10 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
 - **Expired burns are permissionless but deadline-gated.** Any caller can clear expired inventory, but non-expired and non-expiring rounds burn zero.
+- **Burn paths depend on the configured JB controller.** `burnExpiredRewards` and `releaseForfeitedRewards` use
+  `JBController.burnTokensOf`; they do not transfer to a burn address.
+- **Loan-backed collection is intentionally locked while a loan is active.** If a token ID's vesting rewards are
+  collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid.
 
 ## 5. Integration Risks
 
@@ -79,15 +88,19 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Unaccounted direct sends are outside the reward ledger.** Plain ETH sent to `receive()` and direct ERC-20 transfers
   that bypass `fund`/`processSplitWith` are not credited into `_balanceOf`. Rebasing or otherwise balance-mutating
   tokens can also desynchronize actual token balances from the distributor's local accounting.
+- **Revnet loan-backed vesting trusts the configured loans contract.** The distributor checks that the reward token is a
+  REVOwner-owned revnet token, grants the loans contract burn permission at deployment, and verifies that repayment
+  returns at least the borrowed collateral. It still relies on that configured loans contract for loan accounting.
 
 ## 6. Invariants To Verify
 
-- `totalVestingAmountOf <= _balanceOf`
+- `totalVestingAmountOf - totalLoanedVestingAmountOf <= _balanceOf`
+- `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
 - round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
 - expired burns reduce tracked balance only by `amount - claimedAmount`
 - `latestVestedIndexOf` advances contiguously
-- burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only recycled through the explicit forfeiture path
+- burned NFTs are excluded from 721 stake (via zero checkpointed votes) and only burned through the explicit forfeiture path
 - only the encoded address can begin vesting or collect from the token distributor
 - only the current NFT owner can begin vesting or collect from the 721 distributor
 - native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
@@ -130,5 +143,5 @@ They share the vesting engine but not the same ownership model.
 
 `releaseForfeitedRewards()` does not immediately free the full nominal amount of every burned token's vesting entry. It
 uses the same linear unlock math as collection, with `ownerClaim = false`, so only the currently unlocked portion is
-removed from `totalVestingAmountOf` and returned to the future distributable pool. Still-locked forfeited portions stay
-accounted as vesting until a later forfeiture call unlocks them.
+removed from `totalVestingAmountOf` and burned through `JBController.burnTokensOf`. Still-locked forfeited portions stay
+accounted as vesting until a later forfeiture call unlocks and burns them.

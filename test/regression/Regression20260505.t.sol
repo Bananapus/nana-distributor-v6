@@ -70,7 +70,8 @@ contract Regression20260505Test is Test {
         directory = new RegressionDirectory();
         reward = new RegressionReward();
         votes = new RegressionVotes();
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1, 3, 0);
+        distributor =
+            new JBTokenDistributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1, 3, 0);
 
         directory.setController(PROJECT_ID, address(this));
 

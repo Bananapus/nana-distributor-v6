@@ -78,7 +78,9 @@ contract AuditFixAE2Test is Test {
 
         directory.setTerminal(PROJECT_ID, address(this), true);
 
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
 
         votesToken.mint(alice, 1000 ether);
         vm.prank(alice);

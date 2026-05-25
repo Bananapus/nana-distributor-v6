@@ -180,8 +180,9 @@ contract RegressionFreshVerificationTest is Test {
         RegressionDirectory directory = new RegressionDirectory();
         directory.setTerminal(address(this));
 
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
         RegressionToken reward = new RegressionToken();
         RegressionVotes stake = new RegressionVotes();
         RegressionVotes victimStake = new RegressionVotes();
@@ -233,8 +234,9 @@ contract RegressionFreshVerificationTest is Test {
         address alice = makeAddr("alice");
 
         RegressionDirectory directory = new RegressionDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();
@@ -276,8 +278,9 @@ contract RegressionFreshVerificationTest is Test {
         address buyer = makeAddr("buyer");
 
         RegressionDirectory directory = new RegressionDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();

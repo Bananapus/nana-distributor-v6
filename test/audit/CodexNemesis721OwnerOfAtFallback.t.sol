@@ -125,8 +125,15 @@ contract CodexNemesis721OwnerOfAtFallbackTest is Test {
     address internal bob = makeAddr("bob");
 
     function test_lateMintedReplacementCannotConsumeSnapshotVotesBeforeRealSnapshotToken() public {
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(new CodexNemesisDirectory())), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(new CodexNemesisDirectory())),
+            address(0),
+            address(0),
+            address(0),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
         CodexNemesis721Store store = new CodexNemesis721Store();
         CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();

@@ -9,6 +9,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - teams funding a distributor from a split or post-mint allocation
 - token holders or NFT holders collecting vested rewards
 - keepers burning expired unclaimed reward rounds
+- revnet reward claimants borrowing against vesting revnet rewards
 - operators configuring round timing and deployment shape
 - auditors reviewing snapshot timing and stake-accounting correctness
 
@@ -79,7 +80,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Postconditions**
 - one fresh vesting entry exists for each claimant/token/reward-token combination with cumulative past rewards, if any
-- expired unclaimed rewards are settled to the burn sink and cannot be claimed later
+- expired unclaimed project-token rewards are burned through `JBController.burnTokensOf` and cannot be claimed later
 
 ## Journey 3: Collect Vested Rewards
 
@@ -121,44 +122,83 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 1. Call `burnExpiredRewards` with the hook, reward token, and expired round numbers.
 2. The distributor computes each round's unclaimed remainder as funded amount minus amount already materialized into vesting.
 3. The unclaimed remainder is removed from tracked distributor inventory.
-4. ERC-20 rewards, and native rewards represented by `NATIVE_TOKEN`, are sent to the shared burn sink.
+4. The distributor asks the configured JB controller to burn the reward token from the distributor with `burnTokensOf`.
 
 **Failure Modes**
 - round is not expired, so nothing burns
 - the whole round has already been claimed into vesting, so nothing burns
 - the distributor was deployed with an unintended claim duration
+- the reward token is not registered as a project token in the configured controller's `TOKENS` registry
 
 **Postconditions**
 - the expired unclaimed remainder is no longer available to late claimants
 - already-materialized vesting entries remain intact
 
-## Journey 5: Recycle Forfeited 721 Rewards
+## Journey 5: Burn Rewards For Burned NFTs
 
 **Actor:** caller using the 721 distributor path.
 
-**Intent:** release rewards tied to burned NFTs back into the future distribution pool.
+**Intent:** call `releaseForfeitedRewards` to burn rewards tied to burned NFTs.
 
 **Preconditions**
 - the distributor type is 721-based
 - the relevant NFTs are burned or otherwise forfeited under the configured rules
 
 **Main Flow**
-1. Call the forfeiture-release path.
+1. Call `releaseForfeitedRewards`.
 2. The distributor reduces current vesting obligations for those forfeited claims.
-3. The value remains in the distributor for future rounds instead of being destroyed.
+3. The released value is removed from distributor inventory.
+4. The distributor asks the configured JB controller to burn the reward token from the distributor with `burnTokensOf`.
 
 **Failure Modes**
 - caller expects the same behavior from the token distributor
-- off-chain systems treat forfeited value as burned instead of recycled
+- off-chain systems treat forfeited value as recycled instead of burned
+- the reward token is not registered as a project token in the configured controller's `TOKENS` registry
 
 **Postconditions**
-- forfeited 721 rewards return to the future distributable pool
+- forfeited 721 rewards are no longer available to the burned NFT
+- forfeited 721 rewards are no longer available to future claimants
+
+## Journey 6: Borrow Against Vesting Revnet Rewards
+
+**Actor:** eligible token staker or NFT owner.
+
+**Intent:** get source-token liquidity from a revnet while waiting for revnet reward tokens to vest.
+
+**Preconditions**
+- the distributor was deployed with a Revnet loans contract and REVOwner
+- the reward token is a JB project token whose project is owned by REVOwner
+- exactly one token ID and one reward token are passed
+- the caller is authorized to claim that token ID
+
+**Main Flow**
+1. Call `borrowAgainstVesting`.
+2. The distributor materializes any unclaimed historical rewards for that token ID and reward token.
+3. The distributor measures the token ID's remaining uncollected vesting amount.
+4. The Revnet loans contract burns that amount from the distributor and opens a loan with the distributor as loan NFT owner.
+5. Collection for that token ID and reward token reverts while the loan is outstanding.
+6. Call `repayVestingLoan` through the distributor.
+7. The distributor repays the Revnet loan, receives the returned collateral, restores it to inventory, and clears the loan lock.
+8. The original vesting entries remain unchanged, so the claimant can collect only the amount unlocked by the same schedule that existed before the loan.
+
+**Failure Modes**
+- caller tries to borrow against more than one token ID or more than one reward token
+- reward token is not a REVOwner-owned revnet token
+- caller tries to repay the loan directly from Revnet loans; the distributor owns the loan NFT
+- Revnet loans returns less collateral than was borrowed
+- caller expects repayment to unlock all collateral immediately
+
+**Postconditions**
+- the loan stays custodied by the distributor until repayment
+- repayment restores the same vesting schedule instead of bypassing it
+- any reward-token excess returned during repayment is sent to the repayer without entering vesting accounting
 
 ## Trust Boundaries
 
 - this repo trusts `JBDirectory` for authenticated split-hook caller checks
 - `JBTokenDistributor` trusts `IVotes` checkpoints
 - `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
+- Revnet loan-backed vesting trusts the configured Revnet loans contract to burn and return collateral correctly
 
 ## Hand-Offs
 

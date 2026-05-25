@@ -128,7 +128,8 @@ contract RegressionFreshRoundVerificationTest is Test {
     function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierVotes() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
-        JB721Distributor distributor = new JB721Distributor(IJBDirectory(address(directory)), 1 days, 1, 0);
+        JB721Distributor distributor =
+            new JB721Distributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1 days, 1, 0);
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFresh721Store store = new RegressionFresh721Store();
         RegressionFresh721Checkpoints checkpoints = new RegressionFresh721Checkpoints();
@@ -169,7 +170,8 @@ contract RegressionFreshRoundVerificationTest is Test {
     function test_zeroVestingRoundsMakesRewardsImmediatelyCollectable() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
-        JBTokenDistributor distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 0, 0);
+        JBTokenDistributor distributor =
+            new JBTokenDistributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1 days, 0, 0);
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFreshVotes votes = new RegressionFreshVotes();
 

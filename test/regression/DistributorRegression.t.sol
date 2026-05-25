@@ -76,8 +76,9 @@ contract DistributorRegressionTest is Test {
         VotingCapMockStore store = new VotingCapMockStore();
         VotingCapMockHook hook = new VotingCapMockHook(store);
         VotingCapMockDirectory directory = new VotingCapMockDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
         VotingCapMockRewardToken rewardToken = new VotingCapMockRewardToken();
 
         address alice = makeAddr("alice");
@@ -147,8 +148,9 @@ contract DistributorRegressionTest is Test {
 
     function test_processSplitWithControllerPathCanCreditUnfundedBalanceAndDrainOtherHook() public {
         RegressionDirectory directory = new RegressionDirectory();
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)), address(0), address(0), address(0), ROUND_DURATION, VESTING_ROUNDS, 0
+        );
         RegressionRewardToken rewardToken = new RegressionRewardToken();
         RegressionVotesToken victimVotes = new RegressionVotesToken();
         RegressionVotesToken attackerVotes = new RegressionVotesToken();

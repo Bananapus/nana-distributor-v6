@@ -116,7 +116,8 @@ contract CodexNemesisPostSnapshotMintTheftTest is Test {
         address bob = makeAddr("bob");
 
         CodexNemesisDirectory directory = new CodexNemesisDirectory();
-        JB721Distributor distributor = new JB721Distributor(IJBDirectory(address(directory)), 1 days, 1, 0);
+        JB721Distributor distributor =
+            new JB721Distributor(IJBDirectory(address(directory)), address(0), address(0), address(0), 1 days, 1, 0);
         CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
         CodexNemesis721Store store = new CodexNemesis721Store();
         CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();
