@@ -6,7 +6,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
@@ -180,8 +183,15 @@ contract RegressionFreshVerificationTest is Test {
         RegressionDirectory directory = new RegressionDirectory();
         directory.setTerminal(address(this));
 
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionToken reward = new RegressionToken();
         RegressionVotes stake = new RegressionVotes();
         RegressionVotes victimStake = new RegressionVotes();
@@ -233,8 +243,15 @@ contract RegressionFreshVerificationTest is Test {
         address alice = makeAddr("alice");
 
         RegressionDirectory directory = new RegressionDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();
@@ -276,8 +293,15 @@ contract RegressionFreshVerificationTest is Test {
         address buyer = makeAddr("buyer");
 
         RegressionDirectory directory = new RegressionDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();
         Regression721Checkpoints checkpoints = new Regression721Checkpoints();

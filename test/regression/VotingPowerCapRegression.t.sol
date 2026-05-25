@@ -8,7 +8,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
@@ -214,7 +217,15 @@ contract VotingPowerCapRegressionTest is Test {
         hook = new VotingCapMockHook(store);
         directory = new VotingCapMockDirectory();
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
         directory.setTerminal(PROJECT_ID, address(this), true);

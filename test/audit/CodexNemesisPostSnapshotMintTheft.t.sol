@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -116,7 +119,15 @@ contract CodexNemesisPostSnapshotMintTheftTest is Test {
         address bob = makeAddr("bob");
 
         CodexNemesisDirectory directory = new CodexNemesisDirectory();
-        JB721Distributor distributor = new JB721Distributor(IJBDirectory(address(directory)), 1 days, 1, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            1,
+            0
+        );
         CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
         CodexNemesis721Store store = new CodexNemesis721Store();
         CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();

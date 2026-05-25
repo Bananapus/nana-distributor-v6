@@ -9,7 +9,10 @@ import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Vo
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
@@ -76,8 +79,15 @@ contract DistributorRegressionTest is Test {
         VotingCapMockStore store = new VotingCapMockStore();
         VotingCapMockHook hook = new VotingCapMockHook(store);
         VotingCapMockDirectory directory = new VotingCapMockDirectory();
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         VotingCapMockRewardToken rewardToken = new VotingCapMockRewardToken();
 
         address alice = makeAddr("alice");
@@ -147,8 +157,15 @@ contract DistributorRegressionTest is Test {
 
     function test_processSplitWithControllerPathCanCreditUnfundedBalanceAndDrainOtherHook() public {
         RegressionDirectory directory = new RegressionDirectory();
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionRewardToken rewardToken = new RegressionRewardToken();
         RegressionVotesToken victimVotes = new RegressionVotesToken();
         RegressionVotesToken attackerVotes = new RegressionVotesToken();

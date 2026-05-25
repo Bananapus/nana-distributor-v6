@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBTokenSnapshotData} from "../structs/JBTokenSnapshotData.sol";
+import {JBVestingLoan} from "../structs/JBVestingLoan.sol";
 
 /// @notice Interface for round-based reward distributors with linear vesting. Stakers claim their share of funded
 /// reward rounds, and claimed amounts vest linearly over a configurable number of rounds.
@@ -12,6 +16,32 @@ interface IJBDistributor {
     //*********************************************************************//
     // -------------------------------- events --------------------------- //
     //*********************************************************************//
+
+    /// @notice Emitted when vesting revnet rewards are used as Revnet loan collateral.
+    /// @param hook The hook whose token ID owns the vesting rewards.
+    /// @param tokenId The token ID whose vesting rewards are collateralized.
+    /// @param token The revnet reward token used as collateral.
+    /// @param loanId The Revnet loan NFT ID held by this distributor.
+    /// @param revnetId The revnet whose project token is collateralized.
+    /// @param collateralCount The amount of vesting rewards used as collateral.
+    /// @param sourceToken The token borrowed from the revnet.
+    /// @param minBorrowAmount The minimum amount to borrow.
+    /// @param prepaidFeePercent The prepaid fee percent used by the loan.
+    /// @param beneficiary The recipient of the borrowed funds.
+    /// @param caller The address that opened the loan.
+    event BorrowAgainstVesting(
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 indexed token,
+        uint256 loanId,
+        uint256 revnetId,
+        uint256 collateralCount,
+        address sourceToken,
+        uint256 minBorrowAmount,
+        uint256 prepaidFeePercent,
+        address beneficiary,
+        address caller
+    );
 
     /// @notice Emitted when a staker begins vesting tokens.
     /// @param hook The hook whose stakers are vesting.
@@ -61,6 +91,38 @@ interface IJBDistributor {
         address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
     );
 
+    /// @notice Emitted when a liquidated distributor-held Revnet loan is written off.
+    /// @param hook The hook whose vesting rewards were collateralized.
+    /// @param tokenId The token ID whose vesting rewards were collateralized.
+    /// @param token The revnet reward token whose collateral was liquidated.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @param collateralCount The amount of vesting rewards forfeited by liquidation.
+    /// @param caller The address that triggered the write-off.
+    event LiquidatedVestingLoanWrittenOff(
+        address indexed hook,
+        uint256 indexed tokenId,
+        IERC20 indexed token,
+        uint256 loanId,
+        uint256 collateralCount,
+        address caller
+    );
+
+    /// @notice Emitted when a distributor-held Revnet loan is repaid and its collateral resumes vesting.
+    /// @param loanId The Revnet loan NFT ID that was repaid.
+    /// @param paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    /// @param token The revnet reward token restored to vesting.
+    /// @param collateralCount The amount of vesting rewards restored.
+    /// @param repayBorrowAmount The amount repaid, denominated in the loan source token.
+    /// @param caller The address that repaid the loan.
+    event RepayVestingLoan(
+        uint256 indexed loanId,
+        uint256 indexed paidOffLoanId,
+        IERC20 indexed token,
+        uint256 collateralCount,
+        uint256 repayBorrowAmount,
+        address caller
+    );
+
     /// @notice Emitted when a snapshot is created for a round.
     /// @param hook The hook the snapshot is for.
     /// @param round The round the snapshot was created for.
@@ -85,8 +147,17 @@ interface IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     function CLAIM_DURATION() external view returns (uint48);
 
+    /// @notice The JB controller used to burn expired or forfeited project-token rewards.
+    function CONTROLLER() external view returns (IJBController);
+
     /// @notice The duration of each round, specified in seconds.
     function ROUND_DURATION() external view returns (uint256);
+
+    /// @notice The Revnet loans contract used to borrow against vesting revnet rewards.
+    function REV_LOANS() external view returns (IREVLoans);
+
+    /// @notice The REVOwner contract that must own a reward token's project to enable loan-backed collection.
+    function REV_OWNER() external view returns (IREVOwner);
 
     /// @notice The starting timestamp of the distributor.
     function STARTING_TIMESTAMP() external view returns (uint256);
@@ -98,6 +169,12 @@ interface IJBDistributor {
     /// @param hook The hook whose balance to check.
     /// @param token The token to check the balance of.
     function balanceOf(address hook, IERC20 token) external view returns (uint256);
+
+    /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
+    /// @param hook The hook the token ID belongs to.
+    /// @param tokenId The token ID whose vesting rewards are collateralized.
+    /// @param token The reward token used as loan collateral.
+    function activeVestingLoanIdOf(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
 
     /// @notice Calculate how much of the token has been claimed for the given tokenId.
     /// @param hook The hook the tokenId belongs to.
@@ -141,6 +218,15 @@ interface IJBDistributor {
     /// @param token The address of the token that is vesting.
     function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
 
+    /// @notice The amount of vesting inventory currently collateralized in Revnet loans.
+    /// @param hook The hook whose loaned vesting amount to check.
+    /// @param token The reward token used as collateral.
+    function totalLoanedVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
+
+    /// @notice The vesting position collateralized by a Revnet loan.
+    /// @param loanId The Revnet loan NFT ID.
+    function vestingLoanOf(uint256 loanId) external view returns (JBVestingLoan memory);
+
     //*********************************************************************//
     // ---------------------------- transactions ------------------------- //
     //*********************************************************************//
@@ -150,6 +236,28 @@ interface IJBDistributor {
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external;
+
+    /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
+    /// @param hook The hook whose staker is borrowing against vesting rewards.
+    /// @param tokenIds The single token ID to borrow against.
+    /// @param tokens The single revnet reward token to collateralize.
+    /// @param sourceToken The token to borrow from the revnet.
+    /// @param minBorrowAmount The minimum amount to borrow, denominated in `sourceToken`.
+    /// @param prepaidFeePercent The fee percent to charge upfront.
+    /// @param beneficiary The recipient of the borrowed funds.
+    /// @return loanId The Revnet loan NFT ID held by this distributor.
+    /// @return collateralCount The amount of vesting rewards used as collateral.
+    function borrowAgainstVesting(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address sourceToken,
+        uint256 minBorrowAmount,
+        uint256 prepaidFeePercent,
+        address payable beneficiary
+    )
+        external
+        returns (uint256 loanId, uint256 collateralCount);
 
     /// @notice Collect vested tokens.
     /// @param hook The hook whose stakers are collecting.
@@ -181,11 +289,23 @@ interface IJBDistributor {
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;
 
-    /// @notice Release vested rewards for burned tokens.
+    /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
+    /// @param loanId The Revnet loan NFT ID to repay.
+    /// @param maxRepayBorrowAmount The maximum amount of source token the caller is willing to repay.
+    /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    function repayVestingLoan(
+        uint256 loanId,
+        uint256 maxRepayBorrowAmount
+    )
+        external
+        payable
+        returns (uint256 paidOffLoanId);
+
+    /// @notice Burn unlocked rewards for burned tokens.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
-    /// @param tokens The addresses of the tokens to release.
-    /// @param beneficiary The recipient of the released tokens.
+    /// @param tokens The addresses of the tokens to burn.
+    /// @param beneficiary Unused for forfeiture.
     function releaseForfeitedRewards(
         address hook,
         uint256[] calldata tokenIds,
@@ -193,4 +313,9 @@ interface IJBDistributor {
         address beneficiary
     )
         external;
+
+    /// @notice Write off a distributor-held Revnet loan after Revnet liquidation permanently destroys its collateral.
+    /// @param loanId The liquidated Revnet loan NFT ID.
+    /// @return collateralCount The amount of vesting rewards forfeited by liquidation.
+    function writeOffLiquidatedVestingLoan(uint256 loanId) external returns (uint256 collateralCount);
 }

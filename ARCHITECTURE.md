@@ -65,7 +65,18 @@ any caller
   -> provide hook, reward token, and expired reward rounds
   -> distributor skips non-expired or already-settled rounds
   -> unclaimed remainder is funded amount minus amount already materialized into vesting
-  -> unclaimed remainder leaves tracked inventory and is sent to the burn sink
+  -> unclaimed remainder leaves tracked inventory and is burned through JBController.burnTokensOf
+```
+
+### Revnet Vesting Loan Write-Off
+
+```text
+any caller
+  -> liquidate an expired distributor-held loan through Revnet loans
+  -> call writeOffLiquidatedVestingLoan with the liquidated loan ID
+  -> distributor confirms Revnet deleted the loan data
+  -> collateralized vesting entries are marked forfeited
+  -> the stale collection lock is cleared while newer vesting entries remain collectable
 ```
 
 ### Collect

@@ -8,9 +8,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
@@ -49,6 +53,38 @@ contract MockRewardToken is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
+}
+
+/// @notice Minimal JBTokens registry for burn tests.
+contract MockJBTokens {
+    mapping(IJBToken token => uint256 projectId) public projectIdOf;
+    mapping(uint256 projectId => IJBToken token) public tokenOf;
+
+    function setToken(uint256 projectId, IJBToken token) external {
+        projectIdOf[token] = projectId;
+        tokenOf[projectId] = token;
+    }
+}
+
+/// @notice Minimal JBController for distributor burn tests.
+contract MockJBController {
+    MockJBTokens public immutable tokens;
+
+    constructor(MockJBTokens tokens_) {
+        tokens = tokens_;
+    }
+
+    function TOKENS() external view returns (MockJBTokens) {
+        return tokens;
+    }
+
+    function burnTokensOf(address holder, uint256 projectId, uint256 tokenCount, string calldata) external {
+        tokens.tokenOf(projectId).burn(holder, tokenCount);
+    }
 }
 
 /// @notice ERC20Votes token for staking (mock for JBERC20).
@@ -68,6 +104,8 @@ contract JBTokenDistributorTest is Test {
     MockDirectory directory;
     MockRewardToken rewardToken;
     MockVotesToken votesToken;
+    MockJBTokens jbTokens;
+    MockJBController burnController;
     JBTokenDistributor distributor;
 
     address alice = makeAddr("alice");
@@ -84,10 +122,21 @@ contract JBTokenDistributorTest is Test {
         directory = new MockDirectory();
         rewardToken = new MockRewardToken();
         votesToken = new MockVotesToken();
+        jbTokens = new MockJBTokens();
+        burnController = new MockJBController(jbTokens);
+        jbTokens.setToken(1, IJBToken(address(rewardToken)));
 
         directory.setTerminal(projectId, terminal, true);
 
-        distributor = new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
 
         // Mint staking tokens.
         votesToken.mint(alice, 700 ether);
@@ -126,8 +175,15 @@ contract JBTokenDistributorTest is Test {
     /// @notice Fund a distributor deployed with a nonzero claim duration for expiry tests.
     function _fundExpiringDistributor(uint256 amount, uint48 claimDuration) internal {
         if (distributor.CLAIM_DURATION() != claimDuration) {
-            distributor =
-                new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+            distributor = new JBTokenDistributor(
+                IJBDirectory(address(directory)),
+                IJBController(address(burnController)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
+                ROUND_DURATION,
+                VESTING_ROUNDS,
+                claimDuration
+            );
         }
 
         vm.roll(block.number + 1);
@@ -318,8 +374,15 @@ contract JBTokenDistributorTest is Test {
         uint48 claimDuration = 50;
         uint256 splitAmount = 100 ether;
 
-        distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
 
         rewardToken.mint(carol, 1);
         vm.startPrank(carol);
@@ -619,7 +682,8 @@ contract JBTokenDistributorTest is Test {
 
         assertEq(burned, 1000 ether, "all unclaimed rewards burn");
         assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "pool balance burns");
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether, "burn sink receives expired rewards");
+        assertEq(rewardToken.balanceOf(address(distributor)), 0, "controller burn removes distributor tokens");
+        assertEq(rewardToken.totalSupply(), 0, "controller burn removes expired rewards from supply");
 
         _beginVestingFor(alice, _singleRewardToken());
 
@@ -628,28 +692,89 @@ contract JBTokenDistributorTest is Test {
         assertEq(aliceClaimed, 0, "late claim gets no expired rewards");
     }
 
-    function test_expiringNativeRewards_permissionlessBurnAfterDeadline() public {
+    function test_expiringNativeRewards_revertsBecauseNativeCannotControllerBurn() public {
         uint48 claimDuration = 10;
         IERC20 nativeToken = IERC20(JBConstants.NATIVE_TOKEN);
 
-        distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
 
         distributor.fund{value: 1 ether}(address(votesToken), nativeToken, 0);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
 
-        uint256 burnSinkBalanceBefore = distributor.BURN_ADDRESS().balance;
+        vm.prank(carol);
+        vm.expectRevert(
+            abi.encodeWithSelector(JBDistributor.JBDistributor_TokenNotBurnable.selector, address(nativeToken))
+        );
+        distributor.burnExpiredRewards({hook: address(votesToken), token: nativeToken, rounds: _singleRound(0)});
+
+        assertEq(distributor.balanceOf(address(votesToken), nativeToken), 1 ether, "native pool balance remains");
+        assertEq(address(distributor).balance, 1 ether, "native inventory remains with distributor");
+    }
+
+    function test_expiringUnregisteredErc20Rewards_revertBecauseControllerCannotBurn() public {
+        uint48 claimDuration = 10;
+        MockRewardToken unregisteredRewardToken = new MockRewardToken();
+
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
+
+        unregisteredRewardToken.mint(address(this), 1 ether);
+        unregisteredRewardToken.approve(address(distributor), 1 ether);
+        distributor.fund(address(votesToken), IERC20(address(unregisteredRewardToken)), 1 ether);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBDistributor.JBDistributor_TokenNotBurnable.selector, address(unregisteredRewardToken)
+            )
+        );
+        distributor.burnExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(unregisteredRewardToken)), rounds: _singleRound(0)
+        });
+
+        assertEq(
+            distributor.balanceOf(address(votesToken), IERC20(address(unregisteredRewardToken))),
+            1 ether,
+            "unsupported pool balance remains"
+        );
+        assertEq(unregisteredRewardToken.balanceOf(address(distributor)), 1 ether, "unsupported inventory remains");
+    }
+
+    function test_expiringRewards_permissionlessBurnUsesController() public {
+        uint48 claimDuration = 10;
+        _fundExpiringDistributor(1 ether, claimDuration);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
 
         vm.prank(carol);
-        uint256 burned =
-            distributor.burnExpiredRewards({hook: address(votesToken), token: nativeToken, rounds: _singleRound(0)});
+        uint256 burned = distributor.burnExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
+        });
 
-        assertEq(burned, 1 ether, "native reward burns");
-        assertEq(distributor.balanceOf(address(votesToken), nativeToken), 0, "native pool balance burns");
-        assertEq(address(distributor).balance, 0, "native inventory leaves distributor");
-        assertEq(distributor.BURN_ADDRESS().balance - burnSinkBalanceBefore, 1 ether, "burn sink receives native");
+        assertEq(burned, 1 ether, "reward burns");
+        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "pool balance burns");
+        assertEq(rewardToken.balanceOf(address(distributor)), 0, "controller burn removes distributor tokens");
+        assertEq(rewardToken.totalSupply(), 0, "controller burn removes rewards from supply");
     }
 
     function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
@@ -678,7 +803,8 @@ contract JBTokenDistributorTest is Test {
             700 ether,
             "vested inventory remains"
         );
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 300 ether, "burn sink receives remainder");
+        assertEq(rewardToken.balanceOf(address(distributor)), 700 ether, "vested inventory remains in distributor");
+        assertEq(rewardToken.totalSupply(), 700 ether, "controller burn removes only remainder from supply");
 
         _beginVestingFor(bob, _singleRewardToken());
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
@@ -703,7 +829,8 @@ contract JBTokenDistributorTest is Test {
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
         assertEq(aliceClaimed, 0, "expired rewards do not vest");
         assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "late claim burns pool");
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether, "late claim sends rewards to burn sink");
+        assertEq(rewardToken.balanceOf(address(distributor)), 0, "late claim burns through controller");
+        assertEq(rewardToken.totalSupply(), 0, "late claim removes expired rewards from supply");
     }
 
     function test_poke_recordsSnapshotBlock() public {

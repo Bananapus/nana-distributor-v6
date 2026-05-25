@@ -10,7 +10,10 @@ import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Vo
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
@@ -175,8 +178,15 @@ contract RegressionAccountingTest is Test {
     }
 
     function test_controllerCannotCreditUndeliveredTokens() public {
-        JBTokenDistributor distributor =
-            new JBTokenDistributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JBTokenDistributor distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionVotesToken votesToken = new RegressionVotesToken();
 
         votesToken.mint(attacker, 10 ether);
@@ -225,8 +235,15 @@ contract RegressionAccountingTest is Test {
     }
 
     function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionStore store = new RegressionStore();
         RegressionCheckpoints checkpoints = new RegressionCheckpoints();
         RegressionHook hook = new RegressionHook(store, checkpoints);
@@ -286,8 +303,15 @@ contract RegressionAccountingTest is Test {
     }
 
     function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
         RegressionStore store = new RegressionStore();
         RegressionCheckpoints checkpoints = new RegressionCheckpoints();
         RegressionHook hook = new RegressionHook(store, checkpoints);

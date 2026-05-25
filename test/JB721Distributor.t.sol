@@ -8,9 +8,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -49,6 +53,10 @@ contract MockToken is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
 }
 
 /// @notice Second reward token.
@@ -57,6 +65,38 @@ contract MockToken2 is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
+}
+
+/// @notice Minimal JBTokens registry for burn tests.
+contract MockJBTokens {
+    mapping(IJBToken token => uint256 projectId) public projectIdOf;
+    mapping(uint256 projectId => IJBToken token) public tokenOf;
+
+    function setToken(uint256 projectId, IJBToken token) external {
+        projectIdOf[token] = projectId;
+        tokenOf[projectId] = token;
+    }
+}
+
+/// @notice Minimal JBController for distributor burn tests.
+contract MockJBController {
+    MockJBTokens public immutable tokens;
+
+    constructor(MockJBTokens tokens_) {
+        tokens = tokens_;
+    }
+
+    function TOKENS() external view returns (MockJBTokens) {
+        return tokens;
+    }
+
+    function burnTokensOf(address holder, uint256 projectId, uint256 tokenCount, string calldata) external {
+        tokens.tokenOf(projectId).burn(holder, tokenCount);
     }
 }
 
@@ -220,6 +260,8 @@ contract JB721DistributorTest is Test {
     MockHook hook;
     MockStore store;
     MockDirectory directory;
+    MockJBTokens jbTokens;
+    MockJBController burnController;
 
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
@@ -241,14 +283,26 @@ contract JB721DistributorTest is Test {
         store = new MockStore();
         hook = new MockHook(store);
         directory = new MockDirectory();
+        jbTokens = new MockJBTokens();
+        burnController = new MockJBController(jbTokens);
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
         directory.setTerminal(PROJECT_ID, address(this), true);
 
         rewardToken = new MockToken();
         rewardToken2 = new MockToken2();
+        jbTokens.setToken(1, IJBToken(address(rewardToken)));
+        jbTokens.setToken(2, IJBToken(address(rewardToken2)));
 
         JB721TierFlags memory flags;
 
@@ -323,8 +377,15 @@ contract JB721DistributorTest is Test {
 
     function _fundExpiringHook(uint256 amount, uint48 claimDuration) internal {
         if (distributor.CLAIM_DURATION() != claimDuration) {
-            distributor =
-                new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+            distributor = new JB721Distributor(
+                IJBDirectory(address(directory)),
+                IJBController(address(burnController)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
+                ROUND_DURATION,
+                VESTING_ROUNDS,
+                claimDuration
+            );
         }
 
         rewardToken.mint(address(this), amount);
@@ -983,8 +1044,11 @@ contract JB721DistributorTest is Test {
 
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, alice);
 
-        // Vesting amount decremented, tokens NOT sent.
+        // Vesting amount decremented, tokens burned instead of sent.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
+        assertEq(rewardToken.totalSupply(), 750 ether);
         assertEq(rewardToken.balanceOf(alice), 0);
     }
 
@@ -1009,6 +1073,9 @@ contract JB721DistributorTest is Test {
         // lockedShare = 50000. claimAmount = mulDiv(250e18, 50000, 100000) = 125e18.
         // totalVestingAmountOf decreased by 125e18.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 125 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 875 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 875 ether);
+        assertEq(rewardToken.totalSupply(), 875 ether);
         assertEq(rewardToken.balanceOf(alice), 0);
     }
 
@@ -1233,7 +1300,8 @@ contract JB721DistributorTest is Test {
 
         assertEq(burned, 1000 ether);
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 0);
+        assertEq(rewardToken.totalSupply(), 0);
 
         vm.prank(alice);
         distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
@@ -1259,7 +1327,8 @@ contract JB721DistributorTest is Test {
 
         assertEq(burned, 750 ether);
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 250 ether);
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 750 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 250 ether);
+        assertEq(rewardToken.totalSupply(), 250 ether);
 
         vm.prank(bob);
         distributor.beginVesting(address(hook), _singleTokenId(2), _singleRewardToken());
@@ -1279,7 +1348,8 @@ contract JB721DistributorTest is Test {
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
         assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(rewardToken.balanceOf(distributor.BURN_ADDRESS()), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 0);
+        assertEq(rewardToken.totalSupply(), 0);
     }
 
     function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
@@ -1917,15 +1987,18 @@ contract JB721DistributorTest is Test {
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
 
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
+        assertEq(rewardToken.totalSupply(), 875 ether);
         // Alice keeps what she collected, no more sent.
         assertEq(rewardToken.balanceOf(alice), 125 ether);
     }
 
     // =====================================================================
-    // Forfeited tokens return to distributable pool
+    // Forfeited tokens burn
     // =====================================================================
 
-    function test_forfeitedTokensReturnToPool() public {
+    function test_forfeitedTokensBurn() public {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
@@ -1941,11 +2014,11 @@ contract JB721DistributorTest is Test {
 
         distributor.releaseForfeitedRewards(address(hook), burnedIds, tokens, address(0));
 
-        // After forfeiture: totalVesting = 500, balance should still be 1000.
+        // After forfeiture: token 1's 250 tokens are burned, token 2's 500 tokens remain vesting.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 500 ether);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
-
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
+        assertEq(rewardToken.totalSupply(), 750 ether);
     }
 
     // =====================================================================
@@ -2304,8 +2377,15 @@ contract JB721DistributorTest is Test {
         uint48 claimDuration = 50;
         uint256 splitAmount = 100 ether;
 
-        distributor =
-            new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, claimDuration);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
 
         rewardToken.mint(charlie, 1);
         vm.startPrank(charlie);

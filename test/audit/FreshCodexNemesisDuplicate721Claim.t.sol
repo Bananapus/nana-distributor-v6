@@ -5,7 +5,10 @@ import {Test} from "forge-std/Test.sol";
 
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -128,8 +131,15 @@ contract FreshCodexNemesisDuplicate721ClaimTest is Test {
         address bob = makeAddr("bob");
         address mallory = makeAddr("mallory");
 
-        JB721Distributor distributor =
-            new JB721Distributor(IJBDirectory(address(new FreshNemesisDirectory())), 1 days, 4, 0);
+        JB721Distributor distributor = new JB721Distributor(
+            IJBDirectory(address(new FreshNemesisDirectory())),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1 days,
+            4,
+            0
+        );
         FreshNemesisRewardToken reward = new FreshNemesisRewardToken();
         FreshNemesis721Store store = new FreshNemesis721Store();
         FreshNemesis721Checkpoints checkpoints = new FreshNemesis721Checkpoints();

@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
@@ -87,7 +90,15 @@ contract RegressionDirectory is IJBDirectory {
 
         function setUp() public {
             directory = new RegressionDirectory();
-            distributor = new JBTokenDistributor(IJBDirectory(address(directory)), 1 days, 1, 0);
+            distributor = new JBTokenDistributor(
+                IJBDirectory(address(directory)),
+                IJBController(address(0)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
+                1 days,
+                1,
+                0
+            );
             reward = new RegressionRewardToken();
             stake = new RegressionStakeToken();
             victimStake = new RegressionStakeToken();

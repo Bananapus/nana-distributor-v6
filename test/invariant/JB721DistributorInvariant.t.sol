@@ -6,8 +6,12 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -20,6 +24,38 @@ contract InvariantToken is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
+}
+
+/// @notice Minimal JBTokens registry for invariant burn tests.
+contract InvariantJBTokens {
+    mapping(IJBToken token => uint256 projectId) public projectIdOf;
+    mapping(uint256 projectId => IJBToken token) public tokenOf;
+
+    function setToken(uint256 projectId, IJBToken token) external {
+        projectIdOf[token] = projectId;
+        tokenOf[projectId] = token;
+    }
+}
+
+/// @notice Minimal JBController for invariant burn tests.
+contract InvariantJBController {
+    InvariantJBTokens public immutable tokens;
+
+    constructor(InvariantJBTokens tokens_) {
+        tokens = tokens_;
+    }
+
+    function TOKENS() external view returns (InvariantJBTokens) {
+        return tokens;
+    }
+
+    function burnTokensOf(address holder, uint256 projectId, uint256 tokenCount, string calldata) external {
+        tokens.tokenOf(projectId).burn(holder, tokenCount);
     }
 }
 
@@ -326,6 +362,8 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
     InvariantMockHook hook;
     InvariantMockStore store;
     InvariantMockDirectory directory;
+    InvariantJBTokens jbTokens;
+    InvariantJBController burnController;
     DistributorHandler handler;
 
     address alice = makeAddr("alice");
@@ -338,10 +376,21 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
         store = new InvariantMockStore();
         hook = new InvariantMockHook(store);
         directory = new InvariantMockDirectory();
+        jbTokens = new InvariantJBTokens();
+        burnController = new InvariantJBController(jbTokens);
 
-        distributor = new JB721Distributor(IJBDirectory(address(directory)), ROUND_DURATION, VESTING_ROUNDS, 0);
+        distributor = new JB721Distributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            0
+        );
 
         rewardToken = new InvariantToken();
+        jbTokens.setToken(1, IJBToken(address(rewardToken)));
 
         JB721TierFlags memory flags;
 
@@ -419,9 +468,8 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
 
     /// @notice INVARIANT: The hook's tracked reward-token balance is fully backed by real tokens.
     /// @dev The handler only funds one hook with one ERC-20 reward token. Owner collections decrement both the
-    ///      distributor's accounting and its actual token balance, while forfeitures return rewards to the same hook
-    ///      balance without transferring them out. The two values should therefore remain exactly equal after every
-    ///      randomized sequence.
+    ///      distributor's accounting and its actual token balance, and forfeitures now do the same by burning the
+    ///      released rewards. The two values should therefore remain exactly equal after every randomized sequence.
     function invariant_trackedBalanceMatchesActualBacking() public view {
         assertEq(
             distributor.balanceOf(address(hook), IERC20(address(rewardToken))),

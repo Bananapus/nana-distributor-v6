@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {IJB721Checkpoints} from "@bananapus/721-hook-v6/src/interfaces/IJB721Checkpoints.sol";
 import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHook.sol";
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
@@ -13,6 +14,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
@@ -26,7 +29,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their 721 hook)`.
 /// @dev The stake weight of each NFT is its tier's `votingUnits`. Burned NFTs are excluded from the total stake
-/// calculation and their unvested rewards can be reclaimed via `releaseForfeitedRewards`.
+/// calculation and their unlocked forfeited rewards can be burned via `releaseForfeitedRewards`.
 /// @dev Funded rewards are assigned to the funding round. NFT owners claim historical rounds lazily; all unclaimed
 /// past rewards begin vesting when the current NFT owner claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
@@ -82,16 +85,22 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
+    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
+    /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
     constructor(
         IJBDirectory directory,
+        IJBController controller,
+        IREVLoans revLoans,
+        IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
         uint48 initialClaimDuration
     )
-        JBDistributor(initialRoundDuration, initialVestingRounds, initialClaimDuration)
+        JBDistributor(controller, revLoans, revOwner, initialRoundDuration, initialVestingRounds, initialClaimDuration)
     {
         DIRECTORY = directory;
     }
@@ -225,7 +234,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal {
+    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
@@ -548,7 +557,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Revert unless the caller is authorized to claim each NFT token ID.
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to check.
-    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view {
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
         // Each requested NFT must currently belong to msg.sender and appear in strictly increasing order.
         for (uint256 i; i < tokenIds.length;) {
             uint256 tokenId = tokenIds[i];

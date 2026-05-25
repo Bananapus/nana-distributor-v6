@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
@@ -107,7 +110,15 @@ contract ReentrantRewardFundingGuard is Test {
         _directory = new ReentrantRewardDirectory();
         _directory.setTerminal(_projectId, _terminal);
 
-        _distributor = new JBTokenDistributor(IJBDirectory(address(_directory)), 1, 1, 0);
+        _distributor = new JBTokenDistributor(
+            IJBDirectory(address(_directory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            1,
+            1,
+            0
+        );
         _reward = new ReentrantRewardToken();
         _stake = new ReentrantVotesToken();
         _victimStake = new ReentrantVotesToken();
