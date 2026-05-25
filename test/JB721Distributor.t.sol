@@ -336,6 +336,13 @@ contract JB721DistributorTest is Test {
         tokenIds[0] = tokenId;
     }
 
+    function _duplicateTokenIds(uint256 tokenId) internal pure returns (uint256[] memory tokenIds) {
+        tokenIds = new uint256[](3);
+        tokenIds[0] = tokenId;
+        tokenIds[1] = tokenId;
+        tokenIds[2] = tokenId;
+    }
+
     function _singleRewardToken() internal view returns (IERC20[] memory tokens) {
         tokens = new IERC20[](1);
         tokens[0] = IERC20(address(rewardToken));
@@ -1292,6 +1299,55 @@ contract JB721DistributorTest is Test {
 
         // The amount proves the claim used Alice's snapshot votes, not Charlie's current zero votes.
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+    }
+
+    function test_beginVesting_duplicateTokenIdsRevertsBeforeConsumingSiblingRewards() public {
+        uint256 siblingTokenId = 3;
+        IERC20[] memory tokens = _singleRewardToken();
+
+        store.setTokenTier(siblingTokenId, 1);
+        hook.setOwner(2, alice);
+        hook.setOwner(siblingTokenId, alice);
+        hook.CHECKPOINTS().setVotesOverride(alice, 400);
+
+        _fundHook(1600 ether);
+        (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
+
+        hook.setHistoricalOwner(1, snapshotBlock, alice);
+        hook.setHistoricalOwner(2, snapshotBlock, alice);
+        hook.setHistoricalOwner(siblingTokenId, snapshotBlock, alice);
+
+        // After the reward snapshot, Alice sells token 1 to Charlie and the sibling NFTs to Bob.
+        hook.setOwner(1, charlie);
+        hook.setOwner(2, bob);
+        hook.setOwner(siblingTokenId, bob);
+
+        _advanceToRound(1);
+
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_DuplicateTokenId.selector, 1));
+        distributor.beginVesting(address(hook), _duplicateTokenIds(1), tokens);
+
+        uint256[] memory bobTokenIds = new uint256[](2);
+        bobTokenIds[0] = 2;
+        bobTokenIds[1] = siblingTokenId;
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), bobTokenIds, tokens);
+
+        // Bob's sibling NFTs keep their full historical claims because Charlie's duplicate batch never consumed them.
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 800 ether);
+        assertEq(distributor.claimedFor(address(hook), siblingTokenId, IERC20(address(rewardToken))), 400 ether);
+    }
+
+    function test_collectVestedRewards_duplicateTokenIdsReverts() public {
+        _fundHook(1000 ether);
+        _advanceToRound(1);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_DuplicateTokenId.selector, 1));
+        distributor.collectVestedRewards(address(hook), _duplicateTokenIds(1), _singleRewardToken(), alice);
     }
 
     function test_lateMintCannotClaimHistoricalRewardRound() public {
