@@ -126,7 +126,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     uint48 public immutable override CLAIM_DURATION;
 
-    /// @notice The JB controller used to burn expired or forfeited project-token rewards.
+    /// @notice The JB controller used to burn forfeited project-token rewards.
     IJBController public immutable override CONTROLLER;
 
     /// @notice The duration of each round, specified in seconds.
@@ -231,7 +231,7 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
-    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param controller The JB controller used to burn forfeited project-token rewards.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
@@ -352,11 +352,12 @@ abstract contract JBDistributor is IJBDistributor {
         _fund({hook: hook, token: token, amount: amount});
     }
 
-    /// @notice Burn unclaimed rewards from expired reward rounds.
-    /// @param hook The hook whose expired rewards should be burned.
-    /// @param token The reward token to burn.
-    /// @param rounds The reward rounds to burn.
-    /// @return amount The total amount burned.
+    /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
+    /// @dev The selector name is kept for compatibility with existing keeper integrations.
+    /// @param hook The hook whose expired rewards should be recycled.
+    /// @param token The reward token to recycle.
+    /// @param rounds The reward rounds to recycle.
+    /// @return amount The total amount recycled.
     function burnExpiredRewards(
         address hook,
         IERC20 token,
@@ -367,13 +368,13 @@ abstract contract JBDistributor is IJBDistributor {
         override
         returns (uint256 amount)
     {
-        // Do not let reward-token callbacks burn inventory during an inbound balance-delta measurement.
+        // Do not let reward-token callbacks recycle inventory during an inbound balance-delta measurement.
         _requireNotAcceptingToken();
 
         // Process every requested round independently so callers can batch keeper work.
         for (uint256 i; i < rounds.length;) {
             // Add this round's expired remainder to the batch total.
-            amount += _burnExpiredRewardRound({hook: hook, token: token, round: rounds[i]});
+            amount += _recycleExpiredRewardRound({hook: hook, token: token, round: rounds[i]});
 
             unchecked {
                 // Safe because the loop is bounded by calldata length.
@@ -1166,32 +1167,47 @@ abstract contract JBDistributor is IJBDistributor {
         rewardRound.amount = _toUint208(uint256(rewardRound.amount) + amount);
     }
 
-    /// @notice Burn one expired reward round's unclaimed inventory.
-    /// @param hook The hook whose expired rewards should be burned.
-    /// @param token The reward token to burn.
-    /// @param round The reward round to burn.
-    /// @return burnAmount The amount burned.
-    function _burnExpiredRewardRound(address hook, IERC20 token, uint256 round) internal returns (uint256 burnAmount) {
+    /// @notice Recycle one expired reward round's unclaimed inventory into the current reward round.
+    /// @param hook The hook whose expired rewards should be recycled.
+    /// @param token The reward token to recycle.
+    /// @param round The reward round to recycle.
+    /// @return recycleAmount The amount recycled.
+    function _recycleExpiredRewardRound(
+        address hook,
+        IERC20 token,
+        uint256 round
+    )
+        internal
+        returns (uint256 recycleAmount)
+    {
         // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][round];
 
         // Ignore rounds that either never expire or have not reached their deadline yet.
         if (!_rewardRoundExpired(rewardRound)) return 0;
 
-        // If prior claims have already materialized the whole round, there is nothing left to burn.
+        // If prior claims have already materialized the whole round, there is nothing left to recycle.
         if (rewardRound.claimedAmount >= rewardRound.amount) return 0;
 
-        // Burn only the unclaimed remainder, preserving amounts that already started vesting.
-        burnAmount = uint256(rewardRound.amount) - uint256(rewardRound.claimedAmount);
+        // Recycle only the unclaimed remainder, preserving amounts that already started vesting.
+        recycleAmount = uint256(rewardRound.amount) - uint256(rewardRound.claimedAmount);
 
-        // Mark the whole round settled before transferring to close reentrancy-sensitive accounting.
+        // Mark the whole round settled before writing the recycled amount into a fresh round.
         rewardRound.claimedAmount = rewardRound.amount;
 
-        // Remove the expired remainder from distributor inventory and burn it through the JB controller.
-        _burnRewardTokens({hook: hook, token: token, amount: burnAmount});
+        // Keep the inventory in the distributor and give the current staker set a new claimable round.
+        uint256 recycledToRound = currentRound();
+        _recordRewardRound({hook: hook, token: token, amount: recycleAmount});
 
-        // Surface the permissionless burn for off-chain accounting.
-        emit ExpiredRewardsBurned({hook: hook, round: round, token: token, amount: burnAmount, caller: msg.sender});
+        // Surface the permissionless recycle for off-chain accounting.
+        emit ExpiredRewardsRecycled({
+            hook: hook,
+            fromRound: round,
+            toRound: recycledToRound,
+            token: token,
+            amount: recycleAmount,
+            caller: msg.sender
+        });
     }
 
     /// @notice Burn reward inventory using the JB controller.
@@ -1323,7 +1339,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Whether a reward round has passed its claim deadline.
     /// @param rewardRound The reward round data.
-    /// @return expired True if unclaimed rewards can be burned.
+    /// @return expired True if unclaimed rewards can be recycled.
     function _rewardRoundExpired(JBRewardRoundData storage rewardRound) internal view returns (bool expired) {
         // Copy the packed deadline into memory so the zero check and timestamp compare use the same value.
         uint48 claimDeadline = rewardRound.claimDeadline;
