@@ -85,7 +85,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param controller The JB controller used to burn forfeited project-token rewards.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
@@ -295,9 +295,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
-                // Expired rounds can no longer be claimed; burn their unclaimed remainder instead.
+                // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.
                 if (_rewardRoundExpired(rewardRound)) {
-                    _burnExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
+                    _recycleExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
                 } else if (rewardRound.totalStake != 0) {
                     // Bundle the fixed round data used by every NFT in the batch.
                     JBVestContext memory vestCtx = JBVestContext({
@@ -314,7 +314,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                     uint256 roundVestingAmount =
                         _claimRewardRoundForTokenIds({ctx: vestCtx, tokenIds: tokenIds, tokenAmounts: tokenAmounts});
 
-                    // Track only the amount that actually started vesting, leaving zero-vote and dust amounts burnable.
+                    // Track only the amount that actually started vesting, leaving zero-vote and dust amounts
+                    // recyclable.
                     if (roundVestingAmount != 0) {
                         rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + roundVestingAmount);
 

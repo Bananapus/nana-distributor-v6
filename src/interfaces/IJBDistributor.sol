@@ -81,14 +81,20 @@ interface IJBDistributor {
     /// @param caller The address that triggered the snapshot recording.
     event RoundSnapshotRecorded(uint256 indexed round, uint256 snapshotBlock, address caller);
 
-    /// @notice Emitted when an expired reward round's unclaimed amount is burned.
-    /// @param hook The hook whose expired rewards were burned.
-    /// @param round The expired reward round.
-    /// @param token The reward token that was burned.
-    /// @param amount The unclaimed reward amount burned.
-    /// @param caller The address that triggered the burn.
-    event ExpiredRewardsBurned(
-        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
+    /// @notice Emitted when an expired reward round's unclaimed amount is recycled into a later reward round.
+    /// @param hook The hook whose expired rewards were recycled.
+    /// @param fromRound The expired reward round.
+    /// @param toRound The reward round receiving the recycled rewards.
+    /// @param token The reward token that was recycled.
+    /// @param amount The unclaimed reward amount recycled.
+    /// @param caller The address that triggered the recycle.
+    event ExpiredRewardsRecycled(
+        address indexed hook,
+        uint256 indexed fromRound,
+        uint256 indexed toRound,
+        IERC20 token,
+        uint256 amount,
+        address caller
     );
 
     /// @notice Emitted when a liquidated distributor-held Revnet loan is written off.
@@ -147,7 +153,7 @@ interface IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     function CLAIM_DURATION() external view returns (uint48);
 
-    /// @notice The JB controller used to burn expired or forfeited project-token rewards.
+    /// @notice The JB controller used to burn forfeited project-token rewards.
     function CONTROLLER() external view returns (IJBController);
 
     /// @notice The duration of each round, specified in seconds.
@@ -279,11 +285,11 @@ interface IJBDistributor {
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
 
-    /// @notice Burn unclaimed rewards from expired reward rounds.
-    /// @param hook The hook whose expired reward rounds should be burned.
-    /// @param token The reward token to burn.
-    /// @param rounds The reward rounds to burn.
-    /// @return amount The total amount burned.
+    /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
+    /// @param hook The hook whose expired reward rounds should be recycled.
+    /// @param token The reward token to recycle.
+    /// @param rounds The reward rounds to recycle.
+    /// @return amount The total amount recycled.
     function burnExpiredRewards(address hook, IERC20 token, uint256[] calldata rounds) external returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).

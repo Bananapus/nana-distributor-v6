@@ -1286,7 +1286,7 @@ contract JB721DistributorTest is Test {
         assertEq(claimedAmount, 250 ether);
     }
 
-    function test_expiringRewards_permissionlessBurnAfterDeadline() public {
+    function test_expiringRewards_permissionlessRecycleAfterDeadline() public {
         uint48 claimDuration = 10;
         _fundExpiringHook(1000 ether, claimDuration);
 
@@ -1294,22 +1294,28 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 burned = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(burned, 1000 ether);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(rewardToken.balanceOf(address(distributor)), 0);
-        assertEq(rewardToken.totalSupply(), 0);
+        assertEq(recycled, 1000 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
 
         vm.prank(alice);
         distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
+
+        _advanceToRound(2);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
     }
 
-    function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
+    function test_expiringRewards_partialClaimThenRecyclesOnlyRemainder() public {
         uint48 claimDuration = 50;
         _fundExpiringHook(1000 ether, claimDuration);
 
@@ -1321,22 +1327,28 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 burned = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(burned, 750 ether);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 250 ether);
-        assertEq(rewardToken.balanceOf(address(distributor)), 250 ether);
-        assertEq(rewardToken.totalSupply(), 250 ether);
+        assertEq(recycled, 750 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
 
         vm.prank(bob);
         distributor.beginVesting(address(hook), _singleTokenId(2), _singleRewardToken());
 
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 0);
+
+        _advanceToRound(2);
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), _singleTokenId(2), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken))), 375 ether);
     }
 
-    function test_expiringRewards_lateClaimBurnsExpiredRound() public {
+    function test_expiringRewards_lateClaimRecyclesExpiredRound() public {
         uint48 claimDuration = 10;
         _fundExpiringHook(1000 ether, claimDuration);
 
@@ -1347,9 +1359,15 @@ contract JB721DistributorTest is Test {
         distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
 
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 0);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(rewardToken.balanceOf(address(distributor)), 0);
-        assertEq(rewardToken.totalSupply(), 0);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
+
+        _advanceToRound(2);
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _singleTokenId(1), _singleRewardToken());
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
     }
 
     function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
