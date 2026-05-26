@@ -8,15 +8,15 @@
 
 `JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
-Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets unclaimed remainders be burned permissionlessly after the configured claim window.
+Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets unclaimed remainders be recycled permissionlessly after the configured claim window.
 
 ## Core Invariants
 
 - snapshot timing must stay coherent
 - tracked funded balance must cover current vesting obligations
 - claim authority must match the distributor type
-- expired burns must only remove unclaimed reward-round inventory
-- 721 forfeiture handling must not over-allocate or burn value accidentally
+- expired recycling must only move unclaimed reward-round inventory
+- 721 forfeiture handling must not over-allocate or recycle value accidentally
 - token and 721 variants must preserve the same core vesting math
 
 ## Modules
@@ -58,14 +58,14 @@ fund 721 distributor
   -> one fresh vesting entry starts at claim time
 ```
 
-### Expired Reward Burn
+### Expired Reward Recycle
 
 ```text
 any caller
   -> provide hook, reward token, and expired reward rounds
   -> distributor skips non-expired or already-settled rounds
   -> unclaimed remainder is funded amount minus amount already materialized into vesting
-  -> unclaimed remainder leaves tracked inventory and is burned through JBController.burnTokensOf
+  -> unclaimed remainder stays in tracked inventory and is recorded into the current reward round
 ```
 
 ### Revnet Vesting Loan Write-Off
@@ -99,7 +99,7 @@ The main variables are snapshot balance, total vesting amount, reward-round clai
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
 - split-funding caller assumptions matter because `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`
-- claim-duration assumptions matter because expired unclaimed rewards are burnable by anyone
+- claim-duration assumptions matter because expired unclaimed rewards are recyclable by anyone
 - 721 and token variants intentionally differ in ownership model and forfeiture behavior
 
 ## Safe Change Guide

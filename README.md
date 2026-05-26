@@ -39,10 +39,10 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
 3. the distributor's immutable claim duration decides whether funded reward rounds expire
 4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
-5. anyone can burn expired unclaimed reward rounds after their deadline
+5. anyone can recycle expired unclaimed reward rounds after their deadline
 6. recipients collect their vested share as the configured vesting schedule unlocks
 7. eligible claimants can borrow against vesting revnet rewards without bypassing the vesting schedule
-8. some unclaimable value can be burned through explicit cleanup paths, depending on the distributor type
+8. some unclaimable value can be recycled through explicit cleanup paths, depending on the distributor type
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -60,10 +60,9 @@ This repo does not explain why an allocation exists. It only defines how funded 
   token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
 - `CLAIM_DURATION` is fixed at deployment; `0` means reward rounds do not expire, otherwise all funding paths use the
   same deadline measured from when the funded round first becomes claimable
-- `burnExpiredRewards` is permissionless and only burns the unclaimed remainder; already-materialized vesting entries
+- `burnExpiredRewards` is permissionless and only recycles the unclaimed remainder; already-materialized vesting entries
   remain claimable on their normal vesting curve
-- expired and forfeited rewards are burned with `JBController.burnTokensOf`; rewards that are not registered project
-  tokens in the configured controller cannot use those burn paths
+- expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
 - revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
   distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
   collateral immediately
@@ -131,7 +130,7 @@ script/
 - operational mistakes often come from funding the wrong asset or underfunding the distributor
 - teams should review claim timing and snapshot assumptions with the same care they review the payout source
 - deployers that set a nonzero claim duration should choose a window long enough for expected claimants, because
-  expired unclaimed rewards can be burned by anyone
+  expired unclaimed rewards can be recycled by anyone
 
 ## For AI Agents
 

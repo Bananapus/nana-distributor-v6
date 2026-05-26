@@ -95,9 +95,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when vesting loans are requested from a distributor with no vesting period.
     error JBDistributor_VestingLoansDisabled();
 
-    /// @notice Thrown when rewards cannot be burned by the JB controller.
-    error JBDistributor_TokenNotBurnable(address token);
-
     /// @notice Thrown when a value cannot fit in a uint208 reward-round field.
     error JBDistributor_Uint208Overflow(uint256 value);
 
@@ -126,7 +123,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     uint48 public immutable override CLAIM_DURATION;
 
-    /// @notice The JB controller used to burn forfeited project-token rewards.
+    /// @notice The JB controller used for token registry lookups and revnet loan permissions.
     IJBController public immutable override CONTROLLER;
 
     /// @notice The duration of each round, specified in seconds.
@@ -231,7 +228,7 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
-    /// @param controller The JB controller used to burn forfeited project-token rewards.
+    /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
@@ -389,13 +386,12 @@ abstract contract JBDistributor is IJBDistributor {
         _ensureSnapshotBlock(currentRound());
     }
 
-    /// @notice Burn unlocked rewards tied to burned tokens. When an NFT is burned, its pending vesting entries become
-    /// stranded — this function unlocks and burns them instead of sending them to the beneficiary. Anyone can call
-    /// this for burned tokens.
+    /// @notice Recycle unlocked rewards tied to burned tokens into the current reward round.
+    /// @dev Anyone can call this for burned tokens.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
-    /// @param tokens The reward tokens to release.
-    /// @param beneficiary Unused for forfeiture — tokens are burned. Kept for interface compatibility.
+    /// @param tokens The reward tokens to recycle.
+    /// @param beneficiary Unused for forfeiture. Kept for interface compatibility.
     function releaseForfeitedRewards(
         address hook,
         uint256[] calldata tokenIds,
@@ -408,7 +404,7 @@ abstract contract JBDistributor is IJBDistributor {
         // Do not let reward-token callbacks mutate vesting state during inbound balance-delta accounting.
         _requireNotAcceptingToken();
 
-        // Make sure that all tokens are burned.
+        // Make sure that all staker token IDs are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
                 revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
@@ -418,7 +414,7 @@ abstract contract JBDistributor is IJBDistributor {
             }
         }
 
-        // Unlock the rewards and burn the forfeited amount.
+        // Unlock the rewards and recycle the forfeited amount.
         _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: false});
     }
 
@@ -1210,33 +1206,6 @@ abstract contract JBDistributor is IJBDistributor {
         });
     }
 
-    /// @notice Burn reward inventory using the JB controller.
-    /// @param hook The hook whose tracked balance is being burned.
-    /// @param token The reward token to burn.
-    /// @param amount The amount to burn.
-    function _burnRewardTokens(address hook, IERC20 token, uint256 amount) internal {
-        // No-op zero burns so callers can batch empty or already-settled rounds safely.
-        if (amount == 0) return;
-
-        // A missing controller means there is no burn authority for any reward token.
-        if (address(CONTROLLER) == address(0)) revert JBDistributor_TokenNotBurnable({token: address(token)});
-
-        // Only JB project tokens can be burned through `JBController.burnTokensOf`.
-        uint256 projectId = CONTROLLER.TOKENS().projectIdOf({token: IJBToken(address(token))});
-
-        // Revert instead of sending unsupported rewards to a burn address.
-        if (projectId == 0) revert JBDistributor_TokenNotBurnable({token: address(token)});
-
-        // Remove the burned amount from the hook's reward inventory.
-        _balanceOf[hook][token] -= amount;
-
-        // Remove the same amount from the global inventory tracked for this token.
-        _accountedBalanceOf[token] -= amount;
-
-        // Burn from this distributor's project-token balance or token credits.
-        CONTROLLER.burnTokensOf({holder: address(this), projectId: projectId, tokenCount: amount, memo: ""});
-    }
-
     /// @notice Resolve the revnet project ID for a reward token.
     /// @param token The reward token to resolve.
     /// @return revnetId The token's revnet project ID.
@@ -1397,8 +1366,11 @@ abstract contract JBDistributor is IJBDistributor {
                         token.safeTransfer({to: beneficiary, value: totalTokenAmount});
                     }
                 } else {
-                    // If forfeiture: remove the unlocked amount from inventory and burn it through the JB controller.
-                    _burnRewardTokens({hook: hook, token: token, amount: totalTokenAmount});
+                    // If forfeiture: keep inventory in the distributor and give the current staker set a fresh round.
+                    _recordRewardRound({hook: hook, token: token, amount: totalTokenAmount});
+                    emit ForfeitedRewardsRecycled({
+                        hook: hook, round: round, token: token, amount: totalTokenAmount, caller: msg.sender
+                    });
                 }
             }
 
@@ -1641,8 +1613,8 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations
-    /// and their unvested rewards can be released via `releaseForfeitedRewards`.
+    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations,
+    /// and their unlocked forfeited rewards can be recycled via `releaseForfeitedRewards`.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The token ID to check.
     /// @return tokenWasBurned True if the token has been burned.
