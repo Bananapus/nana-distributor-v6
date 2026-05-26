@@ -80,6 +80,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
+    /// @notice Thrown when an ERC-20 repayment does not credit the exact amount pulled from the caller.
+    error JBDistributor_UnexpectedRepayAmount(uint256 amount, uint256 expectedAmount);
+
     /// @notice Thrown when a function requires exactly one reward token.
     error JBDistributor_UnexpectedTokenCount(uint256 tokenCount);
 
@@ -920,9 +923,14 @@ abstract contract JBDistributor is IJBDistributor {
                 revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: loan.sourceToken});
             }
 
-            // Pull the exact current payoff from the caller.
+            // Pull the exact current payoff from the caller. Existing distributor inventory must not cover a shortfall.
             IERC20 sourceToken = IERC20(loan.sourceToken);
+            uint256 sourceBalanceBefore = sourceToken.balanceOf(address(this));
             sourceToken.safeTransferFrom({from: msg.sender, to: address(this), value: repayBorrowAmount});
+            uint256 receivedAmount = sourceToken.balanceOf(address(this)) - sourceBalanceBefore;
+            if (receivedAmount != repayBorrowAmount) {
+                revert JBDistributor_UnexpectedRepayAmount({amount: receivedAmount, expectedAmount: repayBorrowAmount});
+            }
 
             // Approve only the exact amount needed for this repayment.
             sourceToken.forceApprove({spender: address(REV_LOANS), value: repayBorrowAmount});

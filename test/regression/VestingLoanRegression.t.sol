@@ -44,6 +44,31 @@ contract VestingLoanERC20 is ERC20 {
     }
 }
 
+contract VestingLoanShortCreditToken is VestingLoanERC20 {
+    uint256 internal constant _BPS_DENOMINATOR = 10_000;
+
+    address public shortCreditRecipient;
+    uint256 public shortCreditBps;
+
+    constructor() VestingLoanERC20("Short Credit Source", "SCS") {}
+
+    function setShortCredit(address recipient, uint256 bps) external {
+        shortCreditRecipient = recipient;
+        shortCreditBps = bps;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        uint256 shortCreditAmount = value * shortCreditBps / _BPS_DENOMINATOR;
+        if (from != address(0) && to == shortCreditRecipient && shortCreditAmount != 0) {
+            super._update({from: from, to: to, value: value - shortCreditAmount});
+            super._update({from: from, to: address(0xdead), value: shortCreditAmount});
+            return;
+        }
+
+        super._update({from: from, to: to, value: value});
+    }
+}
+
 contract VestingLoanVotes is ERC20, ERC20Votes {
     constructor() ERC20("Stake", "STK") EIP712("Stake", "1") {}
 
@@ -499,6 +524,34 @@ contract VestingLoanRegressionTest is Test {
 
         assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), loanId);
         assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
+    }
+
+    function test_repayVestingLoan_revertsIfSourceTokenShortCreditsDistributor() public {
+        VestingLoanShortCreditToken shortCreditSource = new VestingLoanShortCreditToken();
+        _sourceToken = shortCreditSource;
+
+        shortCreditSource.setShortCredit({recipient: address(_distributor), bps: 1000});
+
+        (uint256 loanId,) = _fundAndBorrow();
+
+        shortCreditSource.mint({account: address(_distributor), amount: 1 ether});
+        uint256 distributorSourceBalanceBefore = shortCreditSource.balanceOf(address(_distributor));
+        uint256 revLoansSourceBalanceBefore = shortCreditSource.balanceOf(address(_revLoans));
+
+        shortCreditSource.mint({account: _alice, amount: 10 ether});
+
+        vm.startPrank(_alice);
+        shortCreditSource.approve({spender: address(_distributor), value: 10 ether});
+        vm.expectRevert(
+            abi.encodeWithSelector(JBDistributor.JBDistributor_UnexpectedRepayAmount.selector, 9 ether, 10 ether)
+        );
+        _distributor.repayVestingLoan({loanId: loanId, maxRepayBorrowAmount: 10 ether});
+        vm.stopPrank();
+
+        assertEq(shortCreditSource.balanceOf(address(_distributor)), distributorSourceBalanceBefore);
+        assertEq(shortCreditSource.balanceOf(address(_revLoans)), revLoansSourceBalanceBefore);
+        assertEq(_revLoans.ownerOf(loanId), address(_distributor));
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), loanId);
     }
 
     function test_repayVestingLoan_returnsExcessRewardTokensWithoutAccountingThem() public {
