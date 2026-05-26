@@ -663,7 +663,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(claimedAmount, 700 ether, "claimed amount tracks materialized vesting");
     }
 
-    function test_expiringRewards_permissionlessBurnAfterDeadline() public {
+    function test_expiringRewards_permissionlessRecycleAfterDeadline() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -676,23 +676,37 @@ contract JBTokenDistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(carol);
-        uint256 burned = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(burned, 1000 ether, "all unclaimed rewards burn");
-        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "pool balance burns");
-        assertEq(rewardToken.balanceOf(address(distributor)), 0, "controller burn removes distributor tokens");
-        assertEq(rewardToken.totalSupply(), 0, "controller burn removes expired rewards from supply");
+        assertEq(recycled, 1000 ether, "all unclaimed rewards recycle");
+        assertEq(
+            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 1000 ether, "pool keeps inventory"
+        );
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "recycled inventory stays in distributor");
+        assertEq(rewardToken.totalSupply(), 1000 ether, "recycling does not burn supply");
+
+        (,, uint256 oldClaimedAmount,,) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(oldClaimedAmount, 1000 ether, "old round is settled");
+        assertEq(recycledAmount, 1000 ether, "current round receives recycled rewards");
 
         _beginVestingFor(alice, _singleRewardToken());
 
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 0, "late claim gets no expired rewards");
+        assertEq(aliceClaimed, 0, "same-round claim does not receive recycled rewards yet");
+
+        _advanceToRound(2);
+        _beginVestingFor(alice, _singleRewardToken());
+        aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 700 ether, "recycled rewards are shared with current stakers");
     }
 
-    function test_expiringNativeRewards_revertsBecauseNativeCannotControllerBurn() public {
+    function test_expiringNativeRewards_recycleWithoutControllerBurn() public {
         uint48 claimDuration = 10;
         IERC20 nativeToken = IERC20(JBConstants.NATIVE_TOKEN);
 
@@ -712,16 +726,15 @@ contract JBTokenDistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(carol);
-        vm.expectRevert(
-            abi.encodeWithSelector(JBDistributor.JBDistributor_TokenNotBurnable.selector, address(nativeToken))
-        );
-        distributor.burnExpiredRewards({hook: address(votesToken), token: nativeToken, rounds: _singleRound(0)});
+        uint256 recycled =
+            distributor.burnExpiredRewards({hook: address(votesToken), token: nativeToken, rounds: _singleRound(0)});
 
+        assertEq(recycled, 1 ether, "native rewards recycle");
         assertEq(distributor.balanceOf(address(votesToken), nativeToken), 1 ether, "native pool balance remains");
         assertEq(address(distributor).balance, 1 ether, "native inventory remains with distributor");
     }
 
-    function test_expiringUnregisteredErc20Rewards_revertBecauseControllerCannotBurn() public {
+    function test_expiringUnregisteredErc20Rewards_recycleWithoutControllerBurn() public {
         uint48 claimDuration = 10;
         MockRewardToken unregisteredRewardToken = new MockRewardToken();
 
@@ -742,15 +755,11 @@ contract JBTokenDistributorTest is Test {
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         vm.roll(block.number + 1);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                JBDistributor.JBDistributor_TokenNotBurnable.selector, address(unregisteredRewardToken)
-            )
-        );
-        distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(votesToken), token: IERC20(address(unregisteredRewardToken)), rounds: _singleRound(0)
         });
 
+        assertEq(recycled, 1 ether, "unsupported rewards recycle");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(unregisteredRewardToken))),
             1 ether,
@@ -759,7 +768,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(unregisteredRewardToken.balanceOf(address(distributor)), 1 ether, "unsupported inventory remains");
     }
 
-    function test_expiringRewards_permissionlessBurnUsesController() public {
+    function test_expiringRewards_permissionlessRecycleDoesNotUseController() public {
         uint48 claimDuration = 10;
         _fundExpiringDistributor(1 ether, claimDuration);
 
@@ -767,17 +776,19 @@ contract JBTokenDistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(carol);
-        uint256 burned = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(burned, 1 ether, "reward burns");
-        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "pool balance burns");
-        assertEq(rewardToken.balanceOf(address(distributor)), 0, "controller burn removes distributor tokens");
-        assertEq(rewardToken.totalSupply(), 0, "controller burn removes rewards from supply");
+        assertEq(recycled, 1 ether, "reward recycles");
+        assertEq(
+            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 1 ether, "pool keeps inventory"
+        );
+        assertEq(rewardToken.balanceOf(address(distributor)), 1 ether, "recycled inventory stays in distributor");
+        assertEq(rewardToken.totalSupply(), 1 ether, "recycling does not burn supply");
     }
 
-    function test_expiringRewards_partialClaimThenBurnsOnlyRemainder() public {
+    function test_expiringRewards_partialClaimThenRecyclesOnlyRemainder() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -793,25 +804,30 @@ contract JBTokenDistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(carol);
-        uint256 burned = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.burnExpiredRewards({
             hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(burned, 300 ether, "only Bob's unclaimed share burns");
+        assertEq(recycled, 300 ether, "only Bob's unclaimed share recycles");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
-            700 ether,
-            "vested inventory remains"
+            1000 ether,
+            "vested and recycled inventory remains"
         );
-        assertEq(rewardToken.balanceOf(address(distributor)), 700 ether, "vested inventory remains in distributor");
-        assertEq(rewardToken.totalSupply(), 700 ether, "controller burn removes only remainder from supply");
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "all inventory remains in distributor");
+        assertEq(rewardToken.totalSupply(), 1000 ether, "recycling does not burn supply");
 
         _beginVestingFor(bob, _singleRewardToken());
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
-        assertEq(bobClaimed, 0, "Bob cannot claim after the remainder burns");
+        assertEq(bobClaimed, 0, "Bob cannot claim the expired round directly");
+
+        _advanceToRound(2);
+        _beginVestingFor(bob, _singleRewardToken());
+        bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
+        assertEq(bobClaimed, 90 ether, "Bob receives his share of the recycled round");
     }
 
-    function test_expiringRewards_lateClaimBurnsExpiredRound() public {
+    function test_expiringRewards_lateClaimRecyclesExpiredRound() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -827,10 +843,17 @@ contract JBTokenDistributorTest is Test {
 
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 0, "expired rewards do not vest");
-        assertEq(distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 0, "late claim burns pool");
-        assertEq(rewardToken.balanceOf(address(distributor)), 0, "late claim burns through controller");
-        assertEq(rewardToken.totalSupply(), 0, "late claim removes expired rewards from supply");
+        assertEq(aliceClaimed, 0, "expired rewards do not vest from the expired round");
+        assertEq(
+            distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 1000 ether, "inventory remains"
+        );
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "late claim recycles in place");
+        assertEq(rewardToken.totalSupply(), 1000 ether, "late claim does not burn supply");
+
+        _advanceToRound(2);
+        _beginVestingFor(alice, _singleRewardToken());
+        aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 700 ether, "Alice receives her share of the recycled round");
     }
 
     function test_poke_recordsSnapshotBlock() public {

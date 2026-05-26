@@ -69,7 +69,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param controller The JB controller used to burn expired or forfeited project-token rewards.
+    /// @param controller The JB controller used to burn forfeited project-token rewards.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
@@ -328,9 +328,9 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
-                // Expired rounds can no longer be claimed; burn their unclaimed remainder instead.
+                // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.
                 if (_rewardRoundExpired(rewardRound)) {
-                    _burnExpiredRewardRound({hook: hook, token: token, round: rewardRoundNumber});
+                    _recycleExpiredRewardRound({hook: hook, token: token, round: rewardRoundNumber});
                 } else if (rewardRound.totalStake != 0) {
                     // Use the funding round's snapshot block, not the block at which the staker finally claims.
                     uint256 tokenStakeAmount =
@@ -344,7 +344,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
                         // Ignore floor-rounded zero claims to avoid unnecessary storage writes.
                         if (claimAmount != 0) {
-                            // Track the portion that has started vesting so expiry burns only the remainder.
+                            // Track the portion that has started vesting so expiry recycles only the remainder.
                             rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + claimAmount);
 
                             // Add this round's vested amount to the staker's cumulative claim.
