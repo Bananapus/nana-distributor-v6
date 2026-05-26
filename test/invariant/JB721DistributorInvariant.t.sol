@@ -31,7 +31,7 @@ contract InvariantToken is ERC20 {
     }
 }
 
-/// @notice Minimal JBTokens registry for invariant burn tests.
+/// @notice Minimal JBTokens registry for invariant controller-dependent tests.
 contract InvariantJBTokens {
     mapping(IJBToken token => uint256 projectId) public projectIdOf;
     mapping(uint256 projectId => IJBToken token) public tokenOf;
@@ -42,7 +42,7 @@ contract InvariantJBTokens {
     }
 }
 
-/// @notice Minimal JBController for invariant burn tests.
+/// @notice Minimal JBController for invariant controller-dependent tests.
 contract InvariantJBController {
     InvariantJBTokens public immutable tokens;
 
@@ -468,8 +468,8 @@ contract JB721DistributorInvariantTest is StdInvariant, Test {
 
     /// @notice INVARIANT: The hook's tracked reward-token balance is fully backed by real tokens.
     /// @dev The handler only funds one hook with one ERC-20 reward token. Owner collections decrement both the
-    ///      distributor's accounting and its actual token balance, and forfeitures now do the same by burning the
-    ///      released rewards. The two values should therefore remain exactly equal after every randomized sequence.
+    ///      distributor's accounting and its actual token balance. Forfeitures recycle in place, so both values should
+    ///      remain exactly equal after every randomized sequence.
     function invariant_trackedBalanceMatchesActualBacking() public view {
         assertEq(
             distributor.balanceOf(address(hook), IERC20(address(rewardToken))),

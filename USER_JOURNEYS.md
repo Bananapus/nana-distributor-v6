@@ -8,7 +8,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 - teams funding a distributor from a split or post-mint allocation
 - token holders or NFT holders collecting vested rewards
-- keepers burning expired unclaimed reward rounds
+- keepers recycling expired unclaimed reward rounds
 - revnet reward claimants borrowing against vesting revnet rewards
 - operators configuring round timing and deployment shape
 - auditors reviewing snapshot timing and stake-accounting correctness
@@ -45,12 +45,12 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - wrong asset funded
 - underfunded distributor
 - caller assumes funding alone starts vesting
-- deployer sets too short a claim duration and unclaimed rewards become burnable
+- deployer sets too short a claim duration and unclaimed rewards become recyclable
 
 **Postconditions**
 - rewards are reserved for the funding round's historical stakers or NFT owners
 - current-round rewards become claimable only after a later round starts
-- expiring reward rounds retain a burnable unclaimed remainder after their claim deadline
+- expiring reward rounds retain a recyclable unclaimed remainder after their claim deadline
 
 ## Journey 2: Start A Vesting Round
 
@@ -68,7 +68,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 1. Call `beginVesting`.
 2. Claim past funded reward rounds through `currentRound - 1` into a fresh vesting entry.
 3. The distributor uses each funded round's recorded snapshot block and total stake.
-4. If a past round has expired, the claim transaction burns its unclaimed remainder instead of vesting it.
+4. If a past round has expired, the claim transaction recycles its unclaimed remainder instead of vesting it.
 5. Vesting entries become claimable over the configured schedule.
 
 **Snapshot timing:** Funding records the funding round's snapshot block and total stake or `IVotes` supply. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
@@ -80,7 +80,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Postconditions**
 - one fresh vesting entry exists for each claimant/token/reward-token combination with cumulative past rewards, if any
-- expired unclaimed project-token rewards are burned through `JBController.burnTokensOf` and cannot be claimed later
+- expired unclaimed rewards recycle into the current reward round and cannot be claimed from the expired round later
 
 ## Journey 3: Collect Vested Rewards
 
@@ -107,11 +107,11 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - vested rewards move to the claimant
 - any newly materialized past rewards begin vesting from this claim round
 
-## Journey 4: Burn Expired Rewards
+## Journey 4: Recycle Expired Rewards
 
 **Actor:** any caller.
 
-**Intent:** clear expired unclaimed reward inventory from the distributor.
+**Intent:** move expired unclaimed reward inventory into the current reward round.
 
 **Preconditions**
 - the distributor was deployed with a nonzero claim duration
@@ -121,24 +121,24 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Main Flow**
 1. Call `burnExpiredRewards` with the hook, reward token, and expired round numbers.
 2. The distributor computes each round's unclaimed remainder as funded amount minus amount already materialized into vesting.
-3. The unclaimed remainder is removed from tracked distributor inventory.
-4. The distributor asks the configured JB controller to burn the reward token from the distributor with `burnTokensOf`.
+3. The expired round is marked settled.
+4. The unclaimed remainder is recorded into the current reward round without leaving distributor inventory.
 
 **Failure Modes**
-- round is not expired, so nothing burns
-- the whole round has already been claimed into vesting, so nothing burns
+- round is not expired, so nothing recycles
+- the whole round has already been claimed into vesting, so nothing recycles
 - the distributor was deployed with an unintended claim duration
-- the reward token is not registered as a project token in the configured controller's `TOKENS` registry
 
 **Postconditions**
-- the expired unclaimed remainder is no longer available to late claimants
+- the expired unclaimed remainder is no longer available through the expired round
+- the recycled amount becomes claimable from the current reward round after a later round starts
 - already-materialized vesting entries remain intact
 
-## Journey 5: Burn Rewards For Burned NFTs
+## Journey 5: Recycle Rewards For Burned NFTs
 
 **Actor:** caller using the 721 distributor path.
 
-**Intent:** call `releaseForfeitedRewards` to burn rewards tied to burned NFTs.
+**Intent:** call `releaseForfeitedRewards` to recycle rewards tied to burned NFTs.
 
 **Preconditions**
 - the distributor type is 721-based
@@ -147,17 +147,16 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Main Flow**
 1. Call `releaseForfeitedRewards`.
 2. The distributor reduces current vesting obligations for those forfeited claims.
-3. The released value is removed from distributor inventory.
-4. The distributor asks the configured JB controller to burn the reward token from the distributor with `burnTokensOf`.
+3. The released value remains in distributor inventory.
+4. The released value is recorded into the current reward round.
 
 **Failure Modes**
 - caller expects the same behavior from the token distributor
-- off-chain systems treat forfeited value as recycled instead of burned
-- the reward token is not registered as a project token in the configured controller's `TOKENS` registry
+- off-chain systems treat forfeited value as destroyed instead of recycled
 
 **Postconditions**
 - forfeited 721 rewards are no longer available to the burned NFT
-- forfeited 721 rewards are no longer available to future claimants
+- forfeited 721 rewards become available through the current reward round after a later round starts
 
 ## Journey 6: Borrow Against Vesting Revnet Rewards
 

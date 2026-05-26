@@ -29,7 +29,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their 721 hook)`.
 /// @dev The stake weight of each NFT is its tier's `votingUnits`. Burned NFTs are excluded from the total stake
-/// calculation and their unlocked forfeited rewards can be burned via `releaseForfeitedRewards`.
+/// calculation and their unlocked forfeited rewards can be recycled via `releaseForfeitedRewards`.
 /// @dev Funded rewards are assigned to the funding round. NFT owners claim historical rounds lazily; all unclaimed
 /// past rewards begin vesting when the current NFT owner claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
@@ -85,7 +85,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param controller The JB controller used to burn forfeited project-token rewards.
+    /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
