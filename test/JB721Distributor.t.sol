@@ -72,7 +72,7 @@ contract MockToken2 is ERC20 {
     }
 }
 
-/// @notice Minimal JBTokens registry for burn tests.
+/// @notice Minimal JBTokens registry for controller-dependent tests.
 contract MockJBTokens {
     mapping(IJBToken token => uint256 projectId) public projectIdOf;
     mapping(uint256 projectId => IJBToken token) public tokenOf;
@@ -83,7 +83,7 @@ contract MockJBTokens {
     }
 }
 
-/// @notice Minimal JBController for distributor burn tests.
+/// @notice Minimal JBController for distributor controller-dependent tests.
 contract MockJBController {
     MockJBTokens public immutable tokens;
 
@@ -1044,12 +1044,16 @@ contract JB721DistributorTest is Test {
 
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, alice);
 
-        // Vesting amount decremented, tokens burned instead of sent.
+        // Vesting amount is removed from the burned token and recycled instead of sent.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
-        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
-        assertEq(rewardToken.totalSupply(), 750 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
         assertEq(rewardToken.balanceOf(alice), 0);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 250 ether);
     }
 
     function test_releaseForfeitedRewards_partialVesting() public {
@@ -1073,10 +1077,14 @@ contract JB721DistributorTest is Test {
         // lockedShare = 50000. claimAmount = mulDiv(250e18, 50000, 100000) = 125e18.
         // totalVestingAmountOf decreased by 125e18.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 125 ether);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 875 ether);
-        assertEq(rewardToken.balanceOf(address(distributor)), 875 ether);
-        assertEq(rewardToken.totalSupply(), 875 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
         assertEq(rewardToken.balanceOf(alice), 0);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 125 ether);
     }
 
     /// @notice Burned token IDs are skipped during beginVesting — no overbooking.
@@ -2005,18 +2013,22 @@ contract JB721DistributorTest is Test {
         distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
 
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
-        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
-        assertEq(rewardToken.totalSupply(), 875 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 875 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 875 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
         // Alice keeps what she collected, no more sent.
         assertEq(rewardToken.balanceOf(alice), 125 ether);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 125 ether);
     }
 
     // =====================================================================
-    // Forfeited tokens burn
+    // Forfeited tokens recycle
     // =====================================================================
 
-    function test_forfeitedTokensBurn() public {
+    function test_forfeitedTokensRecycle() public {
         _fundHook(1000 ether);
         _beginVestingBoth();
 
@@ -2032,11 +2044,15 @@ contract JB721DistributorTest is Test {
 
         distributor.releaseForfeitedRewards(address(hook), burnedIds, tokens, address(0));
 
-        // After forfeiture: token 1's 250 tokens are burned, token 2's 500 tokens remain vesting.
+        // After forfeiture: token 1's 250 tokens are recycled, token 2's 500 tokens remain vesting.
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 500 ether);
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 750 ether);
-        assertEq(rewardToken.balanceOf(address(distributor)), 750 ether);
-        assertEq(rewardToken.totalSupply(), 750 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether);
+        assertEq(rewardToken.totalSupply(), 1000 ether);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 250 ether);
     }
 
     // =====================================================================

@@ -97,6 +97,16 @@ interface IJBDistributor {
         address caller
     );
 
+    /// @notice Emitted when unlocked rewards from burned tokens are recycled into the current reward round.
+    /// @param hook The hook whose forfeited rewards were recycled.
+    /// @param round The reward round receiving the recycled rewards.
+    /// @param token The reward token that was recycled.
+    /// @param amount The forfeited reward amount recycled.
+    /// @param caller The address that triggered the recycle.
+    event ForfeitedRewardsRecycled(
+        address indexed hook, uint256 indexed round, IERC20 indexed token, uint256 amount, address caller
+    );
+
     /// @notice Emitted when a liquidated distributor-held Revnet loan is written off.
     /// @param hook The hook whose vesting rewards were collateralized.
     /// @param tokenId The token ID whose vesting rewards were collateralized.
@@ -153,7 +163,7 @@ interface IJBDistributor {
     /// @dev A zero duration means reward rounds do not expire.
     function CLAIM_DURATION() external view returns (uint48);
 
-    /// @notice The JB controller used to burn forfeited project-token rewards.
+    /// @notice The JB controller used for token registry lookups and revnet loan permissions.
     function CONTROLLER() external view returns (IJBController);
 
     /// @notice The duration of each round, specified in seconds.
@@ -307,10 +317,10 @@ interface IJBDistributor {
         payable
         returns (uint256 paidOffLoanId);
 
-    /// @notice Burn unlocked rewards for burned tokens.
+    /// @notice Recycle unlocked rewards from burned tokens into the current reward round.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
-    /// @param tokens The addresses of the tokens to burn.
+    /// @param tokens The reward tokens to recycle.
     /// @param beneficiary Unused for forfeiture.
     function releaseForfeitedRewards(
         address hook,

@@ -59,7 +59,7 @@ contract MockRewardToken is ERC20 {
     }
 }
 
-/// @notice Minimal JBTokens registry for burn tests.
+/// @notice Minimal JBTokens registry for controller-dependent tests.
 contract MockJBTokens {
     mapping(IJBToken token => uint256 projectId) public projectIdOf;
     mapping(uint256 projectId => IJBToken token) public tokenOf;
@@ -70,7 +70,7 @@ contract MockJBTokens {
     }
 }
 
-/// @notice Minimal JBController for distributor burn tests.
+/// @notice Minimal JBController for distributor controller-dependent tests.
 contract MockJBController {
     MockJBTokens public immutable tokens;
 
@@ -766,6 +766,66 @@ contract JBTokenDistributorTest is Test {
             "unsupported pool balance remains"
         );
         assertEq(unregisteredRewardToken.balanceOf(address(distributor)), 1 ether, "unsupported inventory remains");
+    }
+
+    function test_expiringUnregisteredErc20Rewards_lateClaimRecyclesAndAdvancesCursor() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
+
+        uint48 claimDuration = 10;
+        MockRewardToken unregisteredRewardToken = new MockRewardToken();
+
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(directory)),
+            IJBController(address(burnController)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
+
+        unregisteredRewardToken.mint(address(this), 1);
+        unregisteredRewardToken.approve(address(distributor), 1);
+        distributor.fund(address(votesToken), IERC20(address(unregisteredRewardToken)), 1);
+
+        vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        vm.roll(block.number + 1);
+
+        unregisteredRewardToken.mint(address(this), 1_000_000 ether);
+        unregisteredRewardToken.approve(address(distributor), 1_000_000 ether);
+        distributor.fund(address(votesToken), IERC20(address(unregisteredRewardToken)), 1_000_000 ether);
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(unregisteredRewardToken));
+
+        _beginVestingFor(alice, tokens);
+
+        assertEq(
+            distributor.nextClaimRoundOf(
+                address(votesToken), _tokenId(alice), IERC20(address(unregisteredRewardToken))
+            ),
+            1,
+            "expired dust round does not pin the cursor"
+        );
+
+        (,, uint256 oldClaimedAmount,,) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(unregisteredRewardToken)), 0);
+        (uint256 recycledRoundAmount,,,,) =
+            distributor.rewardRoundOf(address(votesToken), IERC20(address(unregisteredRewardToken)), 1);
+        assertEq(oldClaimedAmount, 1, "expired dust is settled");
+        assertEq(recycledRoundAmount, 1_000_000 ether + 1, "dust recycles into the active reward round");
+
+        _advanceToRound(2);
+        _beginVestingFor(alice, tokens);
+
+        assertEq(
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(unregisteredRewardToken))),
+            700_000 ether,
+            "later rewards remain claimable"
+        );
     }
 
     function test_expiringRewards_permissionlessRecycleDoesNotUseController() public {

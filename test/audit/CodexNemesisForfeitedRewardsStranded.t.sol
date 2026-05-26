@@ -147,7 +147,7 @@ contract CodexNemesis721Hook {
     }
 }
 
-contract CodexNemesisForfeitedRewardsBurnedTest is Test {
+contract CodexNemesisForfeitedRewardsRecycledTest is Test {
     uint256 internal constant ROUND_DURATION = 1 days;
     uint256 internal constant VESTING_ROUNDS = 1;
 
@@ -155,7 +155,7 @@ contract CodexNemesisForfeitedRewardsBurnedTest is Test {
     address internal bob = makeAddr("bob");
     address internal carol = makeAddr("carol");
 
-    function test_forfeitedRewardsAreBurnedInsteadOfStranded() public {
+    function test_forfeitedRewardsAreRecycledInsteadOfStranded() public {
         CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
         CodexNemesisJBTokens jbTokens = new CodexNemesisJBTokens();
         jbTokens.setToken(1, IJBToken(address(reward)));
@@ -204,15 +204,15 @@ contract CodexNemesisForfeitedRewardsBurnedTest is Test {
         vm.prank(carol);
         distributor.collectVestedRewards(address(hook), _ids(3), tokens, carol);
 
-        assertEq(distributor.balanceOf(address(hook), IERC20(address(reward))), 0);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(reward))), 100 ether);
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(reward))), 0);
-        assertEq(reward.balanceOf(address(distributor)), 0);
-        assertEq(reward.totalSupply(), 200 ether);
+        assertEq(reward.balanceOf(address(distributor)), 100 ether);
+        assertEq(reward.totalSupply(), 300 ether);
         (uint256 roundAmount,, uint256 roundClaimedAmount,, uint256 roundTotalStake) =
             distributor.rewardRoundOf(address(hook), IERC20(address(reward)), 2);
-        assertEq(roundAmount, 0);
+        assertEq(roundAmount, 100 ether);
         assertEq(roundClaimedAmount, 0);
-        assertEq(roundTotalStake, 0);
+        assertEq(roundTotalStake, 200);
 
         vm.warp(distributor.roundStartTimestamp(3) + 1);
         vm.roll(block.number + 1);
@@ -221,6 +221,16 @@ contract CodexNemesisForfeitedRewardsBurnedTest is Test {
         distributor.beginVesting(address(hook), _ids(2), tokens);
         vm.prank(carol);
         distributor.beginVesting(address(hook), _ids(3), tokens);
+
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(reward))), 100 ether);
+
+        vm.warp(distributor.roundStartTimestamp(4) + 1);
+        vm.roll(block.number + 1);
+
+        vm.prank(bob);
+        distributor.collectVestedRewards(address(hook), _ids(2), tokens, bob);
+        vm.prank(carol);
+        distributor.collectVestedRewards(address(hook), _ids(3), tokens, carol);
 
         assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(reward))), 0);
         assertEq(distributor.claimedFor(address(hook), 2, IERC20(address(reward))), 0);

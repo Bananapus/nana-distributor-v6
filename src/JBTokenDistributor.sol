@@ -69,7 +69,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
 
     /// @param directory The JB directory used to verify terminal/controller callers.
-    /// @param controller The JB controller used to burn forfeited project-token rewards.
+    /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
     /// @param initialRoundDuration The duration of each round, specified in seconds.
