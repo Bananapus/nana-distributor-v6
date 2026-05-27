@@ -1,10 +1,10 @@
 {
   "name": "@bananapus/distributor-v6",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Bananapus/nana-distributor-v6"
+    "url": "git+https://github.com/Bananapus/nana-distributor-v6.git"
   },
   "files": [
     "foundry.toml",
@@ -24,8 +24,8 @@
     "deploy:testnets": "source ./.env && npx sphinx propose ./script/Deploy.s.sol --networks testnets"
   },
   "dependencies": {
-    "@bananapus/721-hook-v6": "^0.0.57",
-    "@bananapus/core-v6": "^0.0.68",
+    "@bananapus/721-hook-v6": "^0.0.59",
+    "@bananapus/core-v6": "^0.0.72",
     "@bananapus/permission-ids-v6": "^0.0.27",
     "@openzeppelin/contracts": "5.6.1",
     "@prb/math": "4.1.1",
