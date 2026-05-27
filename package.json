@@ -1,10 +1,10 @@
 {
   "name": "@bananapus/distributor-v6",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Bananapus/nana-distributor-v6"
+    "url": "git+https://github.com/Bananapus/nana-distributor-v6.git"
   },
   "files": [
     "foundry.toml",
