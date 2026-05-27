@@ -473,14 +473,15 @@ abstract contract JBDistributor is IJBDistributor {
         // Keep a reference to the latest vested index.
         uint256 vestedIndex = latestVestedIndexOf[hook][tokenId][token];
 
-        // Keep a reference to the number of vesting rounds for the tokenId and token.
-        uint256 numberOfVestingRounds = vestingDataOf[hook][tokenId][token].length;
+        // Keep a reference to the vesting data array.
+        JBVestingData[] storage vestings = vestingDataOf[hook][tokenId][token];
+        uint256 numberOfVestingRounds = vestings.length;
 
         while (vestedIndex < numberOfVestingRounds) {
             uint256 lockedShare;
 
             // Keep a reference to the vested data being iterated on.
-            JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
+            JBVestingData memory vesting = vestings[vestedIndex];
 
             lockedShare = JBVestingMath.lockedShareOf({
                 releaseRound: vesting.releaseRound,
@@ -1566,12 +1567,13 @@ abstract contract JBDistributor is IJBDistributor {
         // Keep a reference to the latest fully vested index.
         uint256 vestedIndex = latestVestedIndexOf[hook][tokenId][token];
 
-        // Keep a reference to the number of vesting entries for the token ID and token.
-        uint256 numberOfVestingRounds = vestingDataOf[hook][tokenId][token].length;
+        // Keep a reference to the vesting data array.
+        JBVestingData[] storage vestings = vestingDataOf[hook][tokenId][token];
+        uint256 numberOfVestingRounds = vestings.length;
 
         while (vestedIndex < numberOfVestingRounds) {
             // Keep a reference to the vested data being iterated on.
-            JBVestingData memory vesting = vestingDataOf[hook][tokenId][token][vestedIndex];
+            JBVestingData memory vesting = vestings[vestedIndex];
 
             // Use `original - alreadyPaid` to include rounding dust in the remaining amount.
             tokenAmount += JBVestingMath.unclaimedAmountOf({

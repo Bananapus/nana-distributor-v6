@@ -697,14 +697,11 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Skip already-vested tokenIds — check if the last vesting entry targets the same release round.
         {
             // Load the number of existing vesting entries for this token.
-            uint256 numVesting = vestingDataOf[ctx.hook][tokenId][ctx.token].length;
+            JBVestingData[] storage vestings = vestingDataOf[ctx.hook][tokenId][ctx.token];
+            uint256 numVesting = vestings.length;
 
             // If at least one entry exists and its release round matches, this token was already vested this round.
-            if (
-                numVesting != 0
-                    && vestingDataOf[ctx.hook][tokenId][ctx.token][numVesting - 1].releaseRound
-                        == ctx.vestingReleaseRound
-            ) {
+            if (numVesting != 0 && vestings[numVesting - 1].releaseRound == ctx.vestingReleaseRound) {
                 return (0, newUniqueCount);
             }
         }
