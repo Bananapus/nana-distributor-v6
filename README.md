@@ -2,12 +2,17 @@
 
 `@bananapus/distributor-v6` distributes ERC-20 balances or 721 token inventories to many recipients under round-based vesting rules. It is a payout utility package for Juicebox-adjacent flows, not a protocol accounting layer.
 
-Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)  
-User journeys: [USER_JOURNEYS.md](./USER_JOURNEYS.md)  
-Skills: [SKILLS.md](./SKILLS.md)  
-Risks: [RISKS.md](./RISKS.md)  
-Administration: [ADMINISTRATION.md](./ADMINISTRATION.md)  
-Audit instructions: [AUDIT_INSTRUCTIONS.md](./AUDIT_INSTRUCTIONS.md)
+## Documentation
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — system overview, modules, trust boundaries, and core invariants.
+- [USER_JOURNEYS.md](./USER_JOURNEYS.md) — end-to-end flows for funders and claimants across token and 721 variants.
+- [INVARIANTS.md](./INVARIANTS.md) — per-section invariants for snapshot fairness, vesting math, claim authority, loans, and recycling.
+- [RISKS.md](./RISKS.md) — risk register with priority risks and the minimum invariants to verify.
+- [ADMINISTRATION.md](./ADMINISTRATION.md) — deployment parameters, control posture, and recovery guidance.
+- [SKILLS.md](./SKILLS.md) — quick index for routing tasks into the right sub-document.
+- [STYLE_GUIDE.md](./STYLE_GUIDE.md) — Solidity and repo conventions used across the Juicebox V6 ecosystem.
+- [AUDIT_INSTRUCTIONS.md](./AUDIT_INSTRUCTIONS.md) — audit framing, targets, and suggested hunting grounds.
+- [CHANGELOG.md](./CHANGELOG.md) — release notes and dependency bumps.
 
 ## Overview
 

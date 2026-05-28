@@ -1,7 +1,5 @@
 # Invariants of `nana-distributor-v6`
 
-Last updated: 2026-05-28.
-
 Scope: the three production contracts in `src/` — the abstract base `JBDistributor` and its two concrete specializations `JBTokenDistributor` (IVotes ERC-20 staker) and `JB721Distributor` (Juicebox 721 NFT staker) — plus the pure helper library `src/libraries/JBVestingMath.sol`. A distributor accumulates reward tokens per-hook, snapshots the staker set once per round at a strictly-past block, allocates the snapshotted pot pro-rata by stake, and vests each staker's share linearly over `VESTING_ROUNDS` rounds. Reward tokens that are **revnet** project tokens (owned by the configured `REVOwner`) can additionally be used as collateral for a distributor-held `REVLoans` loan, deferring collection until repayment.
 
 This file is the per-repo scoped invariants doc. The protocol-wide guarantees for the seven deployed revnets live in [`../INVARIANTS.md`](../INVARIANTS.md); section C.19 there summarizes this repo from the protocol's perspective.
