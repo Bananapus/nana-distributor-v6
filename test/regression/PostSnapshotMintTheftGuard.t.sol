@@ -15,7 +15,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 
-contract CodexNemesisDirectory {
+contract MockDirectory {
     function isTerminalOf(uint256, IJBTerminal) external pure returns (bool) {
         return false;
     }
@@ -25,7 +25,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesisRewardToken is ERC20 {
+contract MockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -33,13 +33,13 @@ contract CodexNemesisRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesis721Store {
+contract Mock721Store {
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier.votingUnits = 100;
     }
 }
 
-contract CodexNemesis721Checkpoints {
+contract Mock721Checkpoints {
     address public hook;
     address public snapshotOwner;
 
@@ -60,25 +60,25 @@ contract CodexNemesis721Checkpoints {
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
-        return CodexNemesis721Hook(hook).ownerOfAt(tokenId, blockNumber);
+        return Mock721Hook(hook).ownerOfAt(tokenId, blockNumber);
     }
 }
 
-contract CodexNemesis721Hook {
-    CodexNemesis721Store public immutable STORE;
-    CodexNemesis721Checkpoints public immutable CHECKPOINTS;
+contract Mock721Hook {
+    Mock721Store public immutable STORE;
+    Mock721Checkpoints public immutable CHECKPOINTS;
 
     mapping(uint256 tokenId => address owner) public owners;
     mapping(uint256 tokenId => address firstOwner) public firstOwnerOfToken;
     mapping(uint256 tokenId => uint256 firstTransferBlock) public firstTransferBlockOf;
     mapping(uint256 tokenId => uint256 blockNumber) public mintBlockOf;
 
-    constructor(CodexNemesis721Store store, CodexNemesis721Checkpoints checkpoints_) {
+    constructor(Mock721Store store, Mock721Checkpoints checkpoints_) {
         STORE = store;
         CHECKPOINTS = checkpoints_;
     }
 
-    function checkpoints() external view returns (CodexNemesis721Checkpoints) {
+    function checkpoints() external view returns (Mock721Checkpoints) {
         return CHECKPOINTS;
     }
 
@@ -113,12 +113,12 @@ contract CodexNemesis721Hook {
     }
 }
 
-contract CodexNemesisPostSnapshotMintTheftTest is Test {
+contract PostSnapshotMintTheftTest is Test {
     function testPostSnapshotMintCannotStealRewardsFromTransferredSnapshotNft() public {
         address alice = makeAddr("alice");
         address bob = makeAddr("bob");
 
-        CodexNemesisDirectory directory = new CodexNemesisDirectory();
+        MockDirectory directory = new MockDirectory();
         JB721Distributor distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
             IJBController(address(0)),
@@ -128,10 +128,10 @@ contract CodexNemesisPostSnapshotMintTheftTest is Test {
             1,
             0
         );
-        CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
-        CodexNemesis721Store store = new CodexNemesis721Store();
-        CodexNemesis721Checkpoints checkpoints = new CodexNemesis721Checkpoints();
-        CodexNemesis721Hook hook = new CodexNemesis721Hook(store, checkpoints);
+        MockRewardToken reward = new MockRewardToken();
+        Mock721Store store = new Mock721Store();
+        Mock721Checkpoints checkpoints = new Mock721Checkpoints();
+        Mock721Hook hook = new Mock721Hook(store, checkpoints);
         checkpoints.setHook(address(hook));
 
         hook.mint(1, alice);

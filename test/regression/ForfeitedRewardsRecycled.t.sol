@@ -18,7 +18,7 @@ import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 
-contract CodexNemesisRewardToken is ERC20 {
+contract MockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -30,7 +30,7 @@ contract CodexNemesisRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesisJBTokens {
+contract MockTokens {
     mapping(IJBToken token => uint256 projectId) public projectIdOf;
     mapping(uint256 projectId => IJBToken token) public tokenOf;
 
@@ -40,14 +40,14 @@ contract CodexNemesisJBTokens {
     }
 }
 
-contract CodexNemesisJBController {
-    CodexNemesisJBTokens public immutable tokens;
+contract MockController {
+    MockTokens public immutable tokens;
 
-    constructor(CodexNemesisJBTokens tokens_) {
+    constructor(MockTokens tokens_) {
         tokens = tokens_;
     }
 
-    function TOKENS() external view returns (CodexNemesisJBTokens) {
+    function TOKENS() external view returns (MockTokens) {
         return tokens;
     }
 
@@ -56,7 +56,7 @@ contract CodexNemesisJBController {
     }
 }
 
-contract CodexNemesisDirectory {
+contract MockDirectory {
     function isTerminalOf(uint256, IJBTerminal) external pure returns (bool) {
         return false;
     }
@@ -66,7 +66,7 @@ contract CodexNemesisDirectory {
     }
 }
 
-contract CodexNemesis721Store {
+contract Mock721Store {
     JB721Tier internal _tier;
     uint256 public burned;
 
@@ -98,10 +98,10 @@ contract CodexNemesis721Store {
     }
 }
 
-contract CodexNemesis721Checkpoints {
-    CodexNemesis721Hook public hook;
+contract Mock721Checkpoints {
+    Mock721Hook public hook;
 
-    constructor(CodexNemesis721Hook hook_) {
+    constructor(Mock721Hook hook_) {
         hook = hook_;
     }
 
@@ -118,16 +118,16 @@ contract CodexNemesis721Checkpoints {
     }
 }
 
-contract CodexNemesis721Hook {
-    CodexNemesis721Store public immutable STORE;
-    CodexNemesis721Checkpoints public immutable checkpoints;
+contract Mock721Hook {
+    Mock721Store public immutable STORE;
+    Mock721Checkpoints public immutable checkpoints;
 
     mapping(uint256 tokenId => address owner) internal _ownerOf;
     mapping(uint256 tokenId => address owner) public historicalOwnerOf;
 
     constructor() {
-        STORE = new CodexNemesis721Store();
-        checkpoints = new CodexNemesis721Checkpoints(this);
+        STORE = new Mock721Store();
+        checkpoints = new Mock721Checkpoints(this);
     }
 
     function setOwner(uint256 tokenId, address owner) external {
@@ -147,7 +147,7 @@ contract CodexNemesis721Hook {
     }
 }
 
-contract CodexNemesisForfeitedRewardsRecycledTest is Test {
+contract ForfeitedRewardsRecycledTest is Test {
     uint256 internal constant ROUND_DURATION = 1 days;
     uint256 internal constant VESTING_ROUNDS = 1;
 
@@ -156,20 +156,20 @@ contract CodexNemesisForfeitedRewardsRecycledTest is Test {
     address internal carol = makeAddr("carol");
 
     function test_forfeitedRewardsAreRecycledInsteadOfStranded() public {
-        CodexNemesisRewardToken reward = new CodexNemesisRewardToken();
-        CodexNemesisJBTokens jbTokens = new CodexNemesisJBTokens();
+        MockRewardToken reward = new MockRewardToken();
+        MockTokens jbTokens = new MockTokens();
         jbTokens.setToken(1, IJBToken(address(reward)));
 
         JB721Distributor distributor = new JB721Distributor({
-            directory: IJBDirectory(address(new CodexNemesisDirectory())),
-            controller: IJBController(address(new CodexNemesisJBController(jbTokens))),
+            directory: IJBDirectory(address(new MockDirectory())),
+            controller: IJBController(address(new MockController(jbTokens))),
             revLoans: IREVLoans(address(0)),
             revOwner: IREVOwner(address(0)),
             initialRoundDuration: ROUND_DURATION,
             initialVestingRounds: VESTING_ROUNDS,
             initialClaimDuration: 0
         });
-        CodexNemesis721Hook hook = new CodexNemesis721Hook();
+        Mock721Hook hook = new Mock721Hook();
 
         hook.setOwner(1, alice);
         hook.setOwner(2, bob);

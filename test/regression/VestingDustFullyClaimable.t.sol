@@ -23,7 +23,7 @@ import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 // Mock contracts
 // =========================================================================
 
-contract AEDirectory {
+contract MockDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
 
     function setTerminal(uint256 projectId, address terminal, bool isTerminal) external {
@@ -39,7 +39,7 @@ contract AEDirectory {
     }
 }
 
-contract AERewardToken is ERC20 {
+contract MockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -47,7 +47,7 @@ contract AERewardToken is ERC20 {
     }
 }
 
-contract AEVotesToken is ERC20, ERC20Votes {
+contract MockVotesToken is ERC20, ERC20Votes {
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
     function mint(address to, uint256 amount) external {
@@ -60,13 +60,13 @@ contract AEVotesToken is ERC20, ERC20Votes {
 }
 
 // =========================================================================
-// AE-2: Vesting dust in _unlockTokenIds
+// Vesting dust in _unlockTokenIds
 // =========================================================================
 
-contract AuditFixAE2Test is Test {
-    AEDirectory internal directory;
-    AERewardToken internal rewardToken;
-    AEVotesToken internal votesToken;
+contract VestingDustFullyClaimableTest is Test {
+    MockDirectory internal directory;
+    MockRewardToken internal rewardToken;
+    MockVotesToken internal votesToken;
     JBTokenDistributor internal distributor;
 
     address internal alice = makeAddr("alice");
@@ -75,9 +75,9 @@ contract AuditFixAE2Test is Test {
     uint256 internal constant VESTING_ROUNDS = 4;
 
     function setUp() public {
-        directory = new AEDirectory();
-        rewardToken = new AERewardToken();
-        votesToken = new AEVotesToken();
+        directory = new MockDirectory();
+        rewardToken = new MockRewardToken();
+        votesToken = new MockVotesToken();
 
         directory.setTerminal(PROJECT_ID, address(this), true);
 
@@ -116,7 +116,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice 1 wei of dust should be fully claimable after full vesting, not stranded.
-    function test_AE2_dustFullyClaimableAfterVesting() public {
+    function test_dustFullyClaimableAfterVesting() public {
         // Fund with exactly 1 wei.
         rewardToken.mint(address(this), 1);
         rewardToken.approve(address(distributor), 1);
@@ -152,7 +152,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice Dust entries should not be marked exhausted when claimAmount is zero.
-    function test_AE2_dustEntryNotMarkedExhaustedPrematurely() public {
+    function test_dustEntryNotMarkedExhaustedPrematurely() public {
         // Fund with 3 wei. With MAX_SHARE = 100_000, partial claims will produce dust.
         rewardToken.mint(address(this), 3);
         rewardToken.approve(address(distributor), 3);
@@ -189,7 +189,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice Partial dust collections must decrement totalVestingAmountOf by the same amount claimedFor releases.
-    function test_AE2_totalVestingClearsAfterPartialDustCollections() public {
+    function test_totalVestingClearsAfterPartialDustCollections() public {
         rewardToken.mint({to: address(this), amount: 7});
         rewardToken.approve({spender: address(distributor), value: 7});
         distributor.fund({hook: address(votesToken), token: IERC20(address(rewardToken)), amount: 7});
@@ -224,7 +224,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice Large amounts should still work correctly with the dust fix.
-    function test_AE2_largeAmountStillCorrect() public {
+    function test_largeAmountStillCorrect() public {
         uint256 amount = 1_000_000 ether;
         rewardToken.mint(address(this), amount);
         rewardToken.approve(address(distributor), amount);
@@ -256,7 +256,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice collectableFor view should match actual collectable including dust.
-    function test_AE2_collectableForMatchesActualWithDust() public {
+    function test_collectableForMatchesActualWithDust() public {
         // Fund with 7 wei: an amount that creates dust across 4 vesting rounds.
         rewardToken.mint(address(this), 7);
         rewardToken.approve(address(distributor), 7);
@@ -286,7 +286,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice claimedFor view should include dust in the remaining amount.
-    function test_AE2_claimedForIncludesDust() public {
+    function test_claimedForIncludesDust() public {
         rewardToken.mint(address(this), 1);
         rewardToken.approve(address(distributor), 1);
         distributor.fund(address(votesToken), IERC20(address(rewardToken)), 1);
@@ -309,7 +309,7 @@ contract AuditFixAE2Test is Test {
     }
 
     /// @notice Multiple vesting entries with dust should all be properly cleaned up.
-    function test_AE2_multipleEntriesDustCleanup() public {
+    function test_multipleEntriesDustCleanup() public {
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = _tokenId(alice);
         IERC20[] memory tokens = new IERC20[](1);

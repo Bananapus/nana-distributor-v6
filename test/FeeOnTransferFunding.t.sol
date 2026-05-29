@@ -44,7 +44,7 @@ contract _Fot721Hook {
 }
 
 /// @notice Pins `JBDistributor._acceptErc20FundsFrom`'s balance-delta crediting against a real fee-on-transfer
-/// token implementation. Without this test the central new mechanism in the audit-hardening PR (delta-based
+/// token implementation. Without this test the central new mechanism (delta-based
 /// accounting) is unproven for the token class it was designed to support.
 contract FeeOnTransferFundingTest is Test {
     uint256 internal constant _ROUND_DURATION = 1 days;
