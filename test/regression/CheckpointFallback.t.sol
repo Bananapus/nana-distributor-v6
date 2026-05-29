@@ -14,9 +14,9 @@ import {JB721Tier} from "@bananapus/721-hook-v6/src/structs/JB721Tier.sol";
 import {JB721TierFlags} from "@bananapus/721-hook-v6/src/structs/JB721TierFlags.sol";
 import {JB721Distributor} from "../../src/JB721Distributor.sol";
 
-contract FreshCodexNemesisDirectory {}
+contract MockDirectory {}
 
-contract FreshCodexNemesisRewardToken is ERC20 {
+contract MockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address account, uint256 amount) external {
@@ -24,7 +24,7 @@ contract FreshCodexNemesisRewardToken is ERC20 {
     }
 }
 
-contract FreshCodexNemesis721Store {
+contract Mock721Store {
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier = JB721Tier({
             id: 1,
@@ -50,12 +50,12 @@ contract FreshCodexNemesis721Store {
     }
 }
 
-contract FreshCodexNemesis721Checkpoints {
-    FreshCodexNemesis721Hook public hook;
+contract Mock721Checkpoints {
+    Mock721Hook public hook;
     mapping(address account => uint256 votes) public votesOf;
     uint256 public totalSupply;
 
-    constructor(FreshCodexNemesis721Hook hook_) {
+    constructor(Mock721Hook hook_) {
         hook = hook_;
     }
 
@@ -80,9 +80,9 @@ contract FreshCodexNemesis721Checkpoints {
     }
 }
 
-contract FreshCodexNemesis721Hook {
-    FreshCodexNemesis721Store public immutable STORE;
-    FreshCodexNemesis721Checkpoints public immutable CHECKPOINTS;
+contract Mock721Hook {
+    Mock721Store public immutable STORE;
+    Mock721Checkpoints public immutable CHECKPOINTS;
 
     mapping(uint256 tokenId => address owner) public ownerOfToken;
     mapping(uint256 tokenId => address firstOwner) public firstOwnerOfToken;
@@ -91,11 +91,11 @@ contract FreshCodexNemesis721Hook {
     mapping(uint256 tokenId => uint256 blockNumber) public mintBlockOf;
 
     constructor() {
-        STORE = new FreshCodexNemesis721Store();
-        CHECKPOINTS = new FreshCodexNemesis721Checkpoints(this);
+        STORE = new Mock721Store();
+        CHECKPOINTS = new Mock721Checkpoints(this);
     }
 
-    function checkpoints() external view returns (FreshCodexNemesis721Checkpoints) {
+    function checkpoints() external view returns (Mock721Checkpoints) {
         return CHECKPOINTS;
     }
 
@@ -132,13 +132,13 @@ contract FreshCodexNemesis721Hook {
     }
 }
 
-contract FreshCodexNemesisCheckpointFallbackTest is Test {
+contract CheckpointFallbackTest is Test {
     function test_lateMintedReplacementCannotConsumeSnapshotVotesBeforeRealSnapshotToken() public {
         address alice = address(0xA11CE);
         address bob = address(0xB0B);
 
         JB721Distributor distributor = new JB721Distributor(
-            IJBDirectory(address(new FreshCodexNemesisDirectory())),
+            IJBDirectory(address(new MockDirectory())),
             IJBController(address(0)),
             IREVLoans(address(0)),
             IREVOwner(address(0)),
@@ -146,8 +146,8 @@ contract FreshCodexNemesisCheckpointFallbackTest is Test {
             1,
             0
         );
-        FreshCodexNemesisRewardToken reward = new FreshCodexNemesisRewardToken();
-        FreshCodexNemesis721Hook hook = new FreshCodexNemesis721Hook();
+        MockRewardToken reward = new MockRewardToken();
+        Mock721Hook hook = new Mock721Hook();
 
         hook.mint(1, alice);
         hook.checkpoints().setVotes(alice, 100 ether);

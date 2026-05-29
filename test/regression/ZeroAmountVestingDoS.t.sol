@@ -14,7 +14,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
 
-contract CodexNemesisZeroDirectory {
+contract MockDirectory {
     function isTerminalOf(uint256, IJBTerminal) external pure returns (bool) {
         return false;
     }
@@ -24,7 +24,7 @@ contract CodexNemesisZeroDirectory {
     }
 }
 
-contract CodexNemesisZeroRewardToken is ERC20 {
+contract MockRewardToken is ERC20 {
     constructor() ERC20("Reward", "RWD") {}
 
     function mint(address to, uint256 amount) external {
@@ -32,7 +32,7 @@ contract CodexNemesisZeroRewardToken is ERC20 {
     }
 }
 
-contract CodexNemesisVotes {
+contract MockVotes {
     uint256 public totalSupply;
     mapping(address account => uint256 votes) public votesOf;
 
@@ -53,14 +53,14 @@ contract CodexNemesisVotes {
     }
 }
 
-contract CodexNemesisZeroAmountVestingDoSTest is Test {
+contract ZeroAmountVestingDoSTest is Test {
     function testZeroAmountEntriesAreSkipped() public {
         address attacker = makeAddr("attacker");
         address victim = makeAddr("victim");
         address voter = makeAddr("voter");
 
         JBTokenDistributor distributor = new JBTokenDistributor(
-            IJBDirectory(address(new CodexNemesisZeroDirectory())),
+            IJBDirectory(address(new MockDirectory())),
             IJBController(address(0)),
             IREVLoans(address(0)),
             IREVOwner(address(0)),
@@ -68,8 +68,8 @@ contract CodexNemesisZeroAmountVestingDoSTest is Test {
             1,
             0
         );
-        CodexNemesisZeroRewardToken reward = new CodexNemesisZeroRewardToken();
-        CodexNemesisVotes votes = new CodexNemesisVotes();
+        MockRewardToken reward = new MockRewardToken();
+        MockVotes votes = new MockVotes();
 
         votes.setVotes(voter, 1 ether);
         votes.setTotalSupply(1 ether);
