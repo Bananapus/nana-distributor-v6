@@ -552,15 +552,6 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.collectableFor(address(hook), 2, IERC20(address(rewardToken))), 500 ether);
     }
 
-    function test_snapshotAtRoundOf() public {
-        _fundHook(1000 ether);
-
-        (uint256 amount,,,, uint256 totalStake) =
-            distributor.rewardRoundOf(address(hook), IERC20(address(rewardToken)), 0);
-        assertEq(amount, 1000 ether);
-        assertEq(totalStake, 400);
-    }
-
     function test_vestingDataOf() public {
         _fundHook(1000 ether);
         _beginVestingBoth();

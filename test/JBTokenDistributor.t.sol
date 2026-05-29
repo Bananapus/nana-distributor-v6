@@ -987,10 +987,10 @@ contract JBTokenDistributorTest is Test {
         distributor.beginVesting(address(votesToken), _singleTokenId(staker), tokens);
     }
 
-    /// @notice Once a round's snapshot has been taken — even at a zero balance — it must not be overwritten by
-    /// later activity in the same round. Otherwise mid-round deposits can leak into the current round's allocation.
-    /// @dev This guards the `_takeSnapshotOf` write-once invariant. The bug surfaces through
-    /// `collectVestedRewards`, which calls `_takeSnapshotOf` even when there is nothing distributable.
+    /// @notice Once a round has been processed — even at a zero balance — funds deposited later in the same round
+    /// must not be allocated to it. Otherwise mid-round deposits can leak into the current round's allocation.
+    /// @dev This guards the round-ledger invariant that a zero-balance round does not retroactively distribute
+    /// mid-round deposits. The behavior surfaces through repeated `collectVestedRewards` calls within one round.
     function test_zeroBalanceSnapshot_isStickyWithinRound() public {
         // Alice has stake and delegates to self.
         vm.prank(alice);

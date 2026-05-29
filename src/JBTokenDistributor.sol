@@ -144,58 +144,10 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         }
     }
 
-    /// @notice Snapshot this staker's past reward rounds and start vesting them now.
-    /// @dev Unlike the shared distributor flow, token claims are owner-initiated. This prevents third parties from
-    /// starting a staker's vesting clock before the staker actually claims.
-    /// @param hook The IVotes token whose stakers are vesting.
-    /// @param tokenIds The encoded staker addresses to claim for.
-    /// @param tokens The reward tokens to begin vesting.
-    function beginVesting(
-        address hook,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens
-    )
-        external
-        override(JBDistributor, IJBDistributor)
-    {
-        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
-        _requireNotAcceptingToken();
-        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
-
-        // Token IDs encode staker addresses, so only the encoded staker can start their own vesting clock.
-        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
-
-        // Materialize all unclaimed historical rewards into fresh vesting entries that start now.
-        _claimPastRewards({hook: hook, tokenIds: tokenIds, tokens: tokens});
-    }
-
-    /// @notice Collect already-vested rewards and first start vesting any unclaimed past reward rounds.
-    /// @param hook The IVotes token whose stakers are collecting.
-    /// @param tokenIds The encoded staker addresses to collect for.
-    /// @param tokens The reward tokens to collect.
-    /// @param beneficiary The recipient of collected vested rewards.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        public
-        override(JBDistributor, IJBDistributor)
-    {
-        // Do not let reward-token callbacks mutate claim accounting during an inbound transfer.
-        _requireNotAcceptingToken();
-        if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
-
-        // Only the encoded staker can materialize and collect their token rewards.
-        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
-
-        // Before collecting, bring the caller current by starting vesting for any past reward rounds.
-        _claimPastRewards({hook: hook, tokenIds: tokenIds, tokens: tokens});
-
-        // Release whatever portion of existing vesting entries has unlocked by this round.
-        _unlockRewards({hook: hook, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true});
-    }
+    // `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both distributors share the exact
+    // same flow (authorize -> materialize past rounds via `_claimPastRewards` -> optionally release unlocked), so the
+    // round-claim logic lives once in the base and dispatches to this contract's `_claimPastRewards` /
+    // `_requireCanClaimTokenIds` overrides below.
 
     //*********************************************************************//
     // -------------------------- public views --------------------------- //

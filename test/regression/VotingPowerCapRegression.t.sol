@@ -196,7 +196,7 @@ contract VotingCapMockHook {
 
 /// @notice Tests for per-owner voting power cap in JB721Distributor.
 /// @dev Verifies that an owner holding multiple NFTs cannot claim more rewards than their
-/// historical voting power allows. The `_vestTokenIds` override in JB721Distributor
+/// historical voting power allows. The `_claimRewardRoundForTokenId` path in JB721Distributor
 /// tracks consumed voting power per owner and caps each NFT's effective stake.
 contract VotingPowerCapRegressionTest is Test {
     JB721Distributor distributor;
