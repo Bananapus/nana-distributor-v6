@@ -6,7 +6,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
-import {JBTokenSnapshotData} from "../structs/JBTokenSnapshotData.sol";
 import {JBVestingLoan} from "../structs/JBVestingLoan.sol";
 
 /// @notice Interface for round-based reward distributors with linear vesting. Stakers claim their share of funded
@@ -139,22 +138,6 @@ interface IJBDistributor {
         address caller
     );
 
-    /// @notice Emitted when a snapshot is created for a round.
-    /// @param hook The hook the snapshot is for.
-    /// @param round The round the snapshot was created for.
-    /// @param token The token the snapshot is of.
-    /// @param balance The token balance at the time of the snapshot.
-    /// @param vestingAmount The amount of tokens vesting at the time of the snapshot.
-    /// @param caller The address that triggered the snapshot.
-    event SnapshotCreated(
-        address indexed hook,
-        uint256 indexed round,
-        IERC20 indexed token,
-        uint256 balance,
-        uint256 vestingAmount,
-        address caller
-    );
-
     //*********************************************************************//
     // ----------------------------- views ------------------------------- //
     //*********************************************************************//
@@ -215,19 +198,6 @@ interface IJBDistributor {
     /// @notice The timestamp at which a round started.
     /// @param round The round to get the start timestamp of.
     function roundStartTimestamp(uint256 round) external view returns (uint256);
-
-    /// @notice The snapshot data of the token information for each round.
-    /// @param hook The hook the snapshot is for.
-    /// @param token The address of the token to check.
-    /// @param round The round to which the data applies.
-    function snapshotAtRoundOf(
-        address hook,
-        IERC20 token,
-        uint256 round
-    )
-        external
-        view
-        returns (JBTokenSnapshotData memory);
 
     /// @notice The amount of a token that is currently vesting for a hook's stakers.
     /// @param hook The hook whose vesting amount to check.
