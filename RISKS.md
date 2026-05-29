@@ -101,7 +101,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment,
   or is removed from vesting inventory on liquidation write-off
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
-- round snapshots stay stable within a round once initialized, including zero-balance ones (write-once via the init flag)
+- round snapshots stay stable within a round once initialized, including zero-balance ones (a reward round's snapshot block and total stake are write-once, fixed on the first `_recordRewardRound` credit and never re-snapshotted by later funding)
 - expired recycling settles the old round and records `amount - claimedAmount` into the current round without changing tracked balance
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their unlocked forfeited rewards recycle only through the explicit forfeiture path

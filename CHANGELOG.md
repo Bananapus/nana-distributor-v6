@@ -9,6 +9,13 @@
 - Depend on `@rev-net/core-v6` for Revnet loan and owner interfaces instead of defining local loan types.
 - Add regression tests covering loan custody, direct repayment bypass prevention, active-loan collection locks,
   zero-vesting loan rejection, collateral shortfall reverts, and repayment reward-token excess handling.
+- Lift the shared `beginVesting`/`collectVestedRewards` entrypoints into the base `JBDistributor` (they dispatch
+  into each concrete distributor's `_claimPastRewards`/`_requireCanClaimTokenIds`), removing the duplicated
+  overrides in `JBTokenDistributor` and `JB721Distributor`. Delete the dead snapshot-balance model entirely —
+  `_vestTokenIds`/`_vestSingleToken`, `_takeSnapshotOf`, the `snapshotAtRoundOf` view, the `JBTokenSnapshotData`
+  struct, the `_snapshotAtRoundOf`/`_snapshotInitializedFor` mappings, the `SnapshotCreated` event, and the
+  `JBDistributor_NothingToDistribute` error are gone. No live behavior change: rewards remain recorded per round
+  and lazily claimed via the round-ledger path.
 
 ## 0.0.16 — Bump v6 deps to nana-core-v6 0.0.53 cohort
 
