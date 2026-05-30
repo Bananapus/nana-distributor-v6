@@ -487,6 +487,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         canClaim = IERC721(hook).ownerOf(tokenId) == account;
     }
 
+    /// @notice Whether a tier ID is present in a strictly-increasing tier set.
+    /// @param tierId The tier ID to look for.
+    /// @param tierIds The strictly-increasing tier set to search.
+    /// @return found True if `tierId` is in `tierIds`.
+    function _isTierInSet(uint256 tierId, uint256[] memory tierIds) internal pure returns (bool found) {
+        for (uint256 i; i < tierIds.length;) {
+            if (tierIds[i] == tierId) return true;
+            // The set is strictly increasing, so once an entry exceeds the target it cannot appear later.
+            if (tierIds[i] > tierId) return false;
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice Revert unless the caller is authorized to claim each NFT token ID.
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to check.
@@ -507,6 +522,29 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 ++i;
             }
         }
+    }
+
+    /// @notice The tier-scoped stake of a single NFT in a reward round: its tier's voting units if the NFT's tier is
+    /// in the group's set and the NFT existed at the round snapshot, else zero.
+    /// @dev No per-owner cap is applied. Eligibility (`ownerOfAt != 0`) plus tier membership matches exactly the set
+    /// counted by the `getPastTierVotingUnits` denominator, so per-NFT shares reconcile against the pot.
+    /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
+    /// @param tokenId The NFT token ID to weigh.
+    /// @return stake The NFT's tier voting units, or 0 if ineligible.
+    function _tierScopedStake(JBVestContext memory ctx, uint256 tokenId) internal view returns (uint256 stake) {
+        // The NFT's tier must be one of the funded tiers.
+        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
+        if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
+
+        // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
+        if (_snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock}) == address(0)) {
+            return 0;
+        }
+
+        // Eligible: weigh the NFT by its tier's voting units.
+        stake = IJB721TiersHook(ctx.hook)
+            .STORE()
+            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
     }
 
     /// @notice Checks if the given token was burned.
@@ -581,44 +619,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
         for (uint256 i; i < tierIds.length;) {
             total += checkpoints.getPastTierVotingUnits({tierId: tierIds[i], blockNumber: blockNumber});
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    /// @notice The tier-scoped stake of a single NFT in a reward round: its tier's voting units if the NFT's tier is
-    /// in the group's set and the NFT existed at the round snapshot, else zero.
-    /// @dev No per-owner cap is applied. Eligibility (`ownerOfAt != 0`) plus tier membership matches exactly the set
-    /// counted by the `getPastTierVotingUnits` denominator, so per-NFT shares reconcile against the pot.
-    /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
-    /// @param tokenId The NFT token ID to weigh.
-    /// @return stake The NFT's tier voting units, or 0 if ineligible.
-    function _tierScopedStake(JBVestContext memory ctx, uint256 tokenId) internal view returns (uint256 stake) {
-        // The NFT's tier must be one of the funded tiers.
-        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
-        if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
-
-        // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
-        if (_snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock}) == address(0)) {
-            return 0;
-        }
-
-        // Eligible: weigh the NFT by its tier's voting units.
-        stake = IJB721TiersHook(ctx.hook)
-            .STORE()
-            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
-    }
-
-    /// @notice Whether a tier ID is present in a strictly-increasing tier set.
-    /// @param tierId The tier ID to look for.
-    /// @param tierIds The strictly-increasing tier set to search.
-    /// @return found True if `tierId` is in `tierIds`.
-    function _isTierInSet(uint256 tierId, uint256[] memory tierIds) internal pure returns (bool found) {
-        for (uint256 i; i < tierIds.length;) {
-            if (tierIds[i] == tierId) return true;
-            // The set is strictly increasing, so once an entry exceeds the target it cannot appear later.
-            if (tierIds[i] > tierId) return false;
             unchecked {
                 ++i;
             }

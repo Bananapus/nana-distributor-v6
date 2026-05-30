@@ -209,7 +209,7 @@ contract ForfeitedRewardsRecycledTest is Test {
         assertEq(reward.balanceOf(address(distributor)), 100 ether);
         assertEq(reward.totalSupply(), 300 ether);
         (uint256 roundAmount,, uint256 roundClaimedAmount,, uint256 roundTotalStake) =
-            distributor.rewardRoundOf(address(hook), IERC20(address(reward)), 2);
+            distributor.rewardRoundOf(address(hook), 0, IERC20(address(reward)), 2);
         assertEq(roundAmount, 100 ether);
         assertEq(roundClaimedAmount, 0);
         assertEq(roundTotalStake, 200);

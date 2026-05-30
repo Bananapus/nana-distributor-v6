@@ -523,64 +523,6 @@ abstract contract JBDistributor is IJBDistributor {
         tokenAmount = _collectableFor({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});
     }
 
-    /// @notice The collectable amount for a token ID in a specific reward group.
-    /// @param hook The hook the tokenId belongs to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
-    /// @param tokenId The ID of the staker token to calculate for.
-    /// @param token The reward token to check.
-    /// @return tokenAmount The amount of tokens that can be collected right now.
-    function _collectableFor(
-        address hook,
-        uint256 groupId,
-        uint256 tokenId,
-        IERC20 token
-    )
-        internal
-        view
-        returns (uint256 tokenAmount)
-    {
-        // A loan keeps this token ID's vesting rewards in collateral custody until the loan is repaid.
-        if (activeVestingLoanIdOf[hook][groupId][tokenId][token] != 0) return 0;
-
-        // The round that we are in right now.
-        uint256 round = currentRound();
-
-        // Keep a reference to the latest vested index.
-        uint256 vestedIndex = latestVestedIndexOf[hook][groupId][tokenId][token];
-
-        // Keep a reference to the vesting data array.
-        JBVestingData[] storage vestings = vestingDataOf[hook][groupId][tokenId][token];
-        uint256 numberOfVestingRounds = vestings.length;
-
-        while (vestedIndex < numberOfVestingRounds) {
-            uint256 lockedShare;
-
-            // Keep a reference to the vested data being iterated on.
-            JBVestingData memory vesting = vestings[vestedIndex];
-
-            lockedShare = JBVestingMath.lockedShareOf({
-                releaseRound: vesting.releaseRound,
-                currentRound: round,
-                vestingRounds: VESTING_ROUNDS,
-                maxShare: MAX_SHARE
-            });
-
-            // Calculate the newly unlocked amount from cumulative shares rather than the incremental share delta.
-            // Incremental floor rounding can otherwise underpay partial collections and leave dust stranded.
-            (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
-                amount: vesting.amount,
-                shareClaimed: vesting.shareClaimed,
-                lockedShare: lockedShare,
-                maxShare: MAX_SHARE
-            });
-            tokenAmount += claimAmount;
-
-            unchecked {
-                ++vestedIndex;
-            }
-        }
-    }
-
     /// @notice The tier set that defines a reward group, recorded when the group is first funded.
     /// @param hook The hook the group belongs to.
     /// @param groupId The reward group.
@@ -1734,6 +1676,64 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
+
+    /// @notice The collectable (unlocked, uncollected) amount for a token ID in a specific reward group.
+    /// @param hook The hook the tokenId belongs to.
+    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param tokenId The ID of the staker token to calculate for.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The amount of tokens that can be collected right now.
+    function _collectableFor(
+        address hook,
+        uint256 groupId,
+        uint256 tokenId,
+        IERC20 token
+    )
+        internal
+        view
+        returns (uint256 tokenAmount)
+    {
+        // A loan keeps this token ID's vesting rewards in collateral custody until the loan is repaid.
+        if (activeVestingLoanIdOf[hook][groupId][tokenId][token] != 0) return 0;
+
+        // The round that we are in right now.
+        uint256 round = currentRound();
+
+        // Keep a reference to the latest vested index.
+        uint256 vestedIndex = latestVestedIndexOf[hook][groupId][tokenId][token];
+
+        // Keep a reference to the vesting data array.
+        JBVestingData[] storage vestings = vestingDataOf[hook][groupId][tokenId][token];
+        uint256 numberOfVestingRounds = vestings.length;
+
+        while (vestedIndex < numberOfVestingRounds) {
+            uint256 lockedShare;
+
+            // Keep a reference to the vested data being iterated on.
+            JBVestingData memory vesting = vestings[vestedIndex];
+
+            lockedShare = JBVestingMath.lockedShareOf({
+                releaseRound: vesting.releaseRound,
+                currentRound: round,
+                vestingRounds: VESTING_ROUNDS,
+                maxShare: MAX_SHARE
+            });
+
+            // Calculate the newly unlocked amount from cumulative shares rather than the incremental share delta.
+            // Incremental floor rounding can otherwise underpay partial collections and leave dust stranded.
+            (uint256 claimAmount,) = JBVestingMath.newlyClaimableAmountOf({
+                amount: vesting.amount,
+                shareClaimed: vesting.shareClaimed,
+                lockedShare: lockedShare,
+                maxShare: MAX_SHARE
+            });
+            tokenAmount += claimAmount;
+
+            unchecked {
+                ++vestedIndex;
+            }
+        }
+    }
 
     /// @notice The remaining uncollected vesting amount for one token ID and reward token.
     /// @param hook The hook the token ID belongs to.
