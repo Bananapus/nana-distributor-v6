@@ -63,9 +63,12 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice The next reward round an NFT token ID has not yet claimed.
     /// @custom:param hook The 721 hook whose NFTs are claiming.
+    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
     /// @custom:param tokenId The NFT token ID.
     /// @custom:param token The reward token being claimed.
-    mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public nextClaimRoundOf;
+    mapping(
+        address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
+    ) public nextClaimRoundOf;
 
     //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
@@ -139,8 +142,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             }
 
             if (msg.value != 0) {
-                // Assign native split proceeds to the current reward round for this 721 hook.
-                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value});
+                // Split-funded pots go to the legacy all-tiers group; a split cannot carry a tier set.
+                _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -157,8 +160,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             uint256 delta =
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
-            // Assign only the amount actually received to this round's reward pot.
-            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta});
+            // Assign only the amount actually received to this round's reward pot (legacy all-tiers group).
+            _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
         }
     }
 
@@ -185,16 +188,31 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice Claim all past reward rounds for the given NFT token IDs and reward tokens into fresh vesting entries.
     /// @param hook The 721 hook whose NFT owners are claiming.
+    /// @param groupId The reward group being claimed (0 = legacy all-tiers group).
     /// @param tokenIds The NFT token IDs to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
+    function _claimPastRewards(
+        address hook,
+        uint256 groupId,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        internal
+        override
+    {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
 
-        // Current-round funding is excluded. It becomes claimable only after a later round starts.
-        JBClaimContext memory ctx =
-            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + VESTING_ROUNDS});
+        // Current-round funding is excluded. It becomes claimable only after a later round starts. For a tier-scoped
+        // group, load the tier set once so per-token eligibility can be checked without repeated storage reads.
+        JBClaimContext memory ctx = JBClaimContext({
+            hook: hook,
+            groupId: groupId,
+            tierIds: groupId == 0 ? new uint256[](0) : _tierIdsOfGroup[hook][groupId],
+            lastClaimableRound: round - 1,
+            vestingReleaseRound: round + VESTING_ROUNDS
+        });
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {
@@ -228,7 +246,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Find the earliest cursor in the batch, skipping token IDs that are already current.
         for (uint256 i; i < tokenIds.length;) {
-            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][tokenIds[i]][token];
+            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[i]][token];
             if (nextClaimRound <= ctx.lastClaimableRound && nextClaimRound < firstClaimRound) {
                 firstClaimRound = nextClaimRound;
             }
@@ -244,17 +262,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Walk every unclaimed historical round needed by at least one token ID.
         for (uint256 rewardRoundNumber = firstClaimRound; rewardRoundNumber <= ctx.lastClaimableRound;) {
             // Load this reward round's funding, snapshot, claim counter, and deadline.
-            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][token][rewardRoundNumber];
+            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][ctx.groupId][token][rewardRoundNumber];
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
                 // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.
                 if (_rewardRoundExpired(rewardRound)) {
-                    _recycleExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
+                    _recycleExpiredRewardRound({
+                        hook: ctx.hook, groupId: ctx.groupId, token: token, round: rewardRoundNumber
+                    });
                 } else if (rewardRound.totalStake != 0) {
                     // Bundle the fixed round data used by every NFT in the batch.
                     JBVestContext memory vestCtx = JBVestContext({
                         hook: ctx.hook,
+                        groupId: ctx.groupId,
+                        tierIds: ctx.tierIds,
                         token: token,
                         distributable: rewardRound.amount,
                         totalStakeAmount: rewardRound.totalStake,
@@ -286,17 +308,18 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Advance cursors even when a token ID earned zero, so empty or zero-stake rounds are not rescanned forever.
         for (uint256 i; i < tokenIds.length;) {
             uint256 tokenId = tokenIds[i];
-            nextClaimRoundOf[ctx.hook][tokenId][token] = ctx.lastClaimableRound + 1;
+            nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = ctx.lastClaimableRound + 1;
 
             // All accumulated past rewards for this NFT start a single fresh vesting schedule at the claim round.
             if (tokenAmounts[i] != 0) {
-                vestingDataOf[ctx.hook][tokenId][token].push(
+                vestingDataOf[ctx.hook][ctx.groupId][tokenId][token].push(
                     JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmounts[i], shareClaimed: 0})
                 );
 
                 emit Claimed({
                     hook: ctx.hook,
                     tokenId: tokenId,
+                    groupId: ctx.groupId,
                     token: token,
                     amount: tokenAmounts[i],
                     vestingReleaseRound: ctx.vestingReleaseRound,
@@ -323,6 +346,31 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         internal
         returns (uint256 totalVestingAmount)
     {
+        // Tier-scoped groups distribute a tier's pot among that tier's eligible NFTs. Each NFT contributes its tier's
+        // voting units, with no per-owner cap: the denominator (summed `getPastTierVotingUnits`) counts exactly those
+        // eligible NFTs, so the shares reconcile without the legacy delegation-cap machinery.
+        if (ctx.groupId != 0) {
+            for (uint256 j; j < tokenIds.length;) {
+                if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+                    uint256 stake = _tierScopedStake({ctx: ctx, tokenId: tokenIds[j]});
+                    if (stake != 0) {
+                        uint256 tokenAmount =
+                            mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
+                        tokenAmounts[j] += tokenAmount;
+                        totalVestingAmount += tokenAmount;
+                    }
+                }
+
+                unchecked {
+                    ++j;
+                }
+            }
+
+            return totalVestingAmount;
+        }
+
+        // Legacy all-tiers group: split the pot pro-rata across delegated voting power, capping each owner so multiple
+        // NFTs cannot over-claim beyond the owner's checkpointed votes.
         // Allocate scratch arrays sized to the maximum possible number of distinct snapshot owners.
         address[] memory owners = new address[](tokenIds.length);
         uint256[] memory consumed = new uint256[](tokenIds.length);
@@ -330,7 +378,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Claim each token ID that has not yet advanced past this reward round.
         for (uint256 j; j < tokenIds.length;) {
-            if (nextClaimRoundOf[ctx.hook][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+            if (nextClaimRoundOf[ctx.hook][0][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
                 (uint256 tokenAmount, uint256 newUniqueCount) = _claimRewardRoundForTokenId({
                     ctx: ctx, tokenId: tokenIds[j], owners: owners, consumed: consumed, uniqueCount: uniqueCount
                 });
@@ -504,16 +552,77 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         tokenStakeAmount = votingUnits < pastVotes ? votingUnits : pastVotes;
     }
 
-    /// @notice The total stake at a specific block, using the hook's checkpoints module for historical accuracy.
-    /// @dev Uses `IVotes.getPastTotalSupply` from the hook's checkpoints module. This ensures that only NFTs
-    /// that existed (and were delegated) at `blockNumber` are counted, preventing late mints from diluting or
-    /// capturing rewards within the current round.
+    /// @notice The total stake sharing a group's round rewards at a specific block.
+    /// @dev For the legacy group (0) this is `getPastTotalSupply` from the hook's checkpoints module (all NFTs that
+    /// existed and were delegated at `blockNumber`). For a tier-scoped group it is the summed
+    /// `getPastTierVotingUnits` over the group's tier set — the eligible voting units of those tiers at the snapshot.
     /// @param hook The hook to get the total stake for.
+    /// @param groupId The reward group (0 = legacy all-tiers group).
     /// @param blockNumber The block number to get the total staked amount at.
-    /// @return total The total checkpointed voting units at the given block.
-    function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
+    /// @return total The total stake at the given block.
+    function _totalStake(
+        address hook,
+        uint256 groupId,
+        uint256 blockNumber
+    )
+        internal
+        view
+        override
+        returns (uint256 total)
+    {
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();
-        total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+
+        // Legacy all-tiers group: the global checkpointed voting supply.
+        if (groupId == 0) {
+            return IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+        }
+
+        // Tier-scoped group: sum the eligible voting units of each tier in the set at the snapshot block.
+        uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
+        for (uint256 i; i < tierIds.length;) {
+            total += checkpoints.getPastTierVotingUnits({tierId: tierIds[i], blockNumber: blockNumber});
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice The tier-scoped stake of a single NFT in a reward round: its tier's voting units if the NFT's tier is
+    /// in the group's set and the NFT existed at the round snapshot, else zero.
+    /// @dev No per-owner cap is applied. Eligibility (`ownerOfAt != 0`) plus tier membership matches exactly the set
+    /// counted by the `getPastTierVotingUnits` denominator, so per-NFT shares reconcile against the pot.
+    /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
+    /// @param tokenId The NFT token ID to weigh.
+    /// @return stake The NFT's tier voting units, or 0 if ineligible.
+    function _tierScopedStake(JBVestContext memory ctx, uint256 tokenId) internal view returns (uint256 stake) {
+        // The NFT's tier must be one of the funded tiers.
+        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
+        if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
+
+        // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
+        if (_snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock}) == address(0)) {
+            return 0;
+        }
+
+        // Eligible: weigh the NFT by its tier's voting units.
+        stake = IJB721TiersHook(ctx.hook)
+            .STORE()
+            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
+    }
+
+    /// @notice Whether a tier ID is present in a strictly-increasing tier set.
+    /// @param tierId The tier ID to look for.
+    /// @param tierIds The strictly-increasing tier set to search.
+    /// @return found True if `tierId` is in `tierIds`.
+    function _isTierInSet(uint256 tierId, uint256[] memory tierIds) internal pure returns (bool found) {
+        for (uint256 i; i < tierIds.length;) {
+            if (tierIds[i] == tierId) return true;
+            // The set is strictly increasing, so once an entry exceeds the target it cannot appear later.
+            if (tierIds[i] > tierId) return false;
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     //*********************************************************************//

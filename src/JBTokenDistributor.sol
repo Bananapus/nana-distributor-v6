@@ -60,9 +60,12 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
     /// @notice The next reward round a staker has not yet claimed.
     /// @custom:param hook The IVotes token whose stakers are claiming.
+    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
     /// @custom:param tokenId The encoded staker address.
     /// @custom:param token The reward token being claimed.
-    mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public nextClaimRoundOf;
+    mapping(
+        address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
+    ) public nextClaimRoundOf;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -121,8 +124,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             }
 
             if (msg.value != 0) {
-                // Assign native split proceeds to the current reward round for this IVotes hook.
-                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value});
+                // Split-funded pots go to the legacy all-tiers group; a split cannot carry a tier set.
+                _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -139,8 +142,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             uint256 delta =
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
-            // Assign only the amount actually received to this round's reward pot.
-            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta});
+            // Assign only the amount actually received to this round's reward pot (legacy all-tiers group).
+            _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
         }
     }
 
@@ -169,14 +172,28 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenIds The encoded staker addresses to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
+    function _claimPastRewards(
+        address hook,
+        uint256 groupId,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        internal
+        override
+    {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
 
-        // Current-round funding is excluded. It becomes claimable only after a later round starts.
-        JBClaimContext memory ctx =
-            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + VESTING_ROUNDS});
+        // Current-round funding is excluded. It becomes claimable only after a later round starts. Token distributors
+        // have no tier concept, so `tierIds` stays empty; the group only isolates reward storage.
+        JBClaimContext memory ctx = JBClaimContext({
+            hook: hook,
+            groupId: groupId,
+            tierIds: new uint256[](0),
+            lastClaimableRound: round - 1,
+            vestingReleaseRound: round + VESTING_ROUNDS
+        });
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {
@@ -219,7 +236,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         returns (uint256 tokenAmount)
     {
         // Load this staker's cursor for the reward token. All earlier rounds have already been settled.
-        uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][tokenId][token];
+        uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token];
 
         // If the cursor is already past the last completed round, this staker is current.
         if (nextClaimRound > ctx.lastClaimableRound) return 0;
@@ -227,6 +244,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         // Sum this staker's pro-rata share from every unclaimed completed reward round.
         tokenAmount = _claimRewardsFor({
             hook: ctx.hook,
+            groupId: ctx.groupId,
             tokenId: tokenId,
             token: token,
             firstRound: nextClaimRound,
@@ -234,17 +252,18 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         });
 
         // Advance the cursor even when the amount is zero, so empty or zero-stake rounds are not rescanned forever.
-        nextClaimRoundOf[ctx.hook][tokenId][token] = ctx.lastClaimableRound + 1;
+        nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = ctx.lastClaimableRound + 1;
         if (tokenAmount == 0) return 0;
 
         // All accumulated past rewards start a single fresh vesting schedule at the claim round.
-        vestingDataOf[ctx.hook][tokenId][token].push(
+        vestingDataOf[ctx.hook][ctx.groupId][tokenId][token].push(
             JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmount, shareClaimed: 0})
         );
 
         emit Claimed({
             hook: ctx.hook,
             tokenId: tokenId,
+            groupId: ctx.groupId,
             token: token,
             amount: tokenAmount,
             vestingReleaseRound: ctx.vestingReleaseRound,
@@ -265,6 +284,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @return tokenAmount The cumulative unclaimed reward amount.
     function _claimRewardsFor(
         address hook,
+        uint256 groupId,
         uint256 tokenId,
         IERC20 token,
         uint256 firstRound,
@@ -275,14 +295,14 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     {
         // Walk every unclaimed historical round. The caller bounds this to completed rounds only.
         for (uint256 rewardRoundNumber = firstRound; rewardRoundNumber <= lastRound;) {
-            // Load this round's reward data for the hook and reward token.
-            JBRewardRoundData storage rewardRound = rewardRoundOf[hook][token][rewardRoundNumber];
+            // Load this round's reward data for the hook, group, and reward token.
+            JBRewardRoundData storage rewardRound = rewardRoundOf[hook][groupId][token][rewardRoundNumber];
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
                 // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.
                 if (_rewardRoundExpired(rewardRound)) {
-                    _recycleExpiredRewardRound({hook: hook, token: token, round: rewardRoundNumber});
+                    _recycleExpiredRewardRound({hook: hook, groupId: groupId, token: token, round: rewardRoundNumber});
                 } else if (rewardRound.totalStake != 0) {
                     // Use the funding round's snapshot block, not the block at which the staker finally claims.
                     uint256 tokenStakeAmount =
@@ -350,11 +370,23 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     /// @notice The total supply of votes at a specific block.
-    /// @dev Uses `IVotes.getPastTotalSupply` for checkpointed lookups.
+    /// @dev Uses `IVotes.getPastTotalSupply` for checkpointed lookups. Token distributors have no tier concept, so the
+    /// group only isolates reward storage and does not change the stake denominator.
     /// @param hook The IVotes-compatible token contract.
+    /// @param groupId The reward group (unused for token distributors — kept for base-hook conformance).
     /// @param blockNumber The block number to get the total supply at.
     /// @return totalStakedAmount The total supply of votes at the given block.
-    function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 totalStakedAmount) {
+    function _totalStake(
+        address hook,
+        uint256 groupId,
+        uint256 blockNumber
+    )
+        internal
+        view
+        override
+        returns (uint256 totalStakedAmount)
+    {
+        groupId; // Silence unused variable warning — token distributors are group-agnostic in weight.
         totalStakedAmount = IVotes(hook).getPastTotalSupply(blockNumber);
     }
 
