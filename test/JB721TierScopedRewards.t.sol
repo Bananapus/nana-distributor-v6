@@ -114,8 +114,8 @@ contract JB721TierScopedRewards is Test {
         assertEq(recorded[0], 1, "t1");
         assertEq(recorded[1], 2, "t2");
 
-        // The legacy group records no tier set.
-        assertEq(distributor.tierIdsOf(address(hook), 0).length, 0, "legacy empty");
+        // Group 0 records no tier set.
+        assertEq(distributor.tierIdsOf(address(hook), 0).length, 0, "group 0 records none");
     }
 
     // =====================================================================
@@ -176,7 +176,9 @@ contract JB721TierScopedRewards is Test {
         rewardToken.mint(address(this), 100);
         rewardToken.approve(address(distributor), 100);
         vm.expectRevert(
-            abi.encodeWithSelector(JBDistributor.JBDistributor_TierIdsNotIncreasing.selector, uint256(2), uint256(1))
+            abi.encodeWithSelector(
+                JB721Distributor.JB721Distributor_TierIdsNotIncreasing.selector, uint256(2), uint256(1)
+            )
         );
         distributor.fund(address(hook), bad, IERC20(address(rewardToken)), 100);
     }

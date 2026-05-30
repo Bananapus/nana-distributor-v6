@@ -221,17 +221,17 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 4. Only holders whose NFT tier is in the funded set — and whose NFT existed at the round snapshot — can claim the pot.
 5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTierVotingUnits` over the funded tier set. There is no per-owner vote cap on the tier path.
 
-**Group model:** `groupId == 0` is the legacy all-tiers group and behaves exactly as before. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
+**Group model:** `groupId == 0` is the all-tiers group — the default pool, claimed by the plain (no-`tierIds`) signatures. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
 
 **Failure Modes**
 - tier IDs are not strictly increasing, so the group ID cannot be derived
 - caller funds a tier-scoped pot through a split (splits always go to group 0)
-- caller forgets the `tierIds` argument on `beginVesting`/`collectVestedRewards` and claims the legacy group instead
+- caller forgets the `tierIds` argument on `beginVesting`/`collectVestedRewards` and claims group 0 instead
 
 **Postconditions**
 - the pot is reserved for holders of the funded tiers at the funding round's snapshot
 - the tier set is permanently recorded for that group on its first funding
-- legacy all-tiers (group 0) accounting is untouched
+- all-tiers (group 0) accounting is independent of every tier-scoped group
 
 ## Trust Boundaries
 

@@ -45,7 +45,7 @@ interface IJBDistributor {
     /// @notice Emitted when a staker begins vesting tokens.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenId The ID of the staked token that is claiming.
-    /// @param groupId The reward group claimed from (0 = legacy all-tiers group).
+    /// @param groupId The reward group claimed from (0 = the default group).
     /// @param token The address of the token to vest.
     /// @param amount The amount of tokens to vest.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
@@ -63,7 +63,7 @@ interface IJBDistributor {
     /// @notice Emitted when vested tokens are collected.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenId The ID of the staked token collecting.
-    /// @param groupId The reward group collected from (0 = legacy all-tiers group).
+    /// @param groupId The reward group collected from (0 = the default group).
     /// @param token The address of the token collected.
     /// @param amount The amount of tokens collected.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
@@ -175,7 +175,7 @@ interface IJBDistributor {
 
     /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
     /// @param hook The hook the token ID belongs to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The token ID whose vesting rewards are collateralized.
     /// @param token The reward token used as loan collateral.
     function activeVestingLoanIdOf(
@@ -188,49 +188,18 @@ interface IJBDistributor {
         view
         returns (uint256);
 
-    /// @notice Calculate how much of the token has been claimed for the given tokenId in the legacy group.
+    /// @notice Calculate how much of the token has been claimed for the given tokenId in the default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
     function claimedFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
 
-    /// @notice Calculate how much of the token has been claimed for the given tokenId in a tier-scoped group.
-    /// @param hook The hook the tokenId belongs to.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenId The ID of the token to calculate the token amount for.
-    /// @param token The address of the token to check.
-    function claimedFor(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256 tokenId,
-        IERC20 token
-    )
-        external
-        view
-        returns (uint256);
-
     /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in the
-    /// legacy group.
+    /// default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
     function collectableFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
-
-    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in a
-    /// tier-scoped group.
-    /// @param hook The hook the tokenId belongs to.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenId The ID of the token to calculate the token amount for.
-    /// @param token The address of the token to check.
-    function collectableFor(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256 tokenId,
-        IERC20 token
-    )
-        external
-        view
-        returns (uint256);
 
     /// @notice The number of the current round.
     function currentRound() external view returns (uint256);
@@ -243,13 +212,6 @@ interface IJBDistributor {
     /// @notice The timestamp at which a round started.
     /// @param round The round to get the start timestamp of.
     function roundStartTimestamp(uint256 round) external view returns (uint256);
-
-    /// @notice The tier set that defines a reward group, recorded when the group is first funded.
-    /// @dev Empty for the legacy all-tiers group (0).
-    /// @param hook The hook the group belongs to.
-    /// @param groupId The reward group.
-    /// @return tierIds The strictly-increasing tier set defining the group.
-    function tierIdsOf(address hook, uint256 groupId) external view returns (uint256[] memory tierIds);
 
     /// @notice The amount of a token that is currently vesting for a hook's stakers.
     /// @param hook The hook whose vesting amount to check.
@@ -269,24 +231,11 @@ interface IJBDistributor {
     // ---------------------------- transactions ------------------------- //
     //*********************************************************************//
 
-    /// @notice Claims tokens and begins vesting from the legacy all-tiers group.
+    /// @notice Claims tokens and begins vesting from the default group.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
     function beginVesting(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) external;
-
-    /// @notice Claims tokens and begins vesting from a tier-scoped reward group.
-    /// @param hook The hook whose stakers are vesting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs to claim rewards for.
-    /// @param tokens The tokens to claim.
-    function beginVesting(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens
-    )
-        external;
 
     /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
     /// @param hook The hook whose staker is borrowing against vesting rewards.
@@ -310,31 +259,7 @@ interface IJBDistributor {
         external
         returns (uint256 loanId, uint256 collateralCount);
 
-    /// @notice Borrow against one token ID's uncollected vesting rewards in a tier-scoped group.
-    /// @param hook The hook whose staker is borrowing against vesting rewards.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The single token ID to borrow against.
-    /// @param tokens The single revnet reward token to collateralize.
-    /// @param sourceToken The token to borrow from the revnet.
-    /// @param minBorrowAmount The minimum amount to borrow, denominated in `sourceToken`.
-    /// @param prepaidFeePercent The fee percent to charge upfront.
-    /// @param beneficiary The recipient of the borrowed funds.
-    /// @return loanId The Revnet loan NFT ID held by this distributor.
-    /// @return collateralCount The amount of vesting rewards used as collateral.
-    function borrowAgainstVesting(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address sourceToken,
-        uint256 minBorrowAmount,
-        uint256 prepaidFeePercent,
-        address payable beneficiary
-    )
-        external
-        returns (uint256 loanId, uint256 collateralCount);
-
-    /// @notice Collect vested tokens from the legacy all-tiers group.
+    /// @notice Collect vested tokens from the default group.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenIds The IDs of the tokens to collect for.
     /// @param tokens The addresses of the tokens to collect.
@@ -347,57 +272,19 @@ interface IJBDistributor {
     )
         external;
 
-    /// @notice Collect vested tokens from a tier-scoped reward group.
-    /// @param hook The hook whose stakers are collecting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the tokens to collect for.
-    /// @param tokens The addresses of the tokens to collect.
-    /// @param beneficiary The recipient of the collected tokens.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        external;
-
-    /// @notice Fund the distributor's legacy all-tiers group for a specific hook.
+    /// @notice Fund the distributor's default group for a specific hook.
     /// @dev For native ETH, send `msg.value` and pass `IERC20(NATIVE_TOKEN)` as the token.
     /// @param hook The hook to fund.
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
 
-    /// @notice Fund a tier-scoped reward group: only holders of the given tiers can claim this pot.
-    /// @dev For native ETH, send `msg.value` and pass `IERC20(NATIVE_TOKEN)` as the token.
-    /// @param hook The hook to fund.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund.
-    function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable;
-
-    /// @notice Recycle unclaimed rewards from expired legacy-group reward rounds into the current reward round.
+    /// @notice Recycle unclaimed rewards from expired default-group reward rounds into the current reward round.
     /// @param hook The hook whose expired reward rounds should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
     function burnExpiredRewards(address hook, IERC20 token, uint256[] calldata rounds) external returns (uint256 amount);
-
-    /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
-    /// @param hook The hook whose expired reward rounds should be recycled.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The reward token to recycle.
-    /// @param rounds The reward rounds to recycle.
-    /// @return amount The total amount recycled.
-    function burnExpiredRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        IERC20 token,
-        uint256[] calldata rounds
-    )
-        external
-        returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;
@@ -414,28 +301,13 @@ interface IJBDistributor {
         payable
         returns (uint256 paidOffLoanId);
 
-    /// @notice Recycle unlocked rewards from burned tokens in the legacy group into the current reward round.
+    /// @notice Recycle unlocked rewards from burned tokens in the default group into the current reward round.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
     /// @param tokens The reward tokens to recycle.
     /// @param beneficiary Unused for forfeiture.
     function releaseForfeitedRewards(
         address hook,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        external;
-
-    /// @notice Recycle unlocked rewards from burned tokens in a tier-scoped group into the current reward round.
-    /// @param hook The hook whose tokens were burned.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the burned tokens.
-    /// @param tokens The reward tokens to recycle.
-    /// @param beneficiary Unused for forfeiture.
-    function releaseForfeitedRewards(
-        address hook,
-        uint256[] calldata tierIds,
         uint256[] calldata tokenIds,
         IERC20[] calldata tokens,
         address beneficiary

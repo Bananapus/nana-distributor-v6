@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- Add tier-scoped reward groups. Every reward, vesting, and loan record now carries a `groupId` dimension:
-  `groupId == 0` is the legacy all-tiers group and is fully backward compatible, while a non-zero group is
-  `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set. New `tierIds` overloads of `fund`,
-  `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards`
-  (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) fund and claim pots that only holders of the given
-  tiers can claim, pro-rata by tier `votingUnits` against a summed `getPastTierVotingUnits` denominator (no per-owner
-  cap on the tier path). Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` threads
+- Add tier-scoped reward groups. Every reward, vesting, and loan record carries a generic `groupId` dimension in the
+  base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
+  is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
+  `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set (group 0 = all tiers). `JB721Distributor` adds
+  `tierIds` overloads of `fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`,
+  and `releaseForfeitedRewards` (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) that fund and claim
+  pots only holders of the given tiers can claim, pro-rata by tier `votingUnits` against a summed
+  `getPastTierVotingUnits` denominator (no per-owner cap on the tier path; the all-tiers path uses the per-owner cap).
+  Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` exposes no tier API and threads
   `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply`. Re-keyed the public state
   getters (`rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
   `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member

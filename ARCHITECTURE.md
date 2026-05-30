@@ -90,7 +90,7 @@ claimant
 
 ### Tier-Scoped Rewards
 
-Every reward, vesting, and loan record carries a `groupId` dimension. `groupId == 0` is the legacy all-tiers group and behaves exactly as before — all the existing signatures are unchanged and fully backward compatible. A non-zero group is `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set, recorded on the group's first funding and queryable via `tierIdsOf(hook, groupId)`.
+Every reward, vesting, and loan record carries a `groupId` dimension. `groupId == 0` is the all-tiers group — the default pool, acted on by the plain `fund`/`beginVesting`/`collectVestedRewards`/… signatures that take no `tierIds`. A non-zero group is `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set, recorded on the group's first funding and queryable via `tierIdsOf(hook, groupId)`. The base `JBDistributor` is tier-agnostic — it only knows generic groups; the tier→`groupId` mapping lives entirely in `JB721Distributor`.
 
 ```text
 fund a tier-scoped pot
@@ -101,7 +101,7 @@ fund a tier-scoped pot
      burnExpiredRewards / releaseForfeitedRewards thread the same groupId
 ```
 
-- **Denominator.** For a tier-scoped pot, `JB721Distributor` computes the round's total stake as the summed `getPastTierVotingUnits(tierId, snapshotBlock)` over the funded tier set (from the 721 hook's checkpoints module). Each eligible NFT — its tier is in the set and it existed at the round snapshot — contributes its tier's `votingUnits`. There is **no per-owner vote cap** on the tier path; eligibility plus tier membership matches exactly the set the denominator counts, so numerator and denominator reconcile. The legacy group-0 path keeps its existing owner-cap logic.
+- **Denominator.** For a tier-scoped pot, `JB721Distributor` computes the round's total stake as the summed `getPastTierVotingUnits(tierId, snapshotBlock)` over the funded tier set (from the 721 hook's checkpoints module). Each eligible NFT — its tier is in the set and it existed at the round snapshot — contributes its tier's `votingUnits`. There is **no per-owner vote cap** on the tier path; eligibility plus tier membership matches exactly the set the denominator counts, so numerator and denominator reconcile. The all-tiers (group 0) path applies a per-owner vote cap instead.
 - **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply` because token distributors have no tier concept.
 - **Split funding is group-0 only.** `processSplitWith` always records funding under group 0 — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
 

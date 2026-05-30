@@ -60,7 +60,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
     /// @notice The next reward round a staker has not yet claimed.
     /// @custom:param hook The IVotes token whose stakers are claiming.
-    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
+    /// @custom:param groupId The reward group (0 = the default group).
     /// @custom:param tokenId The encoded staker address.
     /// @custom:param token The reward token being claimed.
     mapping(
@@ -124,7 +124,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             }
 
             if (msg.value != 0) {
-                // Split-funded pots go to the legacy all-tiers group; a split cannot carry a tier set.
+                // Split-funded pots go to the default group (0); a split cannot carry a tier set.
                 _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});
             }
         } else {
@@ -142,7 +142,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             uint256 delta =
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
-            // Assign only the amount actually received to this round's reward pot (legacy all-tiers group).
+            // Assign only the amount actually received to this round's reward pot (default group, 0).
             _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
         }
     }

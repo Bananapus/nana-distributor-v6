@@ -73,10 +73,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @notice Thrown when revnet loan-backed collection has not been configured.
     error JBDistributor_RevnetLoansNotConfigured();
 
-    /// @notice Thrown when a tier-scoped call's tier IDs are not strictly increasing (so a canonical group ID
-    /// cannot be derived).
-    error JBDistributor_TierIdsNotIncreasing(uint256 previousTierId, uint256 tierId);
-
     /// @notice Thrown when unexpected native ETH is sent with an ERC-20 operation.
     error JBDistributor_UnexpectedNativeValue(uint256 msgValue, address token);
 
@@ -147,7 +143,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
     /// @custom:param hook The hook the token ID belongs to.
-    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
+    /// @custom:param groupId The reward group (0 = the default group).
     /// @custom:param tokenId The token ID whose vesting rewards are collateralized.
     /// @custom:param token The reward token used as loan collateral.
     mapping(
@@ -158,7 +154,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The index within `vestingDataOf` of the latest vest.
     /// @custom:param hook The hook the tokenId belongs to.
-    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
+    /// @custom:param groupId The reward group (0 = the default group).
     /// @custom:param tokenId The ID of the token to which the vests belong.
     /// @custom:param token The address of the token vested.
     mapping(
@@ -171,7 +167,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Reward data assigned to each funding round.
     /// @custom:param hook The stake source whose stakers receive rewards.
-    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
+    /// @custom:param groupId The reward group (0 = the default group).
     /// @custom:param token The reward token.
     /// @custom:param round The reward round.
     mapping(
@@ -190,7 +186,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice All vesting data of a tokenId for any number of vesting tokens.
     /// @custom:param hook The hook the tokenId belongs to.
-    /// @custom:param groupId The reward group (0 = legacy all-tiers group).
+    /// @custom:param groupId The reward group (0 = the default group).
     /// @custom:param tokenId The ID of the token to which the vests belong.
     /// @custom:param token The address of the token vested.
     mapping(
@@ -209,12 +205,6 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param hook The hook whose balance to check.
     /// @custom:param token The token to check the balance of.
     mapping(address hook => mapping(IERC20 token => uint256)) internal _balanceOf;
-
-    /// @notice The tier set that defines a reward group, recorded the first time the group is funded.
-    /// @dev Empty for the legacy all-tiers group (0). Subclasses read this to scope the tier-set stake math.
-    /// @custom:param hook The hook the group belongs to.
-    /// @custom:param groupId The reward group.
-    mapping(address hook => mapping(uint256 groupId => uint256[])) internal _tierIdsOfGroup;
 
     /// @notice The vesting position collateralized by a Revnet loan.
     /// @custom:param loanId The Revnet loan NFT ID.
@@ -294,24 +284,6 @@ abstract contract JBDistributor is IJBDistributor {
         _beginVesting({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens});
     }
 
-    /// @notice Begin vesting all unclaimed past reward rounds for the specified token IDs in a tier-scoped group.
-    /// @param hook The hook (721 hook) whose stakers are vesting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The staker token IDs to claim rewards for.
-    /// @param tokens The reward tokens to begin vesting.
-    function beginVesting(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens
-    )
-        external
-        virtual
-        override
-    {
-        _beginVesting({hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens});
-    }
-
     /// @notice Directly fund the distributor for a specific hook by pulling tokens from the caller. An alternative
     /// to split-based funding — useful for one-off deposits or external reward sources.
     /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
@@ -320,28 +292,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param token The token to fund with.
     /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
     function fund(address hook, IERC20 token, uint256 amount) external payable virtual override {
-        _fund({hook: hook, groupId: 0, tierIds: new uint256[](0), token: token, amount: amount});
-    }
-
-    /// @notice Fund a tier-scoped reward group: only holders of the given tiers can claim this pot.
-    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
-    /// delta to handle fee-on-transfer tokens correctly. The tier set is recorded on the group's first funding.
-    /// @param hook The hook to fund (determines which staker pool receives the tokens).
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
-    function fund(
-        address hook,
-        uint256[] calldata tierIds,
-        IERC20 token,
-        uint256 amount
-    )
-        external
-        payable
-        virtual
-        override
-    {
-        _fund({hook: hook, groupId: _groupIdFor(tierIds), tierIds: tierIds, token: token, amount: amount});
+        _fund({hook: hook, groupId: 0, token: token, amount: amount});
     }
 
     /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
@@ -361,26 +312,6 @@ abstract contract JBDistributor is IJBDistributor {
         returns (uint256 amount)
     {
         amount = _burnExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
-    }
-
-    /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
-    /// @param hook The hook whose expired rewards should be recycled.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The reward token to recycle.
-    /// @param rounds The reward rounds to recycle.
-    /// @return amount The total amount recycled.
-    function burnExpiredRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        IERC20 token,
-        uint256[] calldata rounds
-    )
-        external
-        virtual
-        override
-        returns (uint256 amount)
-    {
-        amount = _burnExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});
     }
 
     /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
@@ -405,28 +336,6 @@ abstract contract JBDistributor is IJBDistributor {
         override
     {
         _releaseForfeitedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
-    }
-
-    /// @notice Recycle unlocked rewards tied to burned tokens in a tier-scoped group into the current reward round.
-    /// @dev Anyone can call this for burned tokens.
-    /// @param hook The hook whose tokens were burned.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
-    /// @param tokens The reward tokens to recycle.
-    /// @param beneficiary Unused for forfeiture. Kept for interface compatibility.
-    function releaseForfeitedRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        external
-        override
-    {
-        _releaseForfeitedRewards({
-            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
-        });
     }
 
     //*********************************************************************//
@@ -459,28 +368,6 @@ abstract contract JBDistributor is IJBDistributor {
         tokenAmount = _unclaimedVestingAmountOf({hook: hook, groupId: 0, tokenId: tokenId, token: token});
     }
 
-    /// @notice Calculate the total uncollected (vesting + vested-but-uncollected) amount for a staker token ID in a
-    /// tier-scoped group.
-    /// @param hook The hook the tokenId belongs to.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenId The ID of the staker token to calculate for.
-    /// @param token The reward token to check.
-    /// @return tokenAmount The total uncollected amount (vesting + vested-but-uncollected).
-    function claimedFor(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256 tokenId,
-        IERC20 token
-    )
-        external
-        view
-        override
-        returns (uint256 tokenAmount)
-    {
-        tokenAmount =
-            _unclaimedVestingAmountOf({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});
-    }
-
     /// @notice Calculate how much of a reward token is currently unlocked and ready to be collected for a given
     /// staker token ID. Only includes the vested portion — excludes amounts still locked in vesting.
     /// @param hook The hook the tokenId belongs to.
@@ -498,35 +385,6 @@ abstract contract JBDistributor is IJBDistributor {
         returns (uint256 tokenAmount)
     {
         tokenAmount = _collectableFor({hook: hook, groupId: 0, tokenId: tokenId, token: token});
-    }
-
-    /// @notice Calculate how much of a reward token is currently unlocked and ready to be collected for a given
-    /// staker token ID in a tier-scoped group.
-    /// @param hook The hook the tokenId belongs to.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenId The ID of the staker token to calculate for.
-    /// @param token The reward token to check.
-    /// @return tokenAmount The amount of tokens that can be collected right now via `collectVestedRewards`.
-    function collectableFor(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256 tokenId,
-        IERC20 token
-    )
-        external
-        view
-        override
-        returns (uint256 tokenAmount)
-    {
-        tokenAmount = _collectableFor({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});
-    }
-
-    /// @notice The tier set that defines a reward group, recorded when the group is first funded.
-    /// @param hook The hook the group belongs to.
-    /// @param groupId The reward group.
-    /// @return tierIds The strictly-increasing tier set defining the group (empty for the legacy group).
-    function tierIdsOf(address hook, uint256 groupId) external view override returns (uint256[] memory tierIds) {
-        tierIds = _tierIdsOfGroup[hook][groupId];
     }
 
     /// @notice The vesting position collateralized by a Revnet loan.
@@ -575,28 +433,6 @@ abstract contract JBDistributor is IJBDistributor {
         _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
     }
 
-    /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
-    /// @param hook The hook whose stakers are collecting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the tokens to collect for (caller must be authorized for all of them).
-    /// @param tokens The reward tokens to collect vested amounts of.
-    /// @param beneficiary The recipient of the collected tokens.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        public
-        virtual
-        override
-    {
-        _collectVestedRewards({
-            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
-        });
-    }
-
     /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
     /// @dev The distributor keeps custody of the loan NFT. Collection is blocked until repayment restores the
     /// collateral to the original vesting schedule.
@@ -626,44 +462,6 @@ abstract contract JBDistributor is IJBDistributor {
         (loanId, collateralCount) = _borrowAgainstVestingFor({
             hook: hook,
             groupId: 0,
-            tokenIds: tokenIds,
-            tokens: tokens,
-            sourceToken: sourceToken,
-            minBorrowAmount: minBorrowAmount,
-            prepaidFeePercent: prepaidFeePercent,
-            beneficiary: beneficiary
-        });
-    }
-
-    /// @notice Borrow against one token ID's uncollected vesting rewards in a tier-scoped group.
-    /// @param hook The hook whose staker is borrowing against vesting rewards.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The single token ID to borrow against.
-    /// @param tokens The single revnet reward token to collateralize.
-    /// @param sourceToken The token to borrow from the revnet.
-    /// @param minBorrowAmount The minimum amount to borrow, denominated in `sourceToken`.
-    /// @param prepaidFeePercent The fee percent to charge upfront.
-    /// @param beneficiary The recipient of the borrowed funds.
-    /// @return loanId The Revnet loan NFT ID held by this distributor.
-    /// @return collateralCount The amount of vesting rewards used as collateral.
-    function borrowAgainstVesting(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address sourceToken,
-        uint256 minBorrowAmount,
-        uint256 prepaidFeePercent,
-        address payable beneficiary
-    )
-        public
-        virtual
-        override
-        returns (uint256 loanId, uint256 collateralCount)
-    {
-        (loanId, collateralCount) = _borrowAgainstVestingFor({
-            hook: hook,
-            groupId: _groupIdFor(tierIds),
             tokenIds: tokenIds,
             tokens: tokens,
             sourceToken: sourceToken,
@@ -753,7 +551,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Claim all past reward rounds for the given token IDs and reward tokens into fresh vesting entries.
     /// @param hook The hook whose stakers are claiming.
-    /// @param groupId The reward group being claimed (0 = legacy all-tiers group).
+    /// @param groupId The reward group being claimed (0 = the default group).
     /// @param tokenIds The token IDs to claim for.
     /// @param tokens The reward tokens to claim.
     function _claimPastRewards(
@@ -772,7 +570,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Shared begin-vesting logic across reward groups.
     /// @param hook The hook whose stakers are vesting.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
     function _beginVesting(
@@ -798,7 +596,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Shared begin-vesting-then-collect logic across reward groups.
     /// @param hook The hook whose stakers are collecting.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The token IDs to collect for.
     /// @param tokens The reward tokens to collect.
     /// @param beneficiary The recipient of the collected tokens.
@@ -831,7 +629,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Shared forfeiture-release logic across reward groups.
     /// @param hook The hook whose tokens were burned.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The IDs of the burned tokens.
     /// @param tokens The reward tokens to recycle.
     /// @param beneficiary Unused for forfeiture. Kept for interface compatibility.
@@ -870,7 +668,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Shared expired-reward recycling logic across reward groups.
     /// @param hook The hook whose expired rewards should be recycled.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
@@ -897,7 +695,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Shared borrow-against-vesting logic across reward groups.
     /// @param hook The hook whose staker is borrowing against vesting rewards.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The single token ID to borrow against.
     /// @param tokens The single revnet reward token to collateralize.
     /// @param sourceToken The token to borrow from the revnet.
@@ -955,22 +753,6 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Open and track the distributor-owned loan.
         (loanId, collateralCount) = _borrowAgainstVesting({ctx: ctx, tokenIds: tokenIds, tokens: tokens});
-    }
-
-    /// @notice Derive the canonical group ID for a tier set. The empty set is the legacy all-tiers group (0).
-    /// @param tierIds Strictly-increasing tier IDs; empty for the legacy group.
-    /// @return groupId 0 for the legacy group, else `keccak256(abi.encode(tierIds))`.
-    function _groupIdFor(uint256[] calldata tierIds) internal pure returns (uint256 groupId) {
-        if (tierIds.length == 0) return 0;
-        for (uint256 i = 1; i < tierIds.length;) {
-            if (tierIds[i] <= tierIds[i - 1]) {
-                revert JBDistributor_TierIdsNotIncreasing({previousTierId: tierIds[i - 1], tierId: tierIds[i]});
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        groupId = uint256(keccak256(abi.encode(tierIds)));
     }
 
     /// @notice Open and track a distributor-held Revnet loan against one vesting position.
@@ -1293,16 +1075,10 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Accept funds and assign them to this round's reward ledger.
     /// @param hook The stake source whose stakers receive the rewards.
-    /// @param groupId The reward group being funded (0 = legacy all-tiers group).
-    /// @param tierIds The tier set defining the group; recorded on the group's first funding.
+    /// @param groupId The reward group being funded (0 = the default group).
     /// @param token The reward token being funded.
     /// @param amount The nominal amount to fund.
-    function _fund(address hook, uint256 groupId, uint256[] memory tierIds, IERC20 token, uint256 amount) internal {
-        // Record the tier set the first time a tier-scoped group is funded, so the stake math can scope it later.
-        if (groupId != 0 && _tierIdsOfGroup[hook][groupId].length == 0) {
-            _tierIdsOfGroup[hook][groupId] = tierIds;
-        }
-
+    function _fund(address hook, uint256 groupId, IERC20 token, uint256 amount) internal {
         // Native funding is measured by msg.value, not the caller-provided amount.
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
@@ -1322,7 +1098,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Record accepted funding as the current round's reward pot.
     /// @param hook The stake source whose stakers receive the rewards.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param token The reward token.
     /// @param amount The accepted funding amount.
     function _recordRewardFunding(address hook, uint256 groupId, IERC20 token, uint256 amount) internal {
@@ -1340,7 +1116,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Record rewards as the current round's claimable historical reward pot.
     /// @param hook The stake source whose stakers receive the rewards.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param token The reward token.
     /// @param amount The amount to add to the current reward round.
     function _recordRewardRound(address hook, uint256 groupId, IERC20 token, uint256 amount) internal {
@@ -1377,7 +1153,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Recycle one expired reward round's unclaimed inventory into the current reward round.
     /// @param hook The hook whose expired rewards should be recycled.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param token The reward token to recycle.
     /// @param round The reward round to recycle.
     /// @return recycleAmount The amount recycled.
@@ -1499,7 +1275,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Unlocks rewards for the given token IDs and tokens, either for collection or forfeiture.
     /// @param hook The hook the tokens belong to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The IDs of the tokens to unlock rewards for.
     /// @param tokens The addresses of the tokens to unlock.
     /// @param beneficiary The recipient of the unlocked tokens.
@@ -1564,7 +1340,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Unlocks rewards for a set of token IDs for a single reward token.
     /// @param hook The hook the tokens belong to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The IDs of the tokens to unlock rewards for.
     /// @param token The reward token to unlock.
     /// @param round The current round.
@@ -1660,7 +1436,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The collectable (unlocked, uncollected) amount for a token ID in a specific reward group.
     /// @param hook The hook the tokenId belongs to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The ID of the staker token to calculate for.
     /// @param token The reward token to check.
     /// @return tokenAmount The amount of tokens that can be collected right now.
@@ -1718,7 +1494,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The remaining uncollected vesting amount for one token ID and reward token.
     /// @param hook The hook the token ID belongs to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The token ID to check.
     /// @param token The reward token to check.
     /// @return tokenAmount The amount still locked or unlocked-but-uncollected.
@@ -1772,7 +1548,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice Revert if a token ID's vesting rewards are locked in a distributor-owned loan.
     /// @param hook The hook the token ID belongs to.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The token ID to check.
     /// @param token The reward token to check.
     function _requireNoActiveVestingLoan(address hook, uint256 groupId, uint256 tokenId, IERC20 token) internal view {
@@ -1792,17 +1568,17 @@ abstract contract JBDistributor is IJBDistributor {
     function _tokenBurned(address hook, uint256 tokenId) internal view virtual returns (bool tokenWasBurned);
 
     /// @notice The stake weight of a specific token ID, used to calculate its pro-rata share of distributions.
-    /// For 721 distributors this is the tier's voting units; for token distributors this is delegated voting power.
+    /// @dev Subclasses define how stake is measured.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The ID of the token to get the stake weight of.
     /// @return tokenStakeAmount The stake weight represented by this token ID.
     function _tokenStake(address hook, uint256 tokenId) internal view virtual returns (uint256 tokenStakeAmount);
 
     /// @notice The total stake sharing a group's round rewards at a given block. Used as the denominator when
-    /// calculating each token ID's pro-rata share. For the legacy group (0) this is `getPastTotalSupply`; for a
-    /// tier-scoped group this is the summed `getPastTierVotingUnits` over the group's tier set.
+    /// calculating each token ID's pro-rata share.
+    /// @dev Subclasses define how the per-group total stake is measured.
     /// @param hook The hook to get the total stake for.
-    /// @param groupId The reward group (0 = legacy all-tiers group).
+    /// @param groupId The reward group (0 = the default group).
     /// @param blockNumber The block number to query (must be strictly in the past).
     /// @return totalStakedAmount The total stake at the given block.
     function _totalStake(

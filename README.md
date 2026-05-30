@@ -77,10 +77,11 @@ This repo does not explain why an allocation exists. It only defines how funded 
   collectible instead of locked in a vesting position
 - `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token
   forfeiture path
-- reward, vesting, and loan accounting carries a `groupId`: `0` is the legacy all-tiers group (unchanged), a non-zero
-  group is `keccak256(abi.encode(tierIds))`. Split funding via `processSplitWith` always lands in group 0 — a split
-  cannot carry a tier set; tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)` overload, and
-  claims/collections must pass the same `tierIds` to hit that group
+- reward, vesting, and loan accounting carries a `groupId`: `0` is the all-tiers group (the default pool), a non-zero
+  group is `keccak256(abi.encode(tierIds))`. The tier overloads live on `JB721Distributor`; the base is tier-agnostic.
+  Split funding via `processSplitWith` always lands in group 0 — a split cannot carry a tier set; tier-scoped pots
+  require the explicit `fund(hook, tierIds, token, amount)` overload, and claims/collections must pass the same
+  `tierIds` to hit that group
 - tier-scoped 721 pots weigh each eligible NFT by its tier's `votingUnits` against a summed
   `getPastTierVotingUnits` denominator, which requires `@bananapus/721-hook-v6 >= 0.0.63` for that checkpoints API
 - snapshot timing is part of the trusted surface
