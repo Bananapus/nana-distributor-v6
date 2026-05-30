@@ -13,7 +13,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.1.1 Round snapshot is `block.number - 1`, locked on first interaction.** `_ensureSnapshotBlockFor` writes `roundSnapshotBlock[round] = block.number - 1` once per round and never overwrites it (`src/JBDistributor.sol:1143-1150`). The strictly-past block is required by both `IVotes.getPastVotes` and `IJB721Checkpoints.ownerOfAt`, and means the first interaction of the round cannot manipulate the eligible staker set.
 - **A.1.2 Snapshot is eagerly armed for the next round.** Every snapshot-aware code path also locks `round + 1` via `_ensureSnapshotBlock` (`src/JBDistributor.sol:1132-1136`). This blocks a same-block "mint NFT → poke → claim" sequence from claiming pro-rata in the round in which the staker first existed.
 - **A.1.3 `poke()` is permissionless.** Any keeper or frontend can call `poke()` to lock the current round's snapshot block before any pay/claim activity (`src/JBDistributor.sol:331-333`). Locking earlier is always equal or better for stakers; locking later cannot exceed the prevailing `block.number - 1`.
-- **A.1.4 Per-round reward pots are snapshot-immutable.** When `_recordRewardRound` first credits a round, it writes `snapshotBlock`, `claimDeadline`, and `totalStake` into `rewardRoundOf[hook][token][round]` (`src/JBDistributor.sol:1023-1053`). Subsequent funding in the same round increases `.amount` but never re-snapshots stake or block — late mints cannot dilute earlier round contributors.
+- **A.1.4 Per-round reward pots are snapshot-immutable.** When `_recordRewardRound` first credits a round, it writes `snapshotBlock`, `claimDeadline`, and `totalStake` into `rewardRoundOf[hook][groupId][token][round]` (`src/JBDistributor.sol:1023-1053`). Subsequent funding in the same round increases `.amount` but never re-snapshots stake or block — late mints cannot dilute earlier round contributors.
 - **A.1.5 Token-distributor stake is delegated voting power at the snapshot block.** `JBTokenDistributor._tokenStake` and `_totalStake` route through `IVotes.getPastVotes` / `IVotes.getPastTotalSupply` at the round's snapshot block (`src/JBTokenDistributor.sol:347-359, 382-400`). Holders who have not delegated (even to themselves) are not stakers; this is by design — IVotes participation is opt-in.
 - **A.1.6 721 stake is `min(tier.votingUnits, owner.pastVotes)` at the snapshot block.** `JB721Distributor._tokenStake` queries the hook's checkpoints module: `_snapshotOwnerOf` returns the owner-at-snapshot (or zero), and `IVotes.getPastVotes` on the checkpoints module gates that owner's effective claim (`src/JB721Distributor.sol:483-505, 531-550`). Late mints, post-snapshot transfers, and undelegated owners receive zero.
 - **A.1.7 Per-owner voting-power cap across an NFT batch.** When an owner holds multiple NFTs in the batch, `_claimRewardRoundForTokenId` uses per-owner `consumed[]` accounting to cap the aggregate claim at the owner's snapshot `pastVotes`, persisted into `_consumedVotesOf[hook][token][round][owner]` across calls (`src/JB721Distributor.sol:365-427`, persisted at `:350` and seeded from storage at `:410`). An owner with N NFTs of V voting units each cannot claim `N×V` if `pastVotes < N×V`.
@@ -36,7 +36,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 ## A.4 Loan-against-vesting protections
 
-- **A.4.1 Collection blocked while a loan is outstanding.** `_unlockTokenIds` reverts via `_requireNoActiveVestingLoan` if `activeVestingLoanIdOf[hook][tokenId][token] != 0` (`src/JBDistributor.sol:1256, 1386-1393`). `collectableFor` returns 0 under the same condition (`src/JBDistributor.sol:414`).
+- **A.4.1 Collection blocked while a loan is outstanding.** `_unlockTokenIds` reverts via `_requireNoActiveVestingLoan` if `activeVestingLoanIdOf[hook][groupId][tokenId][token] != 0` (`src/JBDistributor.sol:1256, 1386-1393`). `collectableFor` returns 0 under the same condition (`src/JBDistributor.sol:414`).
 - **A.4.2 One vesting position, one outstanding loan.** `_borrowAgainstVesting` reverts `JBDistributor_VestingLoanOutstanding` if an active loan already exists for the `(hook, tokenId, token)` triple (`src/JBDistributor.sol:682-687`).
 - **A.4.3 Same-position reentrancy lock.** Before the external `REV_LOANS.borrowFrom` call (which burns collateral and may trigger callbacks), the active loan ID is set to the sentinel `_PENDING_VESTING_LOAN_ID = type(uint256).max`; the real loan ID is written on return (`src/JBDistributor.sol:709-718`).
 - **A.4.4 Loan collateral is exactly the unclaimed vesting amount at borrow time.** `collateralCount = _unclaimedVestingAmountOf({hook, tokenId, token})` after bringing the staker current via `_claimPastRewards` (`src/JBDistributor.sol:690-693`).
@@ -58,6 +58,16 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.5.3 Expired rounds short-circuit during lazy claim.** `JBTokenDistributor._claimRewardsFor` and `JB721Distributor._claimPastRewardsForToken` route expired rounds through `_recycleExpiredRewardRound` instead of distributing them (`src/JBTokenDistributor.sol:285`, `src/JB721Distributor.sol:253`). A staker who lazy-claims after a round expires gets nothing for that round but is not double-charged.
 - **A.5.4 `releaseForfeitedRewards` requires tokenIds actually burned.** Reverts `JBDistributor_NoAccess` unless every requested tokenId returns `_tokenBurned == true` (`src/JBDistributor.sol:341-365`). For `JBTokenDistributor` this always reverts because `_tokenBurned` is hardcoded `false` (`src/JBTokenDistributor.sol:334-338`); only the 721 distributor exposes this path (`src/JB721Distributor.sol:468-474`).
 - **A.5.5 Forfeited inventory recycles into the current round, not to the caller.** `_unlockRewards` with `ownerClaim=false` calls `_recordRewardRound` for the unlocked amount instead of transferring; the inventory stays inside the distributor (`src/JBDistributor.sol:1224-1228`). The `beneficiary` argument is intentionally unused on the forfeit path.
+
+## A.6 Tier-scoped reward groups
+
+- **A.6.1 `groupId` keys the reward, vesting, and loan maps.** `rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, and `nextClaimRoundOf` all carry a `groupId` dimension (`src/JBDistributor.sol`, `src/JB721Distributor.sol`); the `JBVestingLoan` struct carries `groupId` as its 2nd member (`src/structs/JBVestingLoan.sol`). `groupId == 0` is the legacy all-tiers group; a non-zero group is `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set, derived by `_groupIdFor` which reverts `JBDistributor_TierIdsNotIncreasing` on a non-increasing set.
+- **A.6.2 Group 0 behavior is unchanged.** The legacy signatures (`fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, `releaseForfeitedRewards`, `claimedFor`, `collectableFor`) all route through `groupId == 0` and preserve their pre-existing semantics exactly, including the per-owner voting-power cap (A.1.7). The tier-scoped overloads add the `tierIds` dimension without touching group 0.
+- **A.6.3 Tier path has no owner cap and reconciles exactly.** A tier-scoped round's denominator is the summed `getPastTierVotingUnits(tierId, snapshotBlock)` over the funded tier set; each eligible NFT (its tier is in the set and it existed at the round snapshot) contributes its tier's `votingUnits` with no per-owner cap (`src/JB721Distributor.sol:_tierScopedStake`, `_totalStake`). Eligibility plus tier membership matches exactly the set the denominator counts, so per-NFT numerators sum to the pot.
+- **A.6.4 `_consumedVotesOf` is group-0-only.** The per-owner consumed-vote cap accounting (`_consumedVotesOf[hook][token][round][owner]`) is exercised only on the legacy group-0 claim path; the tier path does not consult or mutate it.
+- **A.6.5 Tier sets are recorded once and queryable.** `_tierIdsOfGroup[hook][groupId]` is written on the group's first funding and exposed via `tierIdsOf(hook, groupId)`; it is empty for group 0.
+- **A.6.6 Split funding is group-0 only.** `processSplitWith` always records funding under `groupId == 0` — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
+- **A.6.7 Token distributors are group-agnostic in weight.** `JBTokenDistributor` threads `groupId` only for storage isolation; its `_totalStake` stays global `getPastTotalSupply` because token distributors have no tier concept.
 
 ---
 
@@ -108,7 +118,7 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 - **`_canClaim(hook, tokenId, account) view → bool`** — abstract; subclass-defined ownership check.
 - **`_tokenBurned(hook, tokenId) view → bool`** — abstract; subclass-defined burn check.
 - **`_tokenStake(hook, tokenId) view → uint256`** — abstract; subclass-defined stake weight.
-- **`_totalStake(hook, blockNumber) view → uint256`** — abstract; subclass-defined total at block.
+- **`_totalStake(hook, groupId, blockNumber) view → uint256`** — abstract; subclass-defined total at block (legacy group 0 = global supply; tier-scoped group = summed `getPastTierVotingUnits` over the group's tier set; token distributors ignore `groupId` and return global supply).
 - **`_claimPastRewards(hook, tokenIds, tokens)`** — abstract; subclass-defined lazy past-round materialization.
 - **`_requireCanClaimTokenIds(hook, tokenIds) view`** — abstract; subclass-defined batch authorization.
 
@@ -138,7 +148,7 @@ Concrete distributor for IVotes ERC-20 stakers. `tokenId` is the staker address 
 ### Views
 
 - `supportsInterface` advertises `IJBTokenDistributor`, `IJBSplitHook`, `IERC165` (`src/JBTokenDistributor.sol:159-162`).
-- `nextClaimRoundOf[hook][tokenId][token]` is the cursor for lazy past-round claims.
+- `nextClaimRoundOf[hook][groupId][tokenId][token]` is the cursor for lazy past-round claims.
 - `DIRECTORY` immutable.
 
 ### Receive
@@ -167,7 +177,7 @@ Concrete distributor for Juicebox 721 NFT stakers. `tokenId` is the NFT token ID
 ### Views
 
 - `supportsInterface` advertises `IJB721Distributor`, `IJBSplitHook`, `IERC165` (`src/JB721Distributor.sol:177-180`).
-- `nextClaimRoundOf[hook][tokenId][token]` cursor and `DIRECTORY` immutable.
+- `nextClaimRoundOf[hook][groupId][tokenId][token]` cursor and `DIRECTORY` immutable.
 
 ### Receive
 
@@ -187,7 +197,7 @@ Pure helpers. No state, no auth. Three functions:
 
 - **D.1 Snapshot once per round, pokeable.** `roundSnapshotBlock[round]` is set on first interaction with `block.number - 1` and never overwritten; the next round is eagerly armed alongside (A.1.1, A.1.2). The first interaction of a round cannot redefine the eligible staker set (`src/JBDistributor.sol:1132-1150`).
 - **D.2 Per-round pot is locked at first credit.** `JBRewardRoundData.snapshotBlock`, `claimDeadline`, and `totalStake` are stamped on the first non-zero `_recordRewardRound` call for `(hook, token, round)` and never re-stamped, so late mints cannot dilute earlier round contributors (A.1.4) (`src/JBDistributor.sol:1037-1049`).
-- **D.3 Active vesting loan blocks collection.** `_unlockTokenIds` reverts and `collectableFor` returns zero whenever `activeVestingLoanIdOf[hook][tokenId][token] != 0` (A.4.1).
+- **D.3 Active vesting loan blocks collection.** `_unlockTokenIds` reverts and `collectableFor` returns zero whenever `activeVestingLoanIdOf[hook][groupId][tokenId][token] != 0` (A.4.1).
 - **D.4 `_requireNotAcceptingToken` reentrancy guard.** Every state-mutating external entrypoint (`fund`, `beginVesting`, `collectVestedRewards`, `burnExpiredRewards`, `releaseForfeitedRewards`, `borrowAgainstVesting`, `repayVestingLoan`, `writeOffLiquidatedVestingLoan`, `processSplitWith` via `_acceptErc20FundsFrom`) checks `_acceptingToken == address(0)` (`src/JBDistributor.sol:1377-1380`). A callback-capable reward token cannot mutate claim accounting mid-`balanceOf`/`transferFrom` measurement, and a single inbound transfer cannot net against an outbound transfer to strand funds.
 - **D.5 Per-hook reward-pool isolation.** `_balanceOf[hook][token]` and all reward-round / vesting / snapshot data are keyed by `hook`; one hook's stakers can never claim another hook's pool (`src/JBDistributor.sol:148-199`).
 - **D.6 Cumulative-share math prevents dust stranding.** `newlyClaimableAmountOf` uses the difference of two `mulDiv` rounds against cumulative shares; `unclaimedAmountOf` releases floor-division dust at full vest (A.2.2). Successive partial collections always sum to the original allocation.

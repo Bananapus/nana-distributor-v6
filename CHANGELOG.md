@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add tier-scoped reward groups. Every reward, vesting, and loan record now carries a `groupId` dimension:
+  `groupId == 0` is the legacy all-tiers group and is fully backward compatible, while a non-zero group is
+  `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set. New `tierIds` overloads of `fund`,
+  `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards`
+  (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) fund and claim pots that only holders of the given
+  tiers can claim, pro-rata by tier `votingUnits` against a summed `getPastTierVotingUnits` denominator (no per-owner
+  cap on the tier path). Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` threads
+  `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply`. Re-keyed the public state
+  getters (`rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
+  `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
+  to the `JBVestingLoan` struct. Requires `@bananapus/721-hook-v6 >= 0.0.63` for `getPastTierVotingUnits`.
 - Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's
   uncollected vesting rewards while the distributor keeps the loan NFT, blocks collection, and restores the same
   vesting schedule on repayment.
