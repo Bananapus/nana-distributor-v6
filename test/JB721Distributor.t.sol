@@ -150,6 +150,18 @@ contract MockCheckpoints {
         return type(uint256).max;
     }
 
+    /// @dev Per-tier eligible voting units, used as the denominator for tier-scoped reward groups. Settable so
+    /// tests can pin the exact denominator a tier set should reconcile against.
+    mapping(uint256 tierId => uint256) public tierVotingUnitsOverride;
+
+    function setTierVotingUnits(uint256 tierId, uint256 value) external {
+        tierVotingUnitsOverride[tierId] = value;
+    }
+
+    function getPastTierVotingUnits(uint256 tierId, uint256) external view returns (uint256) {
+        return tierVotingUnitsOverride[tierId];
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
     }
@@ -238,6 +250,10 @@ contract MockStore {
 
     function tierOfTokenId(address, uint256 tokenId, bool) external view returns (JB721Tier memory) {
         return tiers[tokenTiers[tokenId]];
+    }
+
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256) {
+        return tokenTiers[tokenId];
     }
 
     function setBurnedFor(uint256 tierId, uint256 count) external {
