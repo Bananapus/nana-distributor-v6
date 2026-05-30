@@ -804,7 +804,8 @@ contract JBTokenDistributorTest is Test {
         _beginVestingFor(alice, tokens);
 
         assertEq(
-            distributor.nextClaimRoundOf(address(votesToken), 0, _tokenId(alice), IERC20(address(unregisteredRewardToken))
+            distributor.nextClaimRoundOf(
+                address(votesToken), 0, _tokenId(alice), IERC20(address(unregisteredRewardToken))
             ),
             1,
             "expired dust round does not pin the cursor"

@@ -150,7 +150,9 @@ abstract contract JBDistributor is IJBDistributor {
     /// @custom:param groupId The reward group (0 = legacy all-tiers group).
     /// @custom:param tokenId The token ID whose vesting rewards are collateralized.
     /// @custom:param token The reward token used as loan collateral.
-    mapping(address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256))))
+    mapping(
+        address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
+    )
         public
         override activeVestingLoanIdOf;
 
@@ -423,11 +425,7 @@ abstract contract JBDistributor is IJBDistributor {
         override
     {
         _releaseForfeitedRewards({
-            hook: hook,
-            groupId: _groupIdFor(tierIds),
-            tokenIds: tokenIds,
-            tokens: tokens,
-            beneficiary: beneficiary
+            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
         });
     }
 
@@ -574,13 +572,7 @@ abstract contract JBDistributor is IJBDistributor {
         virtual
         override
     {
-        _collectVestedRewards({
-            hook: hook,
-            groupId: 0,
-            tokenIds: tokenIds,
-            tokens: tokens,
-            beneficiary: beneficiary
-        });
+        _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
     }
 
     /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
@@ -601,11 +593,7 @@ abstract contract JBDistributor is IJBDistributor {
         override
     {
         _collectVestedRewards({
-            hook: hook,
-            groupId: _groupIdFor(tierIds),
-            tokenIds: tokenIds,
-            tokens: tokens,
-            beneficiary: beneficiary
+            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
         });
     }
 
@@ -837,12 +825,7 @@ abstract contract JBDistributor is IJBDistributor {
 
         // Release whatever portion of existing vesting entries has unlocked by this round.
         _unlockRewards({
-            hook: hook,
-            groupId: groupId,
-            tokenIds: tokenIds,
-            tokens: tokens,
-            beneficiary: beneficiary,
-            ownerClaim: true
+            hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true
         });
     }
 
@@ -1250,8 +1233,7 @@ abstract contract JBDistributor is IJBDistributor {
         }
 
         // Skip over the written-off vesting entries without ever moving the cursor backwards.
-        latestVestedIndexOf[vestingLoan.hook][vestingLoan.groupId][vestingLoan.tokenId][vestingLoan.token] =
-            vestedIndex;
+        latestVestedIndexOf[vestingLoan.hook][vestingLoan.groupId][vestingLoan.tokenId][vestingLoan.token] = vestedIndex;
 
         // Remove the liquidated collateral from the amount still considered vesting.
         totalVestingAmountOf[vestingLoan.hook][vestingLoan.token] -= collateralCount;
@@ -1386,8 +1368,7 @@ abstract contract JBDistributor is IJBDistributor {
             rewardRound.claimDeadline = claimDeadline;
 
             // Store the packed total stake that shares this group's round reward pot.
-            rewardRound.totalStake =
-                _toUint208(_totalStake({hook: hook, groupId: groupId, blockNumber: snapshotBlock}));
+            rewardRound.totalStake = _toUint208(_totalStake({hook: hook, groupId: groupId, blockNumber: snapshotBlock}));
         }
 
         // Multiple additions in the same round share the same snapshot and reward pot.

@@ -542,9 +542,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         }
 
         // Eligible: weigh the NFT by its tier's voting units.
-        stake = IJB721TiersHook(ctx.hook)
-            .STORE()
-            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
+        stake =
+        IJB721TiersHook(ctx.hook)
+        .STORE()
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
     }
 
     /// @notice Checks if the given token was burned.
