@@ -203,6 +203,36 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - liquidation write-off clears stale locks without releasing or re-minting collateral
 - any reward-token excess returned during repayment is sent to the repayer without entering vesting accounting
 
+## Journey 7: Fund A Tier-Scoped Reward Pot
+
+**Actor:** project or rewarder using the 721 distributor path.
+
+**Intent:** fund a pot that only holders of a specific set of NFT tiers can claim, instead of all tiers.
+
+**Preconditions**
+- the distributor type is 721-based
+- the tier set is strictly increasing (so a canonical group ID can be derived)
+- the rewarder funds through the explicit `fund(hook, tierIds, token, amount)` overload, not a split
+
+**Main Flow**
+1. Call `fund(hook, tierIds, token, amount)` (send `msg.value` for native ETH).
+2. The distributor derives `groupId = keccak256(abi.encode(tierIds))` and records the tier set on the group's first funding (queryable via `tierIdsOf(hook, groupId)`).
+3. The accepted amount is assigned to the current reward round for that group.
+4. Only holders whose NFT tier is in the funded set — and whose NFT existed at the round snapshot — can claim the pot.
+5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTierVotingUnits` over the funded tier set. There is no per-owner vote cap on the tier path.
+
+**Group model:** `groupId == 0` is the all-tiers group — the default pool, claimed by the plain (no-`tierIds`) signatures. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
+
+**Failure Modes**
+- tier IDs are not strictly increasing, so the group ID cannot be derived
+- caller funds a tier-scoped pot through a split (splits always go to group 0)
+- caller forgets the `tierIds` argument on `beginVesting`/`collectVestedRewards` and claims group 0 instead
+
+**Postconditions**
+- the pot is reserved for holders of the funded tiers at the funding round's snapshot
+- the tier set is permanently recorded for that group on its first funding
+- all-tiers (group 0) accounting is independent of every tier-scoped group
+
 ## Trust Boundaries
 
 - this repo trusts `JBDirectory` for authenticated split-hook caller checks

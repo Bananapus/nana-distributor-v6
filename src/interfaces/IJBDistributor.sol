@@ -45,6 +45,7 @@ interface IJBDistributor {
     /// @notice Emitted when a staker begins vesting tokens.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenId The ID of the staked token that is claiming.
+    /// @param groupId The reward group claimed from (0 = the default group).
     /// @param token The address of the token to vest.
     /// @param amount The amount of tokens to vest.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
@@ -52,6 +53,7 @@ interface IJBDistributor {
     event Claimed(
         address indexed hook,
         uint256 indexed tokenId,
+        uint256 groupId,
         IERC20 token,
         uint256 amount,
         uint256 vestingReleaseRound,
@@ -61,6 +63,7 @@ interface IJBDistributor {
     /// @notice Emitted when vested tokens are collected.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenId The ID of the staked token collecting.
+    /// @param groupId The reward group collected from (0 = the default group).
     /// @param token The address of the token collected.
     /// @param amount The amount of tokens collected.
     /// @param vestingReleaseRound The round at which the tokens will be fully released.
@@ -68,6 +71,7 @@ interface IJBDistributor {
     event Collected(
         address indexed hook,
         uint256 indexed tokenId,
+        uint256 groupId,
         IERC20 token,
         uint256 amount,
         uint256 vestingReleaseRound,
@@ -171,17 +175,27 @@ interface IJBDistributor {
 
     /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
     /// @param hook The hook the token ID belongs to.
+    /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The token ID whose vesting rewards are collateralized.
     /// @param token The reward token used as loan collateral.
-    function activeVestingLoanIdOf(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
+    function activeVestingLoanIdOf(
+        address hook,
+        uint256 groupId,
+        uint256 tokenId,
+        IERC20 token
+    )
+        external
+        view
+        returns (uint256);
 
-    /// @notice Calculate how much of the token has been claimed for the given tokenId.
+    /// @notice Calculate how much of the token has been claimed for the given tokenId in the default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
     function claimedFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
 
-    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId.
+    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in the
+    /// default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
@@ -217,7 +231,7 @@ interface IJBDistributor {
     // ---------------------------- transactions ------------------------- //
     //*********************************************************************//
 
-    /// @notice Claims tokens and begins vesting.
+    /// @notice Claims tokens and begins vesting from the default group.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
@@ -245,7 +259,7 @@ interface IJBDistributor {
         external
         returns (uint256 loanId, uint256 collateralCount);
 
-    /// @notice Collect vested tokens.
+    /// @notice Collect vested tokens from the default group.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenIds The IDs of the tokens to collect for.
     /// @param tokens The addresses of the tokens to collect.
@@ -258,14 +272,14 @@ interface IJBDistributor {
     )
         external;
 
-    /// @notice Fund the distributor for a specific hook.
+    /// @notice Fund the distributor's default group for a specific hook.
     /// @dev For native ETH, send `msg.value` and pass `IERC20(NATIVE_TOKEN)` as the token.
     /// @param hook The hook to fund.
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
 
-    /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
+    /// @notice Recycle unclaimed rewards from expired default-group reward rounds into the current reward round.
     /// @param hook The hook whose expired reward rounds should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
@@ -287,7 +301,7 @@ interface IJBDistributor {
         payable
         returns (uint256 paidOffLoanId);
 
-    /// @notice Recycle unlocked rewards from burned tokens into the current reward round.
+    /// @notice Recycle unlocked rewards from burned tokens in the default group into the current reward round.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
     /// @param tokens The reward tokens to recycle.

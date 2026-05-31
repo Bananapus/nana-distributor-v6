@@ -158,7 +158,7 @@ contract Duplicate721ClaimTest is Test {
         reward.approve(address(distributor), 1500 ether);
         distributor.fund(address(hook), IERC20(address(reward)), 1500 ether);
 
-        (,, uint256 snapshotBlock,,) = distributor.rewardRoundOf(address(hook), IERC20(address(reward)), 0);
+        (,, uint256 snapshotBlock,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(reward)), 0);
         for (uint256 tokenId = 1; tokenId <= 3; tokenId++) {
             hook.setHistoricalOwner(tokenId, snapshotBlock, alice);
         }

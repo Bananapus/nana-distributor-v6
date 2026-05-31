@@ -300,7 +300,7 @@ contract VestingLoanRegressionTest is Test {
 
         assertEq(collateralCount, _REWARD_AMOUNT);
         assertEq(_revLoans.ownerOf(loanId), address(_distributor));
-        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), loanId);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), 0, _tokenId(), _rewardToken), loanId);
         assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT);
         assertEq(_distributor.collectableFor(address(_stakeToken), _tokenId(), _rewardToken), 0);
 
@@ -331,7 +331,7 @@ contract VestingLoanRegressionTest is Test {
         _distributor.repayVestingLoan({loanId: loanId, maxRepayBorrowAmount: 10 ether});
         vm.stopPrank();
 
-        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), 0);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), 0, _tokenId(), _rewardToken), 0);
         assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), 0);
         assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT);
         assertEq(_distributor.collectableFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT / 2);
@@ -420,13 +420,13 @@ contract VestingLoanRegressionTest is Test {
         uint256 writtenOffAmount = _distributor.writeOffLiquidatedVestingLoan(loanId);
 
         assertEq(writtenOffAmount, _REWARD_AMOUNT);
-        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), 0);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), 0, _tokenId(), _rewardToken), 0);
         assertEq(_distributor.totalVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
         assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), 0);
         assertEq(_distributor.claimedFor(address(_stakeToken), _tokenId(), _rewardToken), _REWARD_AMOUNT);
 
-        (,, uint256 writtenOffShare) = _distributor.vestingDataOf(address(_stakeToken), _tokenId(), _rewardToken, 0);
-        (,, uint256 preservedShare) = _distributor.vestingDataOf(address(_stakeToken), _tokenId(), _rewardToken, 1);
+        (,, uint256 writtenOffShare) = _distributor.vestingDataOf(address(_stakeToken), 0, _tokenId(), _rewardToken, 0);
+        (,, uint256 preservedShare) = _distributor.vestingDataOf(address(_stakeToken), 0, _tokenId(), _rewardToken, 1);
 
         assertEq(writtenOffShare, _distributor.MAX_SHARE());
         assertEq(preservedShare, 0);
@@ -522,7 +522,7 @@ contract VestingLoanRegressionTest is Test {
         _distributor.repayVestingLoan({loanId: loanId, maxRepayBorrowAmount: 10 ether});
         vm.stopPrank();
 
-        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), loanId);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), 0, _tokenId(), _rewardToken), loanId);
         assertEq(_distributor.totalLoanedVestingAmountOf(address(_stakeToken), _rewardToken), _REWARD_AMOUNT);
     }
 
@@ -551,7 +551,7 @@ contract VestingLoanRegressionTest is Test {
         assertEq(shortCreditSource.balanceOf(address(_distributor)), distributorSourceBalanceBefore);
         assertEq(shortCreditSource.balanceOf(address(_revLoans)), revLoansSourceBalanceBefore);
         assertEq(_revLoans.ownerOf(loanId), address(_distributor));
-        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), _tokenId(), _rewardToken), loanId);
+        assertEq(_distributor.activeVestingLoanIdOf(address(_stakeToken), 0, _tokenId(), _rewardToken), loanId);
     }
 
     function test_repayVestingLoan_returnsExcessRewardTokensWithoutAccountingThem() public {

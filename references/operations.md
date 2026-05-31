@@ -7,7 +7,8 @@
 | `JBDistributor` vesting math | Claim totals, `totalVestingAmountOf`, and pool balances still reconcile across rounds |
 | `JBTokenDistributor` checkpoint logic | `getPastVotes` and `getPastTotalSupply` are read at the intended round-start block |
 | `JB721Distributor` stake math | Minted, remaining, and burned supply still produce the intended tier-weighted total stake |
-| `processSplitWith` | Allowance-based `transferFrom` flow preserves actual received balances |
+| `processSplitWith` | Allowance-based `transferFrom` flow preserves actual received balances; split funding still records under `groupId == 0` only (a split cannot carry a tier set) |
+| `groupId` threading | The `groupId` dimension stays consistent across the reward (`rewardRoundOf`), vesting (`vestingDataOf`, `latestVestedIndexOf`, `nextClaimRoundOf`), and loan (`activeVestingLoanIdOf`, `JBVestingLoan`) maps; the `tierIds` overloads (`fund`/`beginVesting`/`collectVestedRewards`/`borrowAgainstVesting`/`burnExpiredRewards`/`releaseForfeitedRewards`) live on `JB721Distributor` and derive the group ID via `_groupIdFor`; the base is tier-agnostic and group 0 is the default all-tiers pool |
 | Deployment inputs | `DIRECTORY_ADDRESS`, `ROUND_DURATION`, and `VESTING_ROUNDS` match the intended chain and operator plan |
 
 ## Common failure modes

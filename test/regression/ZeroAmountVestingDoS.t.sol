@@ -90,14 +90,14 @@ contract ZeroAmountVestingDoSTest is Test {
 
         // Zero-amount entries are not pushed — accessing index 0 reverts.
         vm.expectRevert();
-        distributor.vestingDataOf(address(votes), tokenIds[0], IERC20(address(reward)), 0);
+        distributor.vestingDataOf(address(votes), 0, tokenIds[0], IERC20(address(reward)), 0);
 
         vm.warp(distributor.roundStartTimestamp(10) + 1);
         vm.prank(victim);
         distributor.collectVestedRewards(address(votes), tokenIds, tokens, victim);
 
         // latestVestedIndexOf stays at 0 (default, no entries to scan).
-        assertEq(distributor.latestVestedIndexOf(address(votes), tokenIds[0], IERC20(address(reward))), 0);
+        assertEq(distributor.latestVestedIndexOf(address(votes), 0, tokenIds[0], IERC20(address(reward))), 0);
         assertEq(distributor.collectableFor(address(votes), tokenIds[0], IERC20(address(reward))), 0);
     }
 }

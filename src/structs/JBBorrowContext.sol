@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Parameters used while opening a distributor-owned Revnet loan.
 /// @custom:member hook The hook whose token ID owns the vesting rewards.
+/// @custom:member groupId The reward group whose vesting rewards are collateralized (0 = the default group).
 /// @custom:member tokenId The token ID whose vesting rewards are collateralized.
 /// @custom:member token The revnet reward token used as loan collateral.
 /// @custom:member sourceToken The token borrowed from the revnet.
@@ -14,6 +15,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @custom:member revnetId The revnet whose project token is collateralized.
 struct JBBorrowContext {
     address hook;
+    uint256 groupId;
     uint256 tokenId;
     IERC20 token;
     address sourceToken;

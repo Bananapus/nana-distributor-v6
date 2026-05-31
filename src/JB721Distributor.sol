@@ -41,6 +41,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Thrown when native ETH does not match the split hook context amount.
     error JB721Distributor_NativeAmountMismatch(uint256 msgValue, uint256 contextAmount);
 
+    /// @notice Thrown when a tier-scoped call's tier IDs are not strictly increasing (so a canonical group ID
+    /// cannot be derived).
+    error JB721Distributor_TierIdsNotIncreasing(uint256 previousTierId, uint256 tierId);
+
     /// @notice Thrown when claim batch NFT token IDs are not strictly increasing.
     error JB721Distributor_TokenIdsNotIncreasing(uint256 previousTokenId, uint256 tokenId);
 
@@ -63,9 +67,12 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice The next reward round an NFT token ID has not yet claimed.
     /// @custom:param hook The 721 hook whose NFTs are claiming.
+    /// @custom:param groupId The reward group (0 = all tiers).
     /// @custom:param tokenId The NFT token ID.
     /// @custom:param token The reward token being claimed.
-    mapping(address hook => mapping(uint256 tokenId => mapping(IERC20 token => uint256))) public nextClaimRoundOf;
+    mapping(
+        address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
+    ) public nextClaimRoundOf;
 
     //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
@@ -79,6 +86,12 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     mapping(
         address hook => mapping(IERC20 token => mapping(uint256 rewardRound => mapping(address owner => uint256)))
     ) internal _consumedVotesOf;
+
+    /// @notice The tier set that defines a reward group, recorded the first time the group is funded.
+    /// @dev Empty for the default group (0 = all tiers). Read by the stake math to scope the tier-set denominator.
+    /// @custom:param hook The hook the group belongs to.
+    /// @custom:param groupId The reward group.
+    mapping(address hook => mapping(uint256 groupId => uint256[])) internal _tierIdsOfGroup;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -139,8 +152,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             }
 
             if (msg.value != 0) {
-                // Assign native split proceeds to the current reward round for this 721 hook.
-                _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: msg.value});
+                // Split-funded pots go to the all-tiers group (0); a split cannot carry a tier set.
+                _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: msg.value});
             }
         } else {
             // Validate that native ETH is not cross-booked under an ERC-20 token.
@@ -157,15 +170,210 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             uint256 delta =
                 _acceptErc20FundsFrom({token: IERC20(context.token), from: msg.sender, amount: context.amount});
 
-            // Assign only the amount actually received to this round's reward pot.
-            _recordRewardFunding({hook: hook, token: IERC20(context.token), amount: delta});
+            // Assign only the amount actually received to this round's reward pot (all-tiers group, 0).
+            _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
         }
     }
 
-    // `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both distributors share the exact
-    // same flow (authorize -> materialize past rounds via `_claimPastRewards` -> optionally release unlocked), so the
-    // round-claim logic lives once in the base and dispatches to this contract's `_claimPastRewards` /
-    // `_requireCanClaimTokenIds` overrides below.
+    // The group-0 (all-tiers) `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both
+    // distributors share the exact same flow (authorize -> materialize past rounds via `_claimPastRewards` ->
+    // optionally release unlocked), so the round-claim logic lives once in the base and dispatches to this contract's
+    // `_claimPastRewards` / `_requireCanClaimTokenIds` overrides below. The tier-scoped overloads below derive a
+    // canonical group ID from the tier set and call the same base helpers.
+
+    /// @notice Begin vesting all unclaimed past reward rounds for the specified NFT token IDs in a tier-scoped group.
+    /// @param hook The 721 hook whose NFT owners are vesting.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The NFT token IDs to claim rewards for.
+    /// @param tokens The reward tokens to begin vesting.
+    function beginVesting(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        external
+        override
+    {
+        _beginVesting({hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens});
+    }
+
+    /// @notice Fund a tier-scoped reward group: only holders of the given tiers can claim this pot.
+    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
+    /// delta to handle fee-on-transfer tokens correctly. The tier set is recorded on the group's first funding.
+    /// @param hook The 721 hook to fund (determines which staker pool receives the tokens).
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
+    function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable override {
+        // Derive the canonical group ID for the tier set.
+        uint256 groupId = _groupIdFor(tierIds);
+
+        // Record the tier set the first time a tier-scoped group is funded, so the stake math can scope it later.
+        if (groupId != 0 && _tierIdsOfGroup[hook][groupId].length == 0) {
+            _tierIdsOfGroup[hook][groupId] = tierIds;
+        }
+
+        _fund({hook: hook, groupId: groupId, token: token, amount: amount});
+    }
+
+    /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
+    /// @param hook The 721 hook whose expired rewards should be recycled.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param token The reward token to recycle.
+    /// @param rounds The reward rounds to recycle.
+    /// @return amount The total amount recycled.
+    function burnExpiredRewards(
+        address hook,
+        uint256[] calldata tierIds,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        override
+        returns (uint256 amount)
+    {
+        amount = _burnExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});
+    }
+
+    /// @notice Recycle unlocked rewards tied to burned NFTs in a tier-scoped group into the current reward round.
+    /// @dev Anyone can call this for burned tokens.
+    /// @param hook The 721 hook whose NFTs were burned.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The IDs of the burned NFTs (reverts if any are not actually burned).
+    /// @param tokens The reward tokens to recycle.
+    /// @param beneficiary Unused for forfeiture. Kept for interface compatibility.
+    function releaseForfeitedRewards(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        external
+        override
+    {
+        _releaseForfeitedRewards({
+            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
+        });
+    }
+
+    //*********************************************************************//
+    // ----------------------- external views ---------------------------- //
+    //*********************************************************************//
+
+    /// @notice Calculate the total uncollected (vesting + vested-but-uncollected) amount for an NFT token ID in a
+    /// tier-scoped group.
+    /// @param hook The 721 hook the tokenId belongs to.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenId The ID of the NFT token to calculate for.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The total uncollected amount (vesting + vested-but-uncollected).
+    function claimedFor(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256 tokenId,
+        IERC20 token
+    )
+        external
+        view
+        override
+        returns (uint256 tokenAmount)
+    {
+        tokenAmount =
+            _unclaimedVestingAmountOf({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});
+    }
+
+    /// @notice Calculate how much of a reward token is currently unlocked and ready to be collected for a given NFT
+    /// token ID in a tier-scoped group.
+    /// @param hook The 721 hook the tokenId belongs to.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenId The ID of the NFT token to calculate for.
+    /// @param token The reward token to check.
+    /// @return tokenAmount The amount of tokens that can be collected right now via `collectVestedRewards`.
+    function collectableFor(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256 tokenId,
+        IERC20 token
+    )
+        external
+        view
+        override
+        returns (uint256 tokenAmount)
+    {
+        tokenAmount = _collectableFor({hook: hook, groupId: _groupIdFor(tierIds), tokenId: tokenId, token: token});
+    }
+
+    /// @notice The tier set that defines a reward group, recorded when the group is first funded.
+    /// @param hook The 721 hook the group belongs to.
+    /// @param groupId The reward group.
+    /// @return tierIds The strictly-increasing tier set defining the group (empty for the all-tiers group, 0).
+    function tierIdsOf(address hook, uint256 groupId) external view override returns (uint256[] memory tierIds) {
+        tierIds = _tierIdsOfGroup[hook][groupId];
+    }
+
+    //*********************************************************************//
+    // ----------------------- public transactions ----------------------- //
+    //*********************************************************************//
+
+    /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
+    /// @param hook The 721 hook whose NFT owners are collecting.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The IDs of the NFTs to collect for (caller must be authorized for all of them).
+    /// @param tokens The reward tokens to collect vested amounts of.
+    /// @param beneficiary The recipient of the collected tokens.
+    function collectVestedRewards(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        external
+        override
+    {
+        _collectVestedRewards({
+            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
+        });
+    }
+
+    /// @notice Borrow against one NFT token ID's uncollected vesting rewards in a tier-scoped group.
+    /// @param hook The 721 hook whose NFT owner is borrowing against vesting rewards.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The single NFT token ID to borrow against.
+    /// @param tokens The single revnet reward token to collateralize.
+    /// @param sourceToken The token to borrow from the revnet.
+    /// @param minBorrowAmount The minimum amount to borrow, denominated in `sourceToken`.
+    /// @param prepaidFeePercent The fee percent to charge upfront.
+    /// @param beneficiary The recipient of the borrowed funds.
+    /// @return loanId The Revnet loan NFT ID held by this distributor.
+    /// @return collateralCount The amount of vesting rewards used as collateral.
+    function borrowAgainstVesting(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address sourceToken,
+        uint256 minBorrowAmount,
+        uint256 prepaidFeePercent,
+        address payable beneficiary
+    )
+        external
+        override
+        returns (uint256 loanId, uint256 collateralCount)
+    {
+        (loanId, collateralCount) = _borrowAgainstVestingFor({
+            hook: hook,
+            groupId: _groupIdFor(tierIds),
+            tokenIds: tokenIds,
+            tokens: tokens,
+            sourceToken: sourceToken,
+            minBorrowAmount: minBorrowAmount,
+            prepaidFeePercent: prepaidFeePercent,
+            beneficiary: beneficiary
+        });
+    }
 
     //*********************************************************************//
     // -------------------------- public views --------------------------- //
@@ -185,16 +393,31 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice Claim all past reward rounds for the given NFT token IDs and reward tokens into fresh vesting entries.
     /// @param hook The 721 hook whose NFT owners are claiming.
+    /// @param groupId The reward group being claimed (0 = all tiers).
     /// @param tokenIds The NFT token IDs to claim for.
     /// @param tokens The reward tokens to claim.
-    function _claimPastRewards(address hook, uint256[] calldata tokenIds, IERC20[] calldata tokens) internal override {
+    function _claimPastRewards(
+        address hook,
+        uint256 groupId,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        internal
+        override
+    {
         // Round 0 has no completed reward rounds behind it, so nothing can be claimed yet.
         uint256 round = currentRound();
         if (round == 0) return;
 
-        // Current-round funding is excluded. It becomes claimable only after a later round starts.
-        JBClaimContext memory ctx =
-            JBClaimContext({hook: hook, lastClaimableRound: round - 1, vestingReleaseRound: round + VESTING_ROUNDS});
+        // Current-round funding is excluded. It becomes claimable only after a later round starts. For a tier-scoped
+        // group, load the tier set once so per-token eligibility can be checked without repeated storage reads.
+        JBClaimContext memory ctx = JBClaimContext({
+            hook: hook,
+            groupId: groupId,
+            tierIds: groupId == 0 ? new uint256[](0) : _tierIdsOfGroup[hook][groupId],
+            lastClaimableRound: round - 1,
+            vestingReleaseRound: round + VESTING_ROUNDS
+        });
 
         // Process each reward token independently because each token has its own round funding and claim cursor.
         for (uint256 i; i < tokens.length;) {
@@ -228,7 +451,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Find the earliest cursor in the batch, skipping token IDs that are already current.
         for (uint256 i; i < tokenIds.length;) {
-            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][tokenIds[i]][token];
+            uint256 nextClaimRound = nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[i]][token];
             if (nextClaimRound <= ctx.lastClaimableRound && nextClaimRound < firstClaimRound) {
                 firstClaimRound = nextClaimRound;
             }
@@ -244,17 +467,21 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Walk every unclaimed historical round needed by at least one token ID.
         for (uint256 rewardRoundNumber = firstClaimRound; rewardRoundNumber <= ctx.lastClaimableRound;) {
             // Load this reward round's funding, snapshot, claim counter, and deadline.
-            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][token][rewardRoundNumber];
+            JBRewardRoundData storage rewardRound = rewardRoundOf[ctx.hook][ctx.groupId][token][rewardRoundNumber];
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
                 // Expired rounds can no longer be claimed as-is; recycle their unclaimed remainder instead.
                 if (_rewardRoundExpired(rewardRound)) {
-                    _recycleExpiredRewardRound({hook: ctx.hook, token: token, round: rewardRoundNumber});
+                    _recycleExpiredRewardRound({
+                        hook: ctx.hook, groupId: ctx.groupId, token: token, round: rewardRoundNumber
+                    });
                 } else if (rewardRound.totalStake != 0) {
                     // Bundle the fixed round data used by every NFT in the batch.
                     JBVestContext memory vestCtx = JBVestContext({
                         hook: ctx.hook,
+                        groupId: ctx.groupId,
+                        tierIds: ctx.tierIds,
                         token: token,
                         distributable: rewardRound.amount,
                         totalStakeAmount: rewardRound.totalStake,
@@ -286,17 +513,18 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Advance cursors even when a token ID earned zero, so empty or zero-stake rounds are not rescanned forever.
         for (uint256 i; i < tokenIds.length;) {
             uint256 tokenId = tokenIds[i];
-            nextClaimRoundOf[ctx.hook][tokenId][token] = ctx.lastClaimableRound + 1;
+            nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = ctx.lastClaimableRound + 1;
 
             // All accumulated past rewards for this NFT start a single fresh vesting schedule at the claim round.
             if (tokenAmounts[i] != 0) {
-                vestingDataOf[ctx.hook][tokenId][token].push(
+                vestingDataOf[ctx.hook][ctx.groupId][tokenId][token].push(
                     JBVestingData({releaseRound: ctx.vestingReleaseRound, amount: tokenAmounts[i], shareClaimed: 0})
                 );
 
                 emit Claimed({
                     hook: ctx.hook,
                     tokenId: tokenId,
+                    groupId: ctx.groupId,
                     token: token,
                     amount: tokenAmounts[i],
                     vestingReleaseRound: ctx.vestingReleaseRound,
@@ -323,6 +551,31 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         internal
         returns (uint256 totalVestingAmount)
     {
+        // Tier-scoped groups distribute a tier's pot among that tier's eligible NFTs. Each NFT contributes its tier's
+        // voting units, with no per-owner cap: the denominator (summed `getPastTierVotingUnits`) counts exactly those
+        // eligible NFTs, so the shares reconcile without the all-tiers delegation-cap machinery.
+        if (ctx.groupId != 0) {
+            for (uint256 j; j < tokenIds.length;) {
+                if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+                    uint256 stake = _tierScopedStake({ctx: ctx, tokenId: tokenIds[j]});
+                    if (stake != 0) {
+                        uint256 tokenAmount =
+                            mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
+                        tokenAmounts[j] += tokenAmount;
+                        totalVestingAmount += tokenAmount;
+                    }
+                }
+
+                unchecked {
+                    ++j;
+                }
+            }
+
+            return totalVestingAmount;
+        }
+
+        // All-tiers group (0): split the pot pro-rata across delegated voting power, capping each owner so multiple
+        // NFTs cannot over-claim beyond the owner's checkpointed votes.
         // Allocate scratch arrays sized to the maximum possible number of distinct snapshot owners.
         address[] memory owners = new address[](tokenIds.length);
         uint256[] memory consumed = new uint256[](tokenIds.length);
@@ -330,7 +583,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Claim each token ID that has not yet advanced past this reward round.
         for (uint256 j; j < tokenIds.length;) {
-            if (nextClaimRoundOf[ctx.hook][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+            if (nextClaimRoundOf[ctx.hook][0][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
                 (uint256 tokenAmount, uint256 newUniqueCount) = _claimRewardRoundForTokenId({
                     ctx: ctx, tokenId: tokenIds[j], owners: owners, consumed: consumed, uniqueCount: uniqueCount
                 });
@@ -439,6 +692,37 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         canClaim = IERC721(hook).ownerOf(tokenId) == account;
     }
 
+    /// @notice Derive the canonical group ID for a tier set. The empty set is the all-tiers group (0).
+    /// @param tierIds Strictly-increasing tier IDs; empty for the all-tiers group.
+    /// @return groupId 0 for the all-tiers group, else `keccak256(abi.encode(tierIds))`.
+    function _groupIdFor(uint256[] calldata tierIds) internal pure returns (uint256 groupId) {
+        if (tierIds.length == 0) return 0;
+        for (uint256 i = 1; i < tierIds.length;) {
+            if (tierIds[i] <= tierIds[i - 1]) {
+                revert JB721Distributor_TierIdsNotIncreasing({previousTierId: tierIds[i - 1], tierId: tierIds[i]});
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        groupId = uint256(keccak256(abi.encode(tierIds)));
+    }
+
+    /// @notice Whether a tier ID is present in a strictly-increasing tier set.
+    /// @param tierId The tier ID to look for.
+    /// @param tierIds The strictly-increasing tier set to search.
+    /// @return found True if `tierId` is in `tierIds`.
+    function _isTierInSet(uint256 tierId, uint256[] memory tierIds) internal pure returns (bool found) {
+        for (uint256 i; i < tierIds.length;) {
+            if (tierIds[i] == tierId) return true;
+            // The set is strictly increasing, so once an entry exceeds the target it cannot appear later.
+            if (tierIds[i] > tierId) return false;
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice Revert unless the caller is authorized to claim each NFT token ID.
     /// @param hook The 721 hook whose NFT owners are claiming.
     /// @param tokenIds The NFT token IDs to check.
@@ -459,6 +743,30 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 ++i;
             }
         }
+    }
+
+    /// @notice The tier-scoped stake of a single NFT in a reward round: its tier's voting units if the NFT's tier is
+    /// in the group's set and the NFT existed at the round snapshot, else zero.
+    /// @dev No per-owner cap is applied. Eligibility (`ownerOfAt != 0`) plus tier membership matches exactly the set
+    /// counted by the `getPastTierVotingUnits` denominator, so per-NFT shares reconcile against the pot.
+    /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
+    /// @param tokenId The NFT token ID to weigh.
+    /// @return stake The NFT's tier voting units, or 0 if ineligible.
+    function _tierScopedStake(JBVestContext memory ctx, uint256 tokenId) internal view returns (uint256 stake) {
+        // The NFT's tier must be one of the funded tiers.
+        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
+        if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
+
+        // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
+        if (_snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock}) == address(0)) {
+            return 0;
+        }
+
+        // Eligible: weigh the NFT by its tier's voting units.
+        stake =
+        IJB721TiersHook(ctx.hook)
+        .STORE()
+        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
     }
 
     /// @notice Checks if the given token was burned.
@@ -504,16 +812,39 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         tokenStakeAmount = votingUnits < pastVotes ? votingUnits : pastVotes;
     }
 
-    /// @notice The total stake at a specific block, using the hook's checkpoints module for historical accuracy.
-    /// @dev Uses `IVotes.getPastTotalSupply` from the hook's checkpoints module. This ensures that only NFTs
-    /// that existed (and were delegated) at `blockNumber` are counted, preventing late mints from diluting or
-    /// capturing rewards within the current round.
+    /// @notice The total stake sharing a group's round rewards at a specific block.
+    /// @dev For the all-tiers group (0) this is `getPastTotalSupply` from the hook's checkpoints module (all NFTs that
+    /// existed and were delegated at `blockNumber`). For a tier-scoped group it is the summed
+    /// `getPastTierVotingUnits` over the group's tier set — the eligible voting units of those tiers at the snapshot.
     /// @param hook The hook to get the total stake for.
+    /// @param groupId The reward group (0 = all tiers).
     /// @param blockNumber The block number to get the total staked amount at.
-    /// @return total The total checkpointed voting units at the given block.
-    function _totalStake(address hook, uint256 blockNumber) internal view override returns (uint256 total) {
+    /// @return total The total stake at the given block.
+    function _totalStake(
+        address hook,
+        uint256 groupId,
+        uint256 blockNumber
+    )
+        internal
+        view
+        override
+        returns (uint256 total)
+    {
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();
-        total = IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+
+        // All-tiers group (0): the global checkpointed voting supply.
+        if (groupId == 0) {
+            return IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+        }
+
+        // Tier-scoped group: sum the eligible voting units of each tier in the set at the snapshot block.
+        uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
+        for (uint256 i; i < tierIds.length;) {
+            total += checkpoints.getPastTierVotingUnits({tierId: tierIds[i], blockNumber: blockNumber});
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     //*********************************************************************//

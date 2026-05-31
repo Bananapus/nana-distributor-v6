@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add tier-scoped reward groups. Every reward, vesting, and loan record carries a generic `groupId` dimension in the
+  base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
+  is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
+  `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set (group 0 = all tiers). `JB721Distributor` adds
+  `tierIds` overloads of `fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`,
+  and `releaseForfeitedRewards` (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) that fund and claim
+  pots only holders of the given tiers can claim, pro-rata by tier `votingUnits` against a summed
+  `getPastTierVotingUnits` denominator (no per-owner cap on the tier path; the all-tiers path uses the per-owner cap).
+  Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` exposes no tier API and threads
+  `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply`. Re-keyed the public state
+  getters (`rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
+  `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
+  to the `JBVestingLoan` struct. Requires `@bananapus/721-hook-v6 >= 0.0.63` for `getPastTierVotingUnits`.
 - Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's
   uncollected vesting rewards while the distributor keeps the loan NFT, blocks collection, and restores the same
   vesting schedule on repayment.

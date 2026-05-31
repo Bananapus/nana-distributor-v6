@@ -397,7 +397,7 @@ contract JBTokenDistributorTest is Test {
         vm.stopPrank();
 
         (uint256 amount,,, uint256 deadline,) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
 
         assertEq(amount, splitAmount + 1, "dust and split funding share one bucket");
         assertEq(deadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline is contract-fixed");
@@ -646,7 +646,7 @@ contract JBTokenDistributorTest is Test {
         _fundExpiringDistributor(1000 ether, claimDuration);
 
         (uint256 amount,, uint256 claimedAmount, uint256 claimDeadline, uint256 totalStake) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
         assertEq(amount, 1000 ether, "round funded amount");
         assertEq(claimedAmount, 0, "nothing claimed yet");
         assertEq(claimDeadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline starts at claimable");
@@ -659,7 +659,7 @@ contract JBTokenDistributorTest is Test {
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
         assertEq(aliceClaimed, 700 ether, "Alice claims before expiry");
 
-        (,, claimedAmount,,) = distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+        (,, claimedAmount,,) = distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
         assertEq(claimedAmount, 700 ether, "claimed amount tracks materialized vesting");
     }
 
@@ -688,9 +688,9 @@ contract JBTokenDistributorTest is Test {
         assertEq(rewardToken.totalSupply(), 1000 ether, "recycling does not burn supply");
 
         (,, uint256 oldClaimedAmount,,) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), 0);
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
         (uint256 recycledAmount,,,,) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(rewardToken)), distributor.currentRound());
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), distributor.currentRound());
         assertEq(oldClaimedAmount, 1000 ether, "old round is settled");
         assertEq(recycledAmount, 1000 ether, "current round receives recycled rewards");
 
@@ -805,16 +805,16 @@ contract JBTokenDistributorTest is Test {
 
         assertEq(
             distributor.nextClaimRoundOf(
-                address(votesToken), _tokenId(alice), IERC20(address(unregisteredRewardToken))
+                address(votesToken), 0, _tokenId(alice), IERC20(address(unregisteredRewardToken))
             ),
             1,
             "expired dust round does not pin the cursor"
         );
 
         (,, uint256 oldClaimedAmount,,) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(unregisteredRewardToken)), 0);
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(unregisteredRewardToken)), 0);
         (uint256 recycledRoundAmount,,,,) =
-            distributor.rewardRoundOf(address(votesToken), IERC20(address(unregisteredRewardToken)), 1);
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(unregisteredRewardToken)), 1);
         assertEq(oldClaimedAmount, 1, "expired dust is settled");
         assertEq(recycledRoundAmount, 1_000_000 ether + 1, "dust recycles into the active reward round");
 
