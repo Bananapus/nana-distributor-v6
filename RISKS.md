@@ -17,7 +17,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
 | P1 | Expiry window misconfiguration | Too-short claim durations make otherwise valid unclaimed rewards recyclable by anyone. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
 | P1 | Revnet loan custody mismatch | If the claimant receives the loan NFT, they can repay directly and bypass vesting. | The distributor owns loan NFTs, blocks collection while collateralized, and restores collateral only through `repayVestingLoan`. |
-| P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. |
+| P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`; native value transfers (e.g. the vesting-loan overpayment refund) can call back into the recipient. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. Settle a repaid vesting loan's state before refunding any native overpayment, so a re-entrant write-off cannot double-decrement the loaned-vesting inventory (checks-effects-interactions). |
 
 ## 1. Trust Assumptions
 

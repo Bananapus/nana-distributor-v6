@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` now runs
+  `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
+  native `msg.sender.call` refund, following checks-effects-interactions. Previously the refund external call happened
+  while the loan record still looked live, so a re-entrant `writeOffLiquidatedVestingLoan(loanId)` could decrement the
+  loaned-vesting inventory a first time and let `_restoreVestingCollateral` decrement it a second time, corrupting a
+  second loan on the same hook and reward token. The refund amount and recipient are unchanged. Added a regression
+  test (`test/regression/VestingLoanNativeRefundSettlement.t.sol`).
 - Add tier-scoped reward groups. Every reward, vesting, and loan record carries a generic `groupId` dimension in the
   base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
   is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
