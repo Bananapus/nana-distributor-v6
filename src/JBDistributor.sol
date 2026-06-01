@@ -507,15 +507,18 @@ abstract contract JBDistributor is IJBDistributor {
         // Measure any returned project tokens while excluding any source-token payment effects.
         uint256 rewardBalanceBefore = vestingLoan.token.balanceOf(address(this));
 
-        // Repay through this distributor because it owns the loan NFT and must receive the returned collateral.
-        paidOffLoanId = _repayLoanSource({
+        // Repay through this distributor because it owns the loan NFT and must receive the returned collateral. Any
+        // native overpayment is reported back so it can be refunded only after this loan's state is fully settled.
+        uint256 nativeRefundAmount;
+        (paidOffLoanId, nativeRefundAmount) = _repayLoanSource({
             loanId: loanId,
             loan: loan,
             repayBorrowAmount: repayBorrowAmount,
             collateralCount: vestingLoan.collateralCount
         });
 
-        // Restore the collateral to inventory while preserving the original vesting data untouched.
+        // Restore the collateral to inventory while preserving the original vesting data untouched. This deletes the
+        // loan record and decrements the loaned-vesting inventory before any value leaves the contract.
         _restoreVestingCollateral({
             loanId: loanId,
             paidOffLoanId: paidOffLoanId,
@@ -523,6 +526,15 @@ abstract contract JBDistributor is IJBDistributor {
             rewardBalanceBefore: rewardBalanceBefore,
             repayBorrowAmount: repayBorrowAmount
         });
+
+        // Return any native overpayment last, following checks-effects-interactions. The loan is already settled, so a
+        // re-entrant call during this transfer cannot observe a half-settled loan.
+        if (nativeRefundAmount != 0) {
+            (bool success,) = msg.sender.call{value: nativeRefundAmount}("");
+            if (!success) {
+                revert JBDistributor_NativeTransferFailed({beneficiary: msg.sender, amount: nativeRefundAmount});
+            }
+        }
     }
 
     /// @notice Write off a distributor-held Revnet loan after Revnet liquidation permanently destroys its collateral.
@@ -857,11 +869,14 @@ abstract contract JBDistributor is IJBDistributor {
     }
 
     /// @notice Repay a Revnet loan with the source token it borrowed.
+    /// @dev Any native overpayment is reported via `nativeRefundAmount` instead of being refunded here, so the caller
+    /// can settle the loan's state before returning the overpayment (checks-effects-interactions).
     /// @param loanId The Revnet loan NFT ID to repay.
     /// @param loan The Revnet loan data.
     /// @param repayBorrowAmount The amount of source token needed to repay the loan.
     /// @param collateralCount The amount of collateral to return.
     /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    /// @return nativeRefundAmount The native overpayment the caller must refund after settling the loan.
     function _repayLoanSource(
         uint256 loanId,
         REVLoan memory loan,
@@ -869,7 +884,7 @@ abstract contract JBDistributor is IJBDistributor {
         uint256 collateralCount
     )
         internal
-        returns (uint256 paidOffLoanId)
+        returns (uint256 paidOffLoanId, uint256 nativeRefundAmount)
     {
         JBSingleAllowance memory allowance;
 
@@ -888,14 +903,8 @@ abstract contract JBDistributor is IJBDistributor {
                 allowance: allowance
             });
 
-            // Return any native overpayment to the caller.
-            uint256 refundAmount = msg.value - repayBorrowAmount;
-            if (refundAmount != 0) {
-                (bool success,) = msg.sender.call{value: refundAmount}("");
-                if (!success) {
-                    revert JBDistributor_NativeTransferFailed({beneficiary: msg.sender, amount: refundAmount});
-                }
-            }
+            // Report any native overpayment so the caller can refund it only after the loan's state is settled.
+            nativeRefundAmount = msg.value - repayBorrowAmount;
         } else {
             // ERC-20 repayments must not carry native ETH.
             if (msg.value != 0) {
