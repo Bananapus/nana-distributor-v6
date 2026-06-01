@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Raise dependency floors to the latest published versions; document NatSpec, comment, and lint conventions in
+  STYLE_GUIDE.
 - Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` now runs
   `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
   native `msg.sender.call` refund, following checks-effects-interactions. Previously the refund external call happened
