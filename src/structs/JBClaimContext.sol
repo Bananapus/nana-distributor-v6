@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+/// @notice Parameters describing one lazy claim of completed reward rounds into a fresh vesting entry.
 /// @custom:member hook The stake source whose historical rewards are being claimed.
 /// @custom:member groupId The reward group being claimed (0 = the default group).
 /// @custom:member tierIds The tier set defining the group (empty for the default group); used to filter eligible

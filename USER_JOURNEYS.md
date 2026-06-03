@@ -1,10 +1,10 @@
 # User Journeys
 
-## Repo Purpose
+## Repo purpose
 
 This repo distributes already-owned assets over time. Token and 721 rewards are assigned to historical funding rounds and start vesting only when the eligible claimant shows up to claim.
 
-## Primary Actors
+## Primary actors
 
 - teams funding a distributor from a split or post-mint allocation
 - token holders or NFT holders collecting vested rewards
@@ -13,13 +13,13 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - operators configuring round timing and deployment shape
 - auditors reviewing snapshot timing and stake-accounting correctness
 
-## Key Surfaces
+## Key surfaces
 
 - `JBDistributor`: shared round and vesting engine
 - `JBTokenDistributor`: ERC-20 distributor using historical `IVotes` reward rounds
 - `JB721Distributor`: NFT distributor using historical reward rounds, tier voting units, and owner checkpoints
 
-## Journey 1: Fund A Distributor
+## Journey 1: Fund a distributor
 
 **Actor:** project or payout flow.
 
@@ -52,7 +52,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - current-round rewards become claimable only after a later round starts
 - expiring reward rounds retain a recyclable unclaimed remainder after their claim deadline
 
-## Journey 2: Start A Vesting Round
+## Journey 2: Start a vesting round
 
 **Actor:** for token rewards, the encoded staker; for 721 rewards, the current NFT owner.
 
@@ -82,7 +82,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - one fresh vesting entry exists for each claimant/token/reward-token combination with cumulative past rewards, if any
 - expired unclaimed rewards recycle into the current reward round and cannot be claimed from the expired round later
 
-## Journey 3: Collect Vested Rewards
+## Journey 3: Collect vested rewards
 
 **Actor:** eligible recipient.
 
@@ -107,7 +107,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - vested rewards move to the claimant
 - any newly materialized past rewards begin vesting from this claim round
 
-## Journey 4: Recycle Expired Rewards
+## Journey 4: Recycle expired rewards
 
 **Actor:** any caller.
 
@@ -134,7 +134,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - the recycled amount becomes claimable from the current reward round after a later round starts
 - already-materialized vesting entries remain intact
 
-## Journey 5: Recycle Rewards For Burned NFTs
+## Journey 5: Recycle rewards for burned NFTs
 
 **Actor:** caller using the 721 distributor path.
 
@@ -158,7 +158,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - forfeited 721 rewards are no longer available to the burned NFT
 - forfeited 721 rewards become available through the current reward round after a later round starts
 
-## Journey 6: Borrow Against Vesting Revnet Rewards
+## Journey 6: Borrow against vesting Revnet rewards
 
 **Actor:** eligible token staker or NFT owner.
 
@@ -203,7 +203,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - liquidation write-off clears stale locks without releasing or re-minting collateral
 - any reward-token excess returned during repayment is sent to the repayer without entering vesting accounting
 
-## Journey 7: Fund A Tier-Scoped Reward Pot
+## Journey 7: Fund a tier-scoped reward pot
 
 **Actor:** project or rewarder using the 721 distributor path.
 
@@ -233,14 +233,14 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 - the tier set is permanently recorded for that group on its first funding
 - all-tiers (group 0) accounting is independent of every tier-scoped group
 
-## Trust Boundaries
+## Trust boundaries
 
 - this repo trusts `JBDirectory` for authenticated split-hook caller checks
 - `JBTokenDistributor` trusts `IVotes` checkpoints
 - `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
 - Revnet loan-backed vesting trusts the configured Revnet loans contract to burn and return collateral correctly
 
-## Hand-Offs
+## Hand-offs
 
 - Use the upstream repo that funded the distributor when the question is about why an allocation exists.
 - Use [nana-721-hook-v6](../nana-721-hook-v6/USER_JOURNEYS.md) when the stake source is a tiered 721 hook.

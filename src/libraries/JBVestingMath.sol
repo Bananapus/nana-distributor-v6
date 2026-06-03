@@ -6,7 +6,8 @@ import {mulDiv} from "@prb/math/src/Common.sol";
 /// @notice Pure helpers for the distributor's linear vesting arithmetic.
 library JBVestingMath {
     /// @notice The share still locked for a vesting entry at `currentRound`.
-    /// @dev Mirrors the distributor's existing linear vesting formula. Callers maintain the invariant that
+    /// @dev Linear release: the locked share shrinks one `maxShare/vestingRounds` step per round. Callers maintain
+    /// the invariant that
     /// `releaseRound - currentRound <= vestingRounds` whenever `releaseRound > currentRound`.
     /// @param releaseRound The round when the entry is fully unlocked.
     /// @param currentRound The current distributor round.

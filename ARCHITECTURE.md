@@ -4,13 +4,13 @@
 
 `nana-distributor-v6` provides round-based vesting and claiming for already-owned assets. It supports both `IVotes`-based ERC-20 distributions and 721-based distributions without becoming a treasury or accounting layer.
 
-## System Overview
+## System overview
 
 `JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
 Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets unclaimed remainders be recycled permissionlessly after the configured claim window.
 
-## Core Invariants
+## Core invariants
 
 - snapshot timing must stay coherent
 - tracked funded balance must cover current vesting obligations
@@ -27,16 +27,16 @@ Both variants can be used as `IJBSplitHook` receivers. Each deployment has one i
 | `JBTokenDistributor` | ERC-20 distribution using `IVotes` checkpoints | Token stake source |
 | `JB721Distributor` | NFT distribution using checkpointed voting power | 721 stake source |
 
-## Trust Boundaries
+## Trust boundaries
 
 - split-hook caller authentication depends on `JBDirectory`
 - `JBTokenDistributor` trusts `IVotes` checkpoint history
 - `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
 - upstream entitlement logic still lives outside this repo
 
-## Critical Flows
+## Critical flows
 
-### Token Funding And Claim
+### Token funding and claim
 
 ```text
 fund token distributor
@@ -47,7 +47,7 @@ fund token distributor
   -> one fresh vesting entry starts at claim time
 ```
 
-### 721 Funding And Claim
+### 721 funding and claim
 
 ```text
 fund 721 distributor
@@ -58,7 +58,7 @@ fund 721 distributor
   -> one fresh vesting entry starts at claim time
 ```
 
-### Expired Reward Recycle
+### Expired reward recycle
 
 ```text
 any caller
@@ -68,7 +68,7 @@ any caller
   -> unclaimed remainder stays in tracked inventory and is recorded into the current reward round
 ```
 
-### Revnet Vesting Loan Write-Off
+### Revnet vesting loan write-off
 
 ```text
 any caller
@@ -88,7 +88,7 @@ claimant
   -> transfer the vested amount
 ```
 
-### Tier-Scoped Rewards
+### Tier-scoped rewards
 
 Every reward, vesting, and loan record carries a `groupId` dimension. `groupId == 0` is the all-tiers group — the default pool, acted on by the plain `fund`/`beginVesting`/`collectVestedRewards`/… signatures that take no `tierIds`. A non-zero group is `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set, recorded on the group's first funding and queryable via `tierIdsOf(hook, groupId)`. The base `JBDistributor` is tier-agnostic — it only knows generic groups; the tier→`groupId` mapping lives entirely in `JB721Distributor`.
 
@@ -105,13 +105,13 @@ fund a tier-scoped pot
 - **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply` because token distributors have no tier concept.
 - **Split funding is group-0 only.** `processSplitWith` always records funding under group 0 — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
 
-## Accounting Model
+## Accounting model
 
 This repo owns vesting-round accounting. It does not own upstream treasury accounting or entitlement creation.
 
 The main variables are snapshot balance, total vesting amount, reward-round claimed amount, optional claim deadline, and the stake source used to split each round.
 
-## Security Model
+## Security model
 
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
@@ -119,13 +119,13 @@ The main variables are snapshot balance, total vesting amount, reward-round clai
 - claim-duration assumptions matter because expired unclaimed rewards are recyclable by anyone
 - 721 and token variants intentionally differ in ownership model and forfeiture behavior
 
-## Safe Change Guide
+## Safe change guide
 
 - review snapshot timing and vesting math together
 - if claim authority changes, re-check both distributor variants separately
 - if funding semantics change, test the allowance-based `transferFrom` flow explicitly
 
-## Canonical Checks
+## Canonical checks
 
 - token distribution behavior:
   `test/JBTokenDistributor.t.sol`
@@ -134,7 +134,7 @@ The main variables are snapshot balance, total vesting amount, reward-round clai
 - 721 invariants:
   `test/invariant/JB721DistributorInvariant.t.sol`
 
-## Source Map
+## Source map
 
 - `src/JBDistributor.sol`
 - `src/JBTokenDistributor.sol`

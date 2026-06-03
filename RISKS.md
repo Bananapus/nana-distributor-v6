@@ -2,13 +2,13 @@
 
 This file covers the shared vesting engine in `JBDistributor` and the two concrete payout-split receivers, `JB721Distributor` and `JBTokenDistributor`.
 
-## How To Use This File
+## How to use this file
 
 - Read `Priority risks` first. Those are the failure modes with the highest payout-integrity impact.
 - Treat the shared `JBDistributor` logic as the economic core.
 - Use `Invariants to verify` as the minimum test envelope before routing live splits through a distributor.
 
-## Priority Risks
+## Priority risks
 
 | Priority | Risk | Why it matters | Primary controls |
 |----------|------|----------------|------------------|
@@ -19,13 +19,13 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P1 | Revnet loan custody mismatch | If the claimant receives the loan NFT, they can repay directly and bypass vesting. | The distributor owns loan NFTs, blocks collection while collateralized, and restores collateral only through `repayVestingLoan`. |
 | P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`; native value transfers (e.g. the vesting-loan overpayment refund) can call back into the recipient. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. Settle a repaid vesting loan's state before refunding any native overpayment, so a re-entrant write-off cannot double-decrement the loaned-vesting inventory (checks-effects-interactions). |
 
-## 1. Trust Assumptions
+## 1. Trust assumptions
 
 - **`JBDirectory` is trusted.**
 - **Stake sources are trusted.**
 - **Deployment parameters must be sane.**
 
-## 2. Economic Risks
+## 2. Economic risks
 
 - **Reward-round snapshots are write-once per (hook, token, round).** Accepted funding is assigned to the current reward round and records that round's snapshot block plus total stake. Later funding in the same round accumulates into the same reward pot.
 - **Late claims do not reallocate historical rewards.** Funded reward rounds are reserved for historical stakers or NFT owners and are not reassigned merely because someone claims late.
@@ -44,7 +44,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
   must not consume the owner's per-round voting cap.
 
-## 3. Access Control And Caller Risks
+## 3. Access control and caller risks
 
 - **Vesting authority differs by distributor.** The token distributor only lets the encoded staker address start its own vesting clock. The 721 distributor only lets the current NFT owner materialize and collect rewards for that token ID.
 - **Claim authority differs by distributor type.**
@@ -52,7 +52,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Forfeiture release is effectively 721-only.**
 - **Split-hook entry is tightly gated.**
 
-## 4. DoS And Liveness Risks
+## 4. DoS and liveness risks
 
 - **Zero stake creates no reward entries.**
 - **Empty historical claims can be no-ops.** Token and 721 historical claims can succeed without creating a vesting entry when no past reward rounds are claimable or the claimant had zero eligible stake.
@@ -63,7 +63,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid or
   liquidated and written off.
 
-## 5. Integration Risks
+## 5. Integration risks
 
 - **Split funding relies on a single allowance-based flow.**
 - **Native split funding is exact.** If `context.token == NATIVE_TOKEN`, `msg.value` must equal `context.amount`.
@@ -95,7 +95,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   returns at least the borrowed collateral. It also relies on `loanOf(loanId).createdAt == 0` as the signal that a
   tracked loan was liquidated and can be written off.
 
-## 6. Invariants To Verify
+## 6. Invariants to verify
 
 - `totalVestingAmountOf - totalLoanedVestingAmountOf <= _balanceOf`
 - `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment,
@@ -113,7 +113,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
 - late claim transactions recycle expired rounds instead of vesting them
 
-## 7. Accepted Behaviors
+## 7. Accepted behaviors
 
 ### 7.1 Anyone can trigger a round snapshot
 

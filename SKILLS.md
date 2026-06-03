@@ -1,11 +1,11 @@
 # Juicebox Distributor
 
-## Use This File For
+## Use this file for
 
 - Use this file when the task involves round-based vesting, split-hook distribution, or snapshot-based payout allocation.
 - Start here, then decide whether the issue is in shared vesting logic, `IVotes`-based stake measurement, or 721-based stake measurement.
 
-## Read This Next
+## Read this next
 
 | If you need... | Open this next |
 |---|---|
@@ -16,7 +16,7 @@
 | Types and structs | [`src/structs/`](./src/structs/) |
 | Main tests | [`test/JBTokenDistributor.t.sol`](./test/JBTokenDistributor.t.sol), [`test/JB721Distributor.t.sol`](./test/JB721Distributor.t.sol), [`test/invariant/JB721DistributorInvariant.t.sol`](./test/invariant/JB721DistributorInvariant.t.sol) |
 
-## Repo Map
+## Repo map
 
 | Area | Where to look |
 |---|---|
@@ -28,7 +28,7 @@
 
 Shared vesting and distribution engine for ERC-20 and 721-based payout flows.
 
-## Working Rules
+## Working rules
 
 - Start in [`src/JBDistributor.sol`](./src/JBDistributor.sol) for shared round logic.
 - Treat snapshot timing as part of correctness.

@@ -1,6 +1,6 @@
 # Administration
 
-## At A Glance
+## At a glance
 
 | Item | Details |
 | --- | --- |
@@ -13,7 +13,7 @@
 
 `nana-distributor-v6` has less admin complexity than many sibling repos, but deployment parameters and funding assumptions still create real control risk.
 
-## Control Model
+## Control model
 
 - vesting is driven by deployment parameters, round timing, and claimant-initiated materialization
 - claim authority differs by distributor type
@@ -28,20 +28,20 @@
 | Token claimant | Encoded claimant address | Per token slot | Token distributor authority model |
 | NFT claimant | Current NFT owner | Per token ID | 721 distributor authority model |
 
-## Privileged Surfaces
+## Privileged surfaces
 
 - deployment parameters
 - funding flows
 - claim entrypoints with distributor-specific authority checks
 - 721 forfeiture release path
 
-## Immutable And One-Way
+## Immutable and one-way
 
 - bad constructor parameters can permanently make an instance unusable
 - snapshots define a round once taken
 - vested or collected value does not rewind
 
-## Operational Notes
+## Operational notes
 
 - review round timing and vesting-round count before deployment
 - choose claim duration carefully at deployment; `0` keeps all funding paths non-expiring
@@ -56,14 +56,14 @@
 - 721 forfeiture release can recycle some value
 - bad deployment parameters usually require a new distributor instance
 
-## Admin Boundaries
+## Admin boundaries
 
 - this repo does not create upstream entitlement logic
 - token and 721 vesting are claimant-initiated; operators still need to manage snapshot timing with `poke` where
   predictable snapshots matter
 - the distributor cannot make a missing or wrong stake source correct
 
-## Source Map
+## Source map
 
 - `src/JBDistributor.sol`
 - `src/JBTokenDistributor.sol`

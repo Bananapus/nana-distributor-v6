@@ -2,11 +2,11 @@
 
 What does this PR do, how, and why?
 
-## Risk Surface
+## Risk surface
 
 What new trust boundary, failure mode, operational dependency, or integration caveat does this PR introduce or remove?
 
-## RISKS.md Impact
+## RISKS.md impact
 
 - [ ] No runtime, admin, deployment, or integration risk surface changed
 - [ ] Updated this repo's `RISKS.md`
