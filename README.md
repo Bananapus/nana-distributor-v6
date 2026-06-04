@@ -30,7 +30,7 @@ Use this repo when the problem is "how do we distribute already-owned assets ove
 
 If the issue is "where did the project's value come from?" start in `nana-core-v6`, `nana-721-hook-v6`, or the upstream repo that minted or received the assets first.
 
-## Key Contracts
+## Key contracts
 
 | Contract | Role |
 | --- | --- |
@@ -38,7 +38,7 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 | `JBTokenDistributor` | ERC-20 distributor keyed to `IVotes` checkpointed voting power. |
 | `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's `CHECKPOINTS()` module. Only NFTs held at the funded round's snapshot block are eligible. |
 
-## Mental Model
+## Mental model
 
 1. a project funds the distributor, often through a payout split
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
@@ -51,14 +51,14 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
-## Read These Files First
+## Read these files first
 
 1. `src/interfaces/IJBDistributor.sol`
 2. `src/JBDistributor.sol`
 3. `src/JBTokenDistributor.sol`
 4. `src/JB721Distributor.sol`
 
-## Integration Traps
+## Integration traps
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
 - ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
@@ -87,14 +87,14 @@ This repo does not explain why an allocation exists. It only defines how funded 
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 
-## Where State Lives
+## Where state lives
 
 - round and vesting state: `JBDistributor`
 - historical reward-round inputs: `JBRewardRoundData`
 - vesting schedule state: `JBVestingData`
 - asset-specific claim behavior: the concrete distributor
 
-## High-Signal Tests
+## High-signal tests
 
 1. `test/JBTokenDistributor.t.sol`
 2. `test/JB721Distributor.t.sol`
@@ -121,7 +121,7 @@ Useful scripts:
 - `npm run deploy:mainnets`
 - `npm run deploy:testnets`
 
-## Repository Layout
+## Repository layout
 
 ```text
 src/
@@ -136,7 +136,7 @@ script/
   Deploy.s.sol
 ```
 
-## Risks And Notes
+## Risks and notes
 
 - distributors are only as trustworthy as the vesting parameters and funding they receive
 - operational mistakes often come from funding the wrong asset or underfunding the distributor
@@ -144,7 +144,7 @@ script/
 - deployers that set a nonzero claim duration should choose a window long enough for expected claimants, because
   expired unclaimed rewards can be recycled by anyone
 
-## For AI Agents
+## For AI agents
 
 - Treat this repo as distribution plumbing, not as the source of upstream entitlement math.
 - Read both the ERC-20 and ERC-721 tests before claiming the flows are equivalent.

@@ -163,6 +163,7 @@ abstract contract JBDistributor is IJBDistributor {
 
     /// @notice The block number recorded as the snapshot point for each round.
     /// @dev Set to `block.number - 1` on first interaction in a round, so that `IVotes.getPastVotes` works.
+    /// @custom:param round The round whose snapshot block is being recorded.
     mapping(uint256 round => uint256) public override roundSnapshotBlock;
 
     /// @notice Reward data assigned to each funding round.
@@ -296,7 +297,7 @@ abstract contract JBDistributor is IJBDistributor {
     }
 
     /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
-    /// @dev The selector name is kept for compatibility with existing keeper integrations.
+    /// @dev Recycling is permissionless; any keeper or frontend can sweep an expired round.
     /// @param hook The hook whose expired rewards should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
@@ -633,7 +634,7 @@ abstract contract JBDistributor is IJBDistributor {
         // Before collecting, bring the token IDs current by starting vesting for any past reward rounds.
         _claimPastRewards({hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens});
 
-        // Release whatever portion of existing vesting entries has unlocked by this round.
+        // Release whatever portion of vesting entries has unlocked by this round.
         _unlockRewards({
             hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary, ownerClaim: true
         });
@@ -911,7 +912,7 @@ abstract contract JBDistributor is IJBDistributor {
                 revert JBDistributor_UnexpectedNativeValue({msgValue: msg.value, token: loan.sourceToken});
             }
 
-            // Pull the exact current payoff from the caller. Existing distributor inventory must not cover a shortfall.
+            // Pull the exact current payoff from the caller. Distributor inventory must not cover a shortfall.
             IERC20 sourceToken = IERC20(loan.sourceToken);
             uint256 sourceBalanceBefore = sourceToken.balanceOf(address(this));
             sourceToken.safeTransferFrom({from: msg.sender, to: address(this), value: repayBorrowAmount});
@@ -1263,7 +1264,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param round The reward round.
     /// @return claimDeadline The deadline timestamp. Zero means no expiration.
     function _claimDeadlineFor(uint256 round) internal view returns (uint48 claimDeadline) {
-        // Zero duration keeps the round non-expiring and backward compatible with existing fund paths.
+        // A zero claim duration means the round never expires.
         if (CLAIM_DURATION == 0) return 0;
 
         // Start the window at the next round boundary, when the funded round first becomes claimable.

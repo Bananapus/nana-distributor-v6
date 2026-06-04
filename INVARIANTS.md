@@ -6,7 +6,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 ---
 
-# Section A — Guarantees to Stakers
+## Section A — Guarantees to stakers
 
 ## A.1 Snapshot fairness
 
@@ -18,7 +18,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.1.6 721 stake is `min(tier.votingUnits, owner.pastVotes)` at the snapshot block.** `JB721Distributor._tokenStake` queries the hook's checkpoints module: `_snapshotOwnerOf` returns the owner-at-snapshot (or zero), and `IVotes.getPastVotes` on the checkpoints module gates that owner's effective claim (`src/JB721Distributor.sol:483-505, 531-550`). Late mints, post-snapshot transfers, and undelegated owners receive zero.
 - **A.1.7 Per-owner voting-power cap across an NFT batch.** When an owner holds multiple NFTs in the batch, `_claimRewardRoundForTokenId` uses per-owner `consumed[]` accounting to cap the aggregate claim at the owner's snapshot `pastVotes`, persisted into `_consumedVotesOf[hook][token][round][owner]` across calls (`src/JB721Distributor.sol:365-427`, persisted at `:350` and seeded from storage at `:410`). An owner with N NFTs of V voting units each cannot claim `N×V` if `pastVotes < N×V`.
 
-## A.2 Allocation & vesting math
+## A.2 Allocation and vesting math
 
 - **A.2.1 Pro-rata allocation by stake.** Each token ID's share is `mulDiv(distributable, tokenStake, totalStake)`, computed in each child distributor's lazy past-round claim (`src/JBTokenDistributor.sol:295`, `src/JB721Distributor.sol:422`).
 - **A.2.2 Linear vesting via cumulative-share math.** `lockedShareOf` returns `(releaseRound - currentRound) * MAX_SHARE / VESTING_ROUNDS`; `newlyClaimableAmountOf` computes the unlock delta as the difference of two `mulDiv` rounds against the cumulative `shareClaimed`, not the incremental share, so floor-rounding dust cannot be stranded over partial collections (`src/libraries/JBVestingMath.sol:16-55`, `src/JBDistributor.sol:432-446, 1272-1293`). The final `unclaimedAmountOf` settles the last unlock as `amount - mulDiv(amount, shareClaimed, MAX_SHARE)` which releases dust at full vest (`src/libraries/JBVestingMath.sol:63-73`).
@@ -51,7 +51,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.4.13 Loans require non-zero `VESTING_ROUNDS`.** Borrow reverts `JBDistributor_VestingLoansDisabled` when `VESTING_ROUNDS == 0` (`src/JBDistributor.sol:554`).
 - **A.4.14 Constructor grants `REVLoans` only `BURN_TOKENS` permission, only when configured.** The constructor wildcards `BURN_TOKENS` for the trusted `revLoans` operator (`src/JBDistributor.sol:237-248`); no other permission is delegated. If `revLoans == address(0)`, no permission is granted and `borrowAgainstVesting` reverts `JBDistributor_RevnetLoansNotConfigured` (`src/JBDistributor.sol:557`).
 
-## A.5 Expiry & recycling — dust prevention
+## A.5 Expiry and recycling — dust prevention
 
 - **A.5.1 `burnExpiredRewards` recycles unclaimed inventory of expired rounds into the current round.** Permissionless. Only acts on rounds whose `claimDeadline != 0` and `block.timestamp >= claimDeadline` (`src/JBDistributor.sol:304-327, 1060-1096, 1166-1173`). `claimedAmount` is set to `amount` BEFORE the new round write, so the round cannot double-recycle.
 - **A.5.2 `CLAIM_DURATION == 0` makes rewards never expire.** `_claimDeadlineFor` returns 0 (`src/JBDistributor.sol:1155-1161`) and `_rewardRoundExpired` returns false unconditionally (`src/JBDistributor.sol:1166-1173`).
@@ -71,7 +71,7 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 ---
 
-# Section B — Operator Surface
+## Section B — Operator surface
 
 The distributor has **no global admin and no per-hook operator role**. There is no Ownable, no upgrade hook, no protocol-fee setter, no pause switch. All mutating surface is either:
 
@@ -83,7 +83,7 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 
 ---
 
-# Section C — Per-Contract Operation Inventory
+## Section C — Per-contract operation inventory
 
 ## C.1 `JBDistributor` (abstract base) — `src/JBDistributor.sol`
 
@@ -193,7 +193,7 @@ Pure helpers. No state, no auth. Three functions:
 
 ---
 
-# Section D — Cross-Cutting Invariants
+## Section D — Cross-cutting invariants
 
 - **D.1 Snapshot once per round, pokeable.** `roundSnapshotBlock[round]` is set on first interaction with `block.number - 1` and never overwritten; the next round is eagerly armed alongside (A.1.1, A.1.2). The first interaction of a round cannot redefine the eligible staker set (`src/JBDistributor.sol:1132-1150`).
 - **D.2 Per-round pot is locked at first credit.** `JBRewardRoundData.snapshotBlock`, `claimDeadline`, and `totalStake` are stamped on the first non-zero `_recordRewardRound` call for `(hook, token, round)` and never re-stamped, so late mints cannot dilute earlier round contributors (A.1.4) (`src/JBDistributor.sol:1037-1049`).
@@ -209,7 +209,7 @@ Pure helpers. No state, no auth. Three functions:
 
 ---
 
-# Section E — Centralization Caveats
+## Section E — Centralization caveats
 
 - **E.1 No global admin.** There is no `Ownable` on `JBDistributor`, `JBTokenDistributor`, or `JB721Distributor`. The contracts have no upgrade path, no pause switch, no protocol-fee setter, no allowlist. All configuration is immutable at construction.
 - **E.2 Cloneable / singleton per-hook design.** A single deployed `JBTokenDistributor` or `JB721Distributor` instance can serve unbounded `hook` addresses. Per-hook state isolation (D.5) means hooks are mutually independent.
@@ -223,7 +223,7 @@ Pure helpers. No state, no auth. Three functions:
 
 ---
 
-# Section F — Key Code References
+## Section F — Key code references
 
 | Invariant | File:lines |
 |---|---|
