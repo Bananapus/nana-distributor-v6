@@ -35,8 +35,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
         view
         returns (uint256);
 
-    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in a
-    /// tier-scoped group.
+    /// @notice Calculate the collectible token amount for a token ID in a tier-scoped group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenId The ID of the token to calculate the token amount for.
