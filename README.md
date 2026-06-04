@@ -12,7 +12,7 @@
 - [SKILLS.md](./SKILLS.md) — quick index for routing tasks into the right sub-document.
 - [STYLE_GUIDE.md](./STYLE_GUIDE.md) — Solidity and repo conventions used across the Juicebox V6 ecosystem.
 - [AUDIT_INSTRUCTIONS.md](./AUDIT_INSTRUCTIONS.md) — audit framing, targets, and suggested hunting grounds.
-- [CHANGELOG.md](./CHANGELOG.md) — release notes and dependency bumps.
+- [CHANGELOG.md](./CHANGELOG.md) - V5 to V6 migration changelog.
 
 ## Overview
 
