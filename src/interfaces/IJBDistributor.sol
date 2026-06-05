@@ -284,7 +284,13 @@ interface IJBDistributor {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function burnExpiredRewards(address hook, IERC20 token, uint256[] calldata rounds) external returns (uint256 amount);
+    function recycleExpiredRewards(
+        address hook,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        returns (uint256 amount);
 
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;

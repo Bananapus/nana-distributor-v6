@@ -223,7 +223,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function burnExpiredRewards(
+    function recycleExpiredRewards(
         address hook,
         uint256[] calldata tierIds,
         IERC20 token,
@@ -233,7 +233,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         override
         returns (uint256 amount)
     {
-        amount = _burnExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});
+        amount = _recycleExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});
     }
 
     /// @notice Recycle unlocked rewards tied to burned NFTs in a tier-scoped group into the current reward round.

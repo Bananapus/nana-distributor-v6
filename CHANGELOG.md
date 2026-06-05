@@ -4,6 +4,11 @@
 
 - Raise dependency floors to the latest published versions; document NatSpec, comment, and lint conventions in
   STYLE_GUIDE.
+- Make token distributors with nonzero `CLAIM_DURATION` active-voter distributors. Funded token rounds start with
+  `totalStake == 0`; holders call `beginVesting` before the deadline to register snapshot `getPastVotes`, and after
+  the deadline only registered voting power shares the pot. Token rounds with no registered voters can be recycled
+  into the current round; registered active-voter rounds are protected from permissionless recycling. Deployments with
+  `CLAIM_DURATION == 0` keep the non-expiring `getPastTotalSupply` denominator.
 - Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` now runs
   `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
   native `msg.sender.call` refund, following checks-effects-interactions. Previously the refund external call happened
@@ -15,13 +20,14 @@
   base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
   is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
   `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set (group 0 = all tiers). `JB721Distributor` adds
-  `tierIds` overloads of `fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`,
+  `tierIds` overloads of `fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`,
   and `releaseForfeitedRewards` (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) that fund and claim
   pots only holders of the given tiers can claim, pro-rata by tier `votingUnits` against a summed
   `getPastTierVotingUnits` denominator (no per-owner cap on the tier path; the all-tiers path uses the per-owner cap).
   Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` exposes no tier API and threads
-  `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply`. Re-keyed the public state
-  getters (`rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
+  `groupId` only for storage isolation; non-expiring token rounds use global `getPastTotalSupply`, while active-voter
+  token rounds use registered `getPastVotes`. Re-keyed the public state getters (`rewardRoundOf`, `vestingDataOf`,
+  `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
   `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
   to the `JBVestingLoan` struct. Requires `@bananapus/721-hook-v6 >= 0.0.63` for `getPastTierVotingUnits`.
 - Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's

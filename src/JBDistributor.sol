@@ -302,7 +302,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function burnExpiredRewards(
+    function recycleExpiredRewards(
         address hook,
         IERC20 token,
         uint256[] calldata rounds
@@ -312,7 +312,7 @@ abstract contract JBDistributor is IJBDistributor {
         override
         returns (uint256 amount)
     {
-        amount = _burnExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
+        amount = _recycleExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
     }
 
     /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
@@ -685,7 +685,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function _burnExpiredRewards(
+    function _recycleExpiredRewards(
         address hook,
         uint256 groupId,
         IERC20 token,

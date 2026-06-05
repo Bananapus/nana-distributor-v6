@@ -1309,7 +1309,7 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 recycled = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.recycleExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
@@ -1342,7 +1342,7 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 recycled = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.recycleExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 

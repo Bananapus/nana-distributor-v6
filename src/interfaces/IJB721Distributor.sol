@@ -105,7 +105,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function burnExpiredRewards(
+    function recycleExpiredRewards(
         address hook,
         uint256[] calldata tierIds,
         IERC20 token,
