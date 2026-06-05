@@ -262,8 +262,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // ----------------------- external views ---------------------------- //
     //*********************************************************************//
 
-    /// @notice Calculate the total uncollected (vesting + vested-but-uncollected) amount for an NFT token ID in a
-    /// tier-scoped group.
+    /// @notice Calculate the total uncollected amount for an NFT token ID in a tier-scoped group.
     /// @param hook The 721 hook the tokenId belongs to.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenId The ID of the NFT token to calculate for.

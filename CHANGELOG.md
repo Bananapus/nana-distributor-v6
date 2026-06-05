@@ -1,67 +1,107 @@
-# Changelog
+# V5 to V6 Changelog
 
-## 0.0.39 — Active-voter token rewards
+## Scope
 
-- Raise dependency floors to the latest published versions; document NatSpec, comment, and lint conventions in
-  STYLE_GUIDE.
-- Make token distributors with nonzero `CLAIM_DURATION` active-voter distributors. Funded token rounds start with
-  `totalStake` equal to `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, and claimants use snapshot
-  `getPastVotes` against that active denominator. Token rounds with zero active votes can be recycled into the current
-  round after the deadline; active-voter rounds with nonzero active votes are protected from permissionless recycling.
-  Deployments with `CLAIM_DURATION == 0` keep the non-expiring `getPastTotalSupply` denominator.
-- Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` runs
-  `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
-  native `msg.sender.call` refund, following checks-effects-interactions. This keeps re-entrant
-  `writeOffLiquidatedVestingLoan(loanId)` calls from seeing the repaid loan as live and prevents the loaned-vesting
-  inventory from being decremented twice for the same repayment. The refund amount and recipient stay the same. Added
-  a regression test (`test/regression/VestingLoanNativeRefundSettlement.t.sol`).
-- Add tier-scoped reward groups. Every reward, vesting, and loan record carries a generic `groupId` dimension in the
-  base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
-  is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
-  `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set (group 0 = all tiers). `JB721Distributor` adds
-  `tierIds` overloads of `fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`,
-  and `releaseForfeitedRewards` (plus `claimedFor`/`collectableFor` views and a `tierIdsOf` view) that fund and claim
-  pots only holders of the given tiers can claim, pro-rata by tier `votingUnits` against a summed
-  `getPastTierVotingUnits` denominator (no per-owner cap on the tier path; the all-tiers path uses the per-owner cap).
-  Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` exposes no tier API and threads
-  `groupId` only for storage isolation; non-expiring token rounds use global `getPastTotalSupply`, while active-voter
-  token rounds use `getPastTotalActiveVotes`. Re-keyed the public state getters (`rewardRoundOf`, `vestingDataOf`,
-  `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
-  `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
-  to the `JBVestingLoan` struct. Requires `@bananapus/core-v6 >= 0.0.85` for `IJBActiveVotes` and
+This is a V5-to-V6 migration changelog, not a package release log or commit history. `nana-distributor-v6` has no
+deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract package.
+
+## Current V6 Surface
+
+- `JBDistributor`
+- `JB721Distributor`
+- `JBTokenDistributor`
+- `IJBDistributor`
+- `IJB721Distributor`
+- `IJBTokenDistributor`
+- vesting, claim, reward-round, and loan structs under `src/structs`
+
+## Summary
+
+- V6 introduces distributor contracts for vesting and reward distribution flows that did not exist as a deployed V5
+  package.
+- `JB721Distributor` distributes rewards to 721 holders using token or tier inputs and historical voting/unit
+  snapshots.
+- `JBTokenDistributor` distributes rewards for token-based contexts and enforces expected token/native payment inputs.
+- Token distributors with nonzero `CLAIM_DURATION` allocate funded rounds against
+  `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, while each claimant's share uses snapshot `getPastVotes`.
+  Undelegated balances, including AMM-held tokens, do not share those active-voter rewards.
+- Token rounds with zero active votes can be recycled after the deadline; rounds with nonzero active votes remain
+  reserved for snapshot voters to materialize lazily. Deployments with `CLAIM_DURATION == 0` keep the non-expiring
+  `getPastTotalSupply` denominator.
+- Distributor flows include claim, collect, recycle, vesting-loan, and liquidation/write-off event surface that V5
+  integrators will not have indexed before.
+
+## ABI, Event, and Error Changes
+
+- No V5 ABI exists to diff against. All distributor ABIs are new to V6.
+- New functions to integrate include distributor funding, claim/collect views, tier ID views, and vesting/reward claim
+  operations from the V6 interfaces.
+- New events include:
+  - `BorrowAgainstVesting`
+  - `Claimed`
+  - `Collected`
+  - `RoundSnapshotRecorded`
+  - `ExpiredRewardsRecycled`
+  - `ForfeitedRewardsRecycled`
+  - `LiquidatedVestingLoanWrittenOff`
+  - `RepayVestingLoan`
+- New custom errors include:
+  - `JB721Distributor_TierIdsNotIncreasing`
+  - `JB721Distributor_TokenIdsNotIncreasing`
+  - `JB721Distributor_TokenMismatch`
+  - `JBTokenDistributor_InvalidTokenId`
+  - `JBTokenDistributor_TokenMismatch`
+  - native amount mismatch and unauthorized errors on both distributor variants.
+
+## Machine-Checked ABI Coverage
+
+Generated from Foundry `out/**/*.json` artifacts, filtered to this repo's own runtime source roots and excluding tests,
+scripts, and dependencies.
+
+- V5 comparison package: none; this is a new V6 runtime ABI surface.
+- Own-source ABI artifacts compared: V6 `7`, V5 `0`.
+- Contract/interface coverage: `7` added, `0` removed, `0` shared names with ABI changes, `0` shared names
+  ABI-identical.
+- Shared-name ABI item deltas: `0` added, `0` removed, `0` modified.
+
+Added V6 ABI artifacts:
+- `IJB721Distributor` from `src/interfaces/IJB721Distributor.sol`: `38` functions, `8` events, `0` errors.
+- `IJBDistributor` from `src/interfaces/IJBDistributor.sol`: `26` functions, `8` events, `0` errors.
+- `IJBTokenDistributor` from `src/interfaces/IJBTokenDistributor.sol`: `29` functions, `8` events, `0` errors.
+- `JB721Distributor` from `src/JB721Distributor.sol`: `43` functions, `8` events, `27` errors.
+- `JBDistributor` from `src/JBDistributor.sol`: `30` functions, `8` events, `22` errors.
+- `JBTokenDistributor` from `src/JBTokenDistributor.sol`: `34` functions, `8` events, `26` errors.
+- `JBVestingMath` from `src/libraries/JBVestingMath.sol`: `0` functions, `0` events, `0` errors.
+
+Generated event/error name deltas:
+- Event names added:
+  - `BorrowAgainstVesting`, `Claimed`, `Collected`, `ExpiredRewardsRecycled`, `ForfeitedRewardsRecycled`,
+    `LiquidatedVestingLoanWrittenOff`, `RepayVestingLoan`, `RoundSnapshotRecorded`.
+- Error names added:
+  - `JB721Distributor_NativeAmountMismatch`, `JB721Distributor_TierIdsNotIncreasing`,
+    `JB721Distributor_TokenIdsNotIncreasing`, `JB721Distributor_TokenMismatch`, `JB721Distributor_Unauthorized`,
+    `JBDistributor_EmptyTokenIds`, `JBDistributor_InsufficientRepaidCollateral`,
+    `JBDistributor_InsufficientRepayAmount`.
+  - `JBDistributor_InvalidRoundDuration`, `JBDistributor_InvalidVestingLoanId`,
+    `JBDistributor_NativeTransferFailed`, `JBDistributor_NoAccess`, `JBDistributor_NoVestingLoan`,
+    `JBDistributor_NotRevnetRewardToken`, `JBDistributor_NothingToBorrow`, `JBDistributor_ReentrantTokenTransfer`.
+  - `JBDistributor_RevnetLoansNotConfigured`, `JBDistributor_Uint208Overflow`, `JBDistributor_Uint48Overflow`,
+    `JBDistributor_UnexpectedNativeValue`, `JBDistributor_UnexpectedRepayAmount`,
+    `JBDistributor_UnexpectedTokenCount`, `JBDistributor_VestingLoanNotLiquidated`,
+    `JBDistributor_VestingLoanOutstanding`.
+  - `JBDistributor_VestingLoansDisabled`, `JBTokenDistributor_InvalidTokenId`,
+    `JBTokenDistributor_NativeAmountMismatch`, `JBTokenDistributor_TokenMismatch`,
+    `JBTokenDistributor_Unauthorized`, `PRBMath_MulDiv_Overflow`, `SafeERC20FailedOperation`.
+
+## Migration Notes
+
+- Treat distributor indexing as a new V6 subsystem, not a V5 upgrade.
+- Regenerate ABIs directly from V6 and design event schemas around the new reward, vesting, and loan lifecycle events.
+- When integrating with 721 rewards, use V6 721 hook checkpoint surfaces rather than current-owner-only assumptions.
+- When integrating with token rewards and a nonzero claim duration, surface delegation as the opt-in action for reward
+  eligibility. Active-voter rounds use the funded snapshot's active delegated total and remain claimable by those
+  snapshot voters after the deadline.
+- AMM-held or otherwise undelegated tokens are inactive for nonzero-claim-duration token rewards until the holder
+  receives the tokens back and delegates again before a later funded snapshot.
+- This package expects `@bananapus/core-v6 >= 0.0.85` for `IJBActiveVotes` and
   `@bananapus/721-hook-v6 >= 0.0.70` for the active-vote-aware checkpoint interface.
-- Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's
-  uncollected vesting rewards while the distributor keeps the loan NFT, blocks collection, and restores the same
-  vesting schedule on repayment.
-- Disable vesting loans when `VESTING_ROUNDS == 0`, because those rewards are immediately collectible.
-- Depend on `@rev-net/core-v6` for Revnet loan and owner interfaces instead of defining local loan types.
-- Add regression tests covering loan custody, direct repayment bypass prevention, active-loan collection locks,
-  zero-vesting loan rejection, collateral shortfall reverts, and repayment reward-token excess handling.
-- Lift the shared `beginVesting`/`collectVestedRewards` entrypoints into the base `JBDistributor` (they dispatch
-  into each concrete distributor's `_claimPastRewards`/`_requireCanClaimTokenIds`), removing the duplicated
-  overrides in `JBTokenDistributor` and `JB721Distributor`. Delete the dead snapshot-balance model entirely —
-  `_vestTokenIds`/`_vestSingleToken`, `_takeSnapshotOf`, the `snapshotAtRoundOf` view, the `JBTokenSnapshotData`
-  struct, the `_snapshotAtRoundOf`/`_snapshotInitializedFor` mappings, the `SnapshotCreated` event, and the
-  `JBDistributor_NothingToDistribute` error are gone. No live behavior change: rewards remain recorded per round
-  and lazily claimed via the round-ledger path.
-
-## 0.0.16 — Bump v6 deps to nana-core-v6 0.0.53 cohort
-
-- `@bananapus/core-v6`: `^0.0.48 → ^0.0.53` ([PR #145](https://github.com/Bananapus/nana-core-v6/pull/145)).
-- `@bananapus/721-hook-v6`: `^0.0.47 → ^0.0.50`.
-- `@bananapus/permission-ids-v6`: `^0.0.22 → ^0.0.25`.
-- All `JBRulesetMetadata` test literals patched to include `pauseCrossProjectFeeFreeInflows: false`.
-
-## 0.0.1
-
-Initial release of the Juicebox V6 distributor system.
-
-### Features
-
-- **JBDistributor**: Abstract base contract with round-based distribution and configurable linear vesting.
-- **JBTokenDistributor**: Singleton distributor for IVotes-compatible ERC-20 tokens. Stake weight = delegated voting power at round start.
-- **JB721Distributor**: Singleton distributor for JB 721 NFT holders. Stake weight = tier's `votingUnits`. Burned NFTs excluded from stake; forfeited rewards recyclable through the current reward round.
-- Both implement `IJBSplitHook` for direct integration with Juicebox payout splits.
-- Linear vesting over configurable number of rounds.
-- Fee-on-transfer token support via balance-delta pattern.
-- Native ETH distribution support.

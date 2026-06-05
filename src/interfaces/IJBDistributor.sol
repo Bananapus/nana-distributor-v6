@@ -204,8 +204,7 @@ interface IJBDistributor {
     /// @return tokenAmount The claimed token amount.
     function claimedFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256 tokenAmount);
 
-    /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in the
-    /// default group.
+    /// @notice Calculate the collectible token amount for a token ID in the default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
