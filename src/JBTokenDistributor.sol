@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IJBActiveVotes} from "@bananapus/core-v6/src/interfaces/IJBActiveVotes.sol";
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
@@ -15,7 +16,6 @@ import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
-import {IJBActiveVotes} from "./interfaces/IJBActiveVotes.sol";
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {IJBTokenDistributor} from "./interfaces/IJBTokenDistributor.sol";
 import {JBClaimContext} from "./structs/JBClaimContext.sol";
@@ -484,10 +484,12 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     {
         groupId; // Silence unused variable warning — token distributors are group-agnostic in weight.
 
+        // Non-expiring token distributions use all historical voting units, including undelegated balances.
         if (CLAIM_DURATION == 0) {
             return IVotes(hook).getPastTotalSupply(blockNumber);
         }
 
+        // Expiring token distributions only use units delegated to nonzero delegates at the snapshot block.
         totalStakedAmount = IJBActiveVotes(hook).getPastTotalActiveVotes(blockNumber);
     }
 }

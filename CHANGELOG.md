@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.39 — Active-voter token rewards
 
 - Raise dependency floors to the latest published versions; document NatSpec, comment, and lint conventions in
   STYLE_GUIDE.
@@ -9,13 +9,12 @@
   `getPastVotes` against that active denominator. Token rounds with zero active votes can be recycled into the current
   round after the deadline; active-voter rounds with nonzero active votes are protected from permissionless recycling.
   Deployments with `CLAIM_DURATION == 0` keep the non-expiring `getPastTotalSupply` denominator.
-- Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` now runs
+- Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` runs
   `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
-  native `msg.sender.call` refund, following checks-effects-interactions. Previously the refund external call happened
-  while the loan record still looked live, so a re-entrant `writeOffLiquidatedVestingLoan(loanId)` could decrement the
-  loaned-vesting inventory a first time and let `_restoreVestingCollateral` decrement it a second time, corrupting a
-  second loan on the same hook and reward token. The refund amount and recipient are unchanged. Added a regression
-  test (`test/regression/VestingLoanNativeRefundSettlement.t.sol`).
+  native `msg.sender.call` refund, following checks-effects-interactions. This keeps re-entrant
+  `writeOffLiquidatedVestingLoan(loanId)` calls from seeing the repaid loan as live and prevents the loaned-vesting
+  inventory from being decremented twice for the same repayment. The refund amount and recipient stay the same. Added
+  a regression test (`test/regression/VestingLoanNativeRefundSettlement.t.sol`).
 - Add tier-scoped reward groups. Every reward, vesting, and loan record carries a generic `groupId` dimension in the
   base `JBDistributor`: `groupId == 0` is the default pool, acted on by the plain (no-`tierIds`) signatures. The base
   is tier-agnostic — the tier concept lives in `JB721Distributor`, where a non-zero group is
@@ -29,7 +28,8 @@
   token rounds use `getPastTotalActiveVotes`. Re-keyed the public state getters (`rewardRoundOf`, `vestingDataOf`,
   `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
   `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
-  to the `JBVestingLoan` struct. Requires `@bananapus/721-hook-v6 >= 0.0.63` for `getPastTierVotingUnits`.
+  to the `JBVestingLoan` struct. Requires `@bananapus/core-v6 >= 0.0.85` for `IJBActiveVotes` and
+  `@bananapus/721-hook-v6 >= 0.0.70` for the active-vote-aware checkpoint interface.
 - Add distributor-owned Revnet loans for vesting revnet rewards. Claimants can borrow against one token ID's
   uncollected vesting rewards while the distributor keeps the loan NFT, blocks collection, and restores the same
   vesting schedule on repayment.

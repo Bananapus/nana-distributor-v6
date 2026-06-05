@@ -10,10 +10,9 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
+import {IJBActiveVotes} from "@bananapus/core-v6/src/interfaces/IJBActiveVotes.sol";
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
-import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
-import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
@@ -21,10 +20,11 @@ import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBTokenDistributor} from "../src/JBTokenDistributor.sol";
 import {JBDistributor} from "../src/JBDistributor.sol";
-import {IJBActiveVotes} from "../src/interfaces/IJBActiveVotes.sol";
 import {IJBTokenDistributor} from "../src/interfaces/IJBTokenDistributor.sol";
 
 /// @notice Mock JB directory for testing.
@@ -94,55 +94,109 @@ contract MockJBController {
 contract MockVotesToken is ERC20, ERC20Votes, IJBActiveVotes {
     using Checkpoints for Checkpoints.Trace208;
 
+    /// @notice The checkpointed total of voting units delegated to nonzero delegates.
+    /// @dev Maintained alongside OZ `Votes` checkpoints so distributor tests can exercise active-voter denominators.
     Checkpoints.Trace208 private _activeSupplyCheckpoints;
 
+    /// @notice Deploy a mock vote token with fixed ERC-20 and EIP-712 metadata.
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
+    /// @notice Mint voting units for a test account.
+    /// @param to The account receiving the minted tokens.
+    /// @param amount The amount of tokens to mint.
     function mint(address to, uint256 amount) external {
-        _mint(to, amount);
+        // Tests mint directly so each scenario can set the exact vote distribution it needs.
+        _mint({account: to, value: amount});
     }
 
-    function getPastTotalActiveVotes(uint256 timepoint) external view returns (uint256 activeVotes) {
+    /// @notice The total delegated voting units at a past block.
+    /// @param timepoint The past block number to look up.
+    /// @return activeVotes The total voting units delegated to nonzero delegates at `timepoint`.
+    function getPastTotalActiveVotes(uint256 timepoint) external view override returns (uint256 activeVotes) {
+        // Use OZ's validated past timepoint lookup so future block reads revert like `Votes`.
         activeVotes = _activeSupplyCheckpoints.upperLookupRecent(_validateTimepoint(timepoint));
     }
 
-    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+    /// @notice The current total delegated voting units.
+    /// @return activeVotes The current total voting units delegated to nonzero delegates.
+    function getTotalActiveVotes() external view override returns (uint256 activeVotes) {
+        // Return the latest active-total checkpoint, or zero if no active votes have ever been written.
         activeVotes = _activeSupplyCheckpoints.latest();
     }
 
+    /// @notice Track active-vote-total changes when an account changes its delegate.
+    /// @dev Delegating to a nonzero address makes all of `account`'s voting units active. Clearing delegation removes
+    /// all of `account`'s voting units from the active total. Redelegating between two nonzero delegates only moves
+    /// votes inside OZ `Votes`, so the active total does not change.
+    /// @param account The account whose delegation is changing.
+    /// @param delegatee The new delegate. Use `address(0)` to clear delegation.
     function _delegate(address account, address delegatee) internal override {
+        // Read the current delegate before OZ mutates the delegate mapping.
         address oldDelegate = delegates(account);
+
+        // Read the account's current voting units so any active-total delta matches the units OZ moves.
         uint256 votingUnits = _getVotingUnits(account);
 
+        // Let OZ update the delegate mapping and the per-delegate vote checkpoints.
         super._delegate({account: account, delegatee: delegatee});
 
+        // If the account moves from undelegated to delegated, its voting units enter the active total.
         if (oldDelegate == address(0) && delegatee != address(0)) {
+            // Add the account's voting units to the checkpointed active total.
             _updateActiveVotes({amount: votingUnits, increase: true});
         } else if (oldDelegate != address(0) && delegatee == address(0)) {
+            // If the account moves from delegated to undelegated, its voting units leave the active total.
             _updateActiveVotes({amount: votingUnits, increase: false});
         }
     }
 
+    /// @notice Track active-vote-total changes when voting units move between accounts.
+    /// @dev Moving voting units between two accounts with the same delegation status does not change the active total.
+    /// Moving voting units out of a delegated account and into an undelegated account decreases the active total, while
+    /// moving voting units out of an undelegated account and into a delegated account increases it.
+    /// @param from The account whose voting units are leaving. `address(0)` means the units are being minted.
+    /// @param to The account whose voting units are arriving. `address(0)` means the units are being burned.
+    /// @param amount The voting units moving between `from` and `to`.
     function _transferVotingUnits(address from, address to, uint256 amount) internal override {
+        // The active total decreases if units leave an account that already has a nonzero delegate.
         bool decreaseActiveVotes = from != address(0) && delegates(from) != address(0);
+
+        // The active total increases if units arrive at an account that already has a nonzero delegate.
         bool increaseActiveVotes = to != address(0) && delegates(to) != address(0);
 
+        // Let OZ update total voting-unit supply and per-delegate checkpoints first.
         super._transferVotingUnits({from: from, to: to, amount: amount});
 
+        // If both sides are delegated or both sides are undelegated, the active total is unchanged.
         if (decreaseActiveVotes == increaseActiveVotes) return;
+
+        // Otherwise apply the one-sided active-total delta implied by the receiver's delegated status.
         _updateActiveVotes({amount: amount, increase: increaseActiveVotes});
     }
 
+    /// @notice Apply a token balance update and its voting-unit side effects.
+    /// @param from The account whose balance is decreasing, or `address(0)` for a mint.
+    /// @param to The account whose balance is increasing, or `address(0)` for a burn.
+    /// @param value The token amount moving between `from` and `to`.
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+        // Route all balance changes through OZ so ERC-20 balances and voting-unit checkpoints stay aligned.
         super._update(from, to, value);
     }
 
+    /// @notice Update the checkpointed total of delegated voting units.
+    /// @dev Writes at most one active-total checkpoint at the current OZ clock. A zero amount is ignored so zero-value
+    /// delegation or transfer hooks do not create empty checkpoints.
+    /// @param amount The amount of voting units to add or remove.
+    /// @param increase Whether to add `amount`; if false, `amount` is removed.
     function _updateActiveVotes(uint256 amount, bool increase) internal {
+        // Ignore zero-unit updates because they do not change the active total.
         if (amount == 0) return;
 
+        // Calculate the next active total by adding or subtracting from the latest checkpointed value.
         uint256 updated =
             increase ? _activeSupplyCheckpoints.latest() + amount : _activeSupplyCheckpoints.latest() - amount;
 
+        // Write the new active total at the current ERC-6372 clock using the same uint208 width as OZ `Votes`.
         _activeSupplyCheckpoints.push({key: clock(), value: SafeCast.toUint208(updated)});
     }
 }

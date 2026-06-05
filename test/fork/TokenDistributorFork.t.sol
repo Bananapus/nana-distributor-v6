@@ -21,11 +21,11 @@ import {JBFeelessAddresses} from "@bananapus/core-v6/src/JBFeelessAddresses.sol"
 // Core interfaces.
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
-import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
-import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBRulesetApprovalHook} from "@bananapus/core-v6/src/interfaces/IJBRulesetApprovalHook.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 // Core structs.
 import {JBRulesetConfig} from "@bananapus/core-v6/src/structs/JBRulesetConfig.sol";
@@ -41,15 +41,12 @@ import {JBCurrencyAmount} from "@bananapus/core-v6/src/structs/JBCurrencyAmount.
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
 // Permit2.
 import {IPermit2} from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 
 // Distributor.
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
-import {IJBActiveVotes} from "../../src/interfaces/IJBActiveVotes.sol";
 
 /// @notice Minimal holder that represents AMM custody of project tokens in fork tests.
 contract ForkAmmHolder {
@@ -59,55 +56,6 @@ contract ForkAmmHolder {
     /// @param amount The amount to return.
     function returnTokens(IERC20 token, address holder, uint256 amount) external {
         token.transfer(holder, amount);
-    }
-}
-
-/// @notice JBERC20 fork-test implementation with active-vote total checkpoints.
-contract ForkActiveJBERC20 is JBERC20, IJBActiveVotes {
-    using Checkpoints for Checkpoints.Trace208;
-
-    Checkpoints.Trace208 private _activeSupplyCheckpoints;
-
-    constructor(JBPermissions permissions, JBProjects projects) JBERC20(permissions, projects) {}
-
-    function getPastTotalActiveVotes(uint256 timepoint) external view returns (uint256 activeVotes) {
-        activeVotes = _activeSupplyCheckpoints.upperLookupRecent(_validateTimepoint(timepoint));
-    }
-
-    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
-        activeVotes = _activeSupplyCheckpoints.latest();
-    }
-
-    function _delegate(address account, address delegatee) internal override {
-        address oldDelegate = delegates(account);
-        uint256 votingUnits = _getVotingUnits(account);
-
-        super._delegate({account: account, delegatee: delegatee});
-
-        if (oldDelegate == address(0) && delegatee != address(0)) {
-            _updateActiveVotes({amount: votingUnits, increase: true});
-        } else if (oldDelegate != address(0) && delegatee == address(0)) {
-            _updateActiveVotes({amount: votingUnits, increase: false});
-        }
-    }
-
-    function _transferVotingUnits(address from, address to, uint256 amount) internal override {
-        bool decreaseActiveVotes = from != address(0) && delegates(from) != address(0);
-        bool increaseActiveVotes = to != address(0) && delegates(to) != address(0);
-
-        super._transferVotingUnits({from: from, to: to, amount: amount});
-
-        if (decreaseActiveVotes == increaseActiveVotes) return;
-        _updateActiveVotes({amount: amount, increase: increaseActiveVotes});
-    }
-
-    function _updateActiveVotes(uint256 amount, bool increase) internal {
-        if (amount == 0) return;
-
-        uint256 updated =
-            increase ? _activeSupplyCheckpoints.latest() + amount : _activeSupplyCheckpoints.latest() - amount;
-
-        _activeSupplyCheckpoints.push({key: clock(), value: SafeCast.toUint208(updated)});
     }
 }
 
@@ -616,7 +564,7 @@ contract TokenDistributorForkTest is Test {
         jbProjects = new JBProjects(multisig, address(0), address(0));
         jbDirectory = new JBDirectory(jbPermissions, jbProjects, multisig);
 
-        ForkActiveJBERC20 jbErc20 = new ForkActiveJBERC20(jbPermissions, jbProjects);
+        JBERC20 jbErc20 = new JBERC20(jbPermissions, jbProjects);
         jbTokens = new JBTokens(jbDirectory, jbErc20);
 
         jbRulesets = new JBRulesets(jbDirectory);
