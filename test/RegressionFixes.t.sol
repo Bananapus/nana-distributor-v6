@@ -61,6 +61,14 @@ contract RegressionFixMockVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }
@@ -252,10 +260,7 @@ contract RegressionFixesTest is Test {
 
     /// @notice beginVesting with zero totalStake should silently return (no revert).
     function test_zeroTotalStake_beginVesting_zeroTotalStake_doesNotRevert() public {
-        // Nobody delegates, so getPastTotalSupply will return 0. But we use the mock votes token
-        // which returns totalSupply via getPastTotalSupply. We need to ensure totalSupply is 0.
-        // Since votesToken was minted in setUp but nobody delegated, getPastTotalSupply returns
-        // the total supply of delegated votes. With no delegation, this is 0 for ERC20Votes.
+        // Keep the active-vote denominator at zero so the funded round has no pro-rata basis.
 
         // Fund the distributor.
         rewardToken.mint(address(this), 1000 ether);

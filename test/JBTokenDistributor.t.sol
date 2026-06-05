@@ -400,16 +400,13 @@ contract JBTokenDistributorTest is Test {
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
         assertEq(aliceClaimed, 0, "Alice should have 0 claimed without delegation");
 
-        // Bob gets only his total-supply share because Alice's undelegated tokens remain in the denominator.
-        // getPastVotes(bob) = 300, getPastTotalSupply = 1000 (includes undelegated).
-        // So bob gets 300/1000 * 1000 = 300.
+        // Bob is the only active voter, so his 300 delegated votes are the full denominator.
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
-        assertEq(bobClaimed, 300 ether, "Bob should have 300 claimed (his share of total supply)");
+        assertEq(bobClaimed, 1000 ether, "Bob should receive the full active-voter round");
     }
 
-    function test_nonDelegatedSupply_staysInPool() public {
-        // Only bob delegates. Total supply = 1000, bob votes = 300.
-        // Bob gets 300/1000 = 30%. The other 70% stays in the pool.
+    function test_nonDelegatedSupply_excludedFromDenominator() public {
+        // Only Bob delegates. Alice's undelegated supply is excluded from the active denominator.
         vm.prank(bob);
         votesToken.delegate(bob);
 
@@ -424,11 +421,10 @@ contract JBTokenDistributorTest is Test {
         _beginVestingFor(bob, tokens);
 
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
-        assertEq(bobClaimed, 300 ether, "Bob gets 30% of pool");
+        assertEq(bobClaimed, 1000 ether, "Bob gets the whole active-voter pool");
 
-        // 700 tokens remain undistributed in the pool.
         uint256 totalVesting = distributor.totalVestingAmountOf(address(votesToken), IERC20(address(rewardToken)));
-        assertEq(totalVesting, 300 ether, "Only 300 vesting");
+        assertEq(totalVesting, 1000 ether, "Only active voters start vesting");
         uint256 balance = distributor.balanceOf(address(votesToken), IERC20(address(rewardToken)));
         assertEq(balance, 1000 ether, "Full balance still held");
     }
@@ -730,13 +726,13 @@ contract JBTokenDistributorTest is Test {
         _advanceToRound(2);
         uint256 collectable =
             distributor.collectableFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        // Alice has 700 (70% of 1000). 25% of 700 = 175.
-        assertEq(collectable, 175 ether, "25% vested after 1/4 rounds");
+        // Alice is the only active voter, so 25% of her 1000-token reward is vested.
+        assertEq(collectable, 250 ether, "25% vested after 1/4 rounds");
 
         // After 3 of 4 rounds, 75% should be collectable.
         _advanceToRound(4);
         collectable = distributor.collectableFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(collectable, 525 ether, "75% vested after 3/4 rounds");
+        assertEq(collectable, 750 ether, "75% vested after 3/4 rounds");
     }
 
     function test_autoVest_collectWithoutBeginVesting() public {
@@ -1068,7 +1064,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(rewardToken.totalSupply(), 1 ether, "recycling does not burn supply");
     }
 
-    function test_expiringRewards_activeRoundDoesNotRecycleUnclaimedShares() public {
+    function test_expiringRewards_recyclesUnclaimedActiveShares() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -1087,11 +1083,11 @@ contract JBTokenDistributorTest is Test {
             hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(recycled, 0, "active-voter rounds with active votes do not recycle");
+        assertEq(recycled, 300 ether, "Bob's unmaterialized active share recycles");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             1000 ether,
-            "active round inventory remains"
+            "active round inventory stays in custody"
         );
         assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "all inventory remains in distributor");
         assertEq(rewardToken.totalSupply(), 1000 ether, "recycling does not burn supply");
@@ -1103,10 +1099,10 @@ contract JBTokenDistributorTest is Test {
 
         _beginVestingFor(bob, _singleRewardToken());
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
-        assertEq(bobClaimed, 300 ether, "Bob can claim lazily after the deadline");
+        assertEq(bobClaimed, 0, "Bob's expired round-0 allocation was forfeited");
     }
 
-    function test_expiringRewards_lateActiveClaimVestsExpiredRound() public {
+    function test_expiringRewards_lateActiveClaimRecyclesExpiredRound() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -1122,7 +1118,20 @@ contract JBTokenDistributorTest is Test {
 
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 700 ether, "expired active rewards still vest for snapshot voters");
+        assertEq(aliceClaimed, 0, "late claims do not materialize expired rewards");
+
+        (,, uint256 settledClaimedAmount,,) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
+        (uint256 recycledRoundAmount,,,,) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 1);
+        assertEq(settledClaimedAmount, 1000 ether, "expired round is settled");
+        assertEq(recycledRoundAmount, 1000 ether, "expired inventory recycles into the active reward round");
+
+        _advanceToRound(2);
+        _beginVestingFor(alice, _singleRewardToken());
+
+        aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 700 ether, "Alice can claim her share of the recycled active round");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 1000 ether, "inventory remains"
         );
@@ -1174,7 +1183,7 @@ contract JBTokenDistributorTest is Test {
 
         // Only one vesting entry should exist.
         uint256 claimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(claimed, 700 ether, "Should have exactly one vesting entry worth 700");
+        assertEq(claimed, 1000 ether, "Should have exactly one vesting entry worth 1000");
     }
 
     //*********************************************************************//

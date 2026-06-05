@@ -74,7 +74,17 @@ contract MockCheckpoints {
         return 100;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 100;
+    }
+
     function getPastVotes(address, uint256) external pure returns (uint256) {
+        return 100;
+    }
+
+    function getPastTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
         return 100;
     }
 

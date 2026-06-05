@@ -50,8 +50,18 @@ contract CollectionReentryCheckpoints {
         return totalSupply;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastVotes(address account, uint256) external view returns (uint256) {
         return account == CollectionReentryHook(hook).owner() ? 100 : 0;
+    }
+
+    function getPastTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
     }
 
     function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {

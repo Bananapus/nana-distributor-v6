@@ -294,9 +294,9 @@ contract TokenDistributorForkTest is Test {
         uint256 carolClaimed = distributor.claimedFor(hook, _tokenId(carol), IERC20(JBConstants.NATIVE_TOKEN));
         assertEq(carolClaimed, 0, "Carol should have 0 (not delegated)");
 
-        // Undelegated portion (Carol's supply) dilutes total supply, reducing Alice/Bob allocations.
+        // Carol's undelegated supply is excluded from the denominator, so active voters split the full round.
         uint256 totalVesting = distributor.totalVestingAmountOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
-        assertLt(totalVesting, 10 ether, "Not all funds distributed (undelegated supply dilutes)");
+        assertEq(totalVesting, 10 ether, "Active voters split the full reward round");
     }
 
     /// @notice Partial vesting — collect mid-way through vesting period.

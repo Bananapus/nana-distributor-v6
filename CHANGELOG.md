@@ -22,12 +22,13 @@ deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract packa
 - `JB721Distributor` distributes rewards to 721 holders using token or tier inputs and historical voting/unit
   snapshots.
 - `JBTokenDistributor` distributes rewards for token-based contexts and enforces expected token/native payment inputs.
-- Token distributors with nonzero `CLAIM_DURATION` allocate funded rounds against
-  `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, while each claimant's share uses snapshot `getPastVotes`.
-  Undelegated balances, including AMM-held tokens, do not share those active-voter rewards.
-- Token rounds with zero active votes can be recycled after the deadline; rounds with nonzero active votes remain
-  reserved for snapshot voters to materialize lazily. Deployments with `CLAIM_DURATION == 0` keep the non-expiring
-  `getPastTotalSupply` denominator.
+- Token distributors allocate funded rounds against `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, while
+  each claimant's share uses snapshot `getPastVotes`. Undelegated balances, including AMM-held tokens, do not share
+  rewards.
+- 721 distributors allocate all-tiers and tier-scoped reward rounds against checkpointed active vote totals from the
+  hook. A tier-scoped group sums `getPastTierActiveVotes` for the funded tier set.
+- Expired reward rounds recycle the unmaterialized remainder after the deadline while preserving rewards that already
+  started vesting. Deployments with `CLAIM_DURATION == 0` keep rounds non-expiring.
 - Distributor flows include claim, collect, recycle, vesting-loan, and liquidation/write-off event surface that V5
   integrators will not have indexed before.
 
@@ -98,10 +99,9 @@ Generated event/error name deltas:
 - Treat distributor indexing as a new V6 subsystem, not a V5 upgrade.
 - Regenerate ABIs directly from V6 and design event schemas around the new reward, vesting, and loan lifecycle events.
 - When integrating with 721 rewards, use V6 721 hook checkpoint surfaces rather than current-owner-only assumptions.
-- When integrating with token rewards and a nonzero claim duration, surface delegation as the opt-in action for reward
-  eligibility. Active-voter rounds use the funded snapshot's active delegated total and remain claimable by those
-  snapshot voters after the deadline.
-- AMM-held or otherwise undelegated tokens are inactive for nonzero-claim-duration token rewards until the holder
-  receives the tokens back and delegates again before a later funded snapshot.
-- This package expects `@bananapus/core-v6 >= 0.0.85` for `IJBActiveVotes` and
-  `@bananapus/721-hook-v6 >= 0.0.70` for the active-vote-aware checkpoint interface.
+- When integrating with token rewards, surface delegation as the opt-in action for reward eligibility. Funded rounds
+  use the snapshot's active delegated total.
+- AMM-held or otherwise undelegated tokens are inactive until the holder receives the tokens back and delegates before
+  a later funded snapshot.
+- This package expects `@bananapus/core-v6 >= 0.0.86` for `IJBActiveVotes` and
+  `@bananapus/721-hook-v6 >= 0.0.72` for the active-vote-aware checkpoint interface.

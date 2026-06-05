@@ -76,6 +76,14 @@ contract DistributorMockVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }

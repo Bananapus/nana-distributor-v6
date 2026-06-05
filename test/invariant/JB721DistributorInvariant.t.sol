@@ -111,23 +111,43 @@ contract InvariantMockCheckpoints {
         hookAddr = hookAddr_;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        uint256 maxTier = store.maxTier();
-        for (uint256 i = 1; i <= maxTier; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 burned = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - burned;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address, uint256) external pure returns (uint256) {
         return type(uint256).max;
     }
 
+    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return InvariantMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burned = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burned;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        uint256 maxTier = store.maxTier();
+        for (uint256 i = 1; i <= maxTier; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 

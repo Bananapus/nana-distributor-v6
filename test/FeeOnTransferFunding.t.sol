@@ -34,7 +34,17 @@ contract _FotDirectory {
 
 /// @notice Minimal 721 hook/checkpoints pair for funding-only tests.
 contract _FotCheckpoints {
+    function getPastTotalActiveVotes(uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 1;
+    }
+
     function getPastTotalSupply(uint256) external pure returns (uint256) {
+        return 1;
+    }
+
+    function getPastTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
         return 1;
     }
 }

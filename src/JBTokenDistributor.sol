@@ -16,7 +16,6 @@ import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
-import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {IJBTokenDistributor} from "./interfaces/IJBTokenDistributor.sol";
 import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
@@ -146,49 +145,6 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             // Assign only the amount actually received to this round's reward pot (default group, 0).
             _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
-        }
-    }
-
-    /// @notice Recycle active-voter reward rounds only when no active votes existed at the snapshot.
-    /// @dev For token distributors with a nonzero claim duration, the funded round records the hook's active-vote
-    /// total at the snapshot block. If that total is nonzero, the round's inventory is reserved for snapshot voters to
-    /// materialize later, so permissionless recycling must not sweep it away. Deployments with `CLAIM_DURATION == 0`
-    /// keep the no-expiration total-supply path inherited from the base distributor.
-    /// @param hook The hook whose expired rewards should be recycled.
-    /// @param token The reward token to recycle.
-    /// @param rounds The reward rounds to recycle.
-    /// @return amount The total amount recycled.
-    function recycleExpiredRewards(
-        address hook,
-        IERC20 token,
-        uint256[] calldata rounds
-    )
-        external
-        override(JBDistributor, IJBDistributor)
-        returns (uint256 amount)
-    {
-        // Do not let reward-token callbacks mutate claim accounting while expired rounds are being recycled.
-        _requireNotAcceptingToken();
-
-        // Evaluate each requested round independently because some rounds may have active voters and others may not.
-        for (uint256 i; i < rounds.length;) {
-            // Load the caller-specified round number once so the recycle call and reward lookup use the same value.
-            uint256 round = rounds[i];
-
-            // Read the stored denominator to distinguish active-voter rounds from empty-active rounds.
-            JBRewardRoundData storage rewardRound = rewardRoundOf[hook][0][token][round];
-
-            // Non-expiring rounds inherit base behavior; expiring active-voter rounds recycle only if nobody was
-            // delegated at the snapshot.
-            if (CLAIM_DURATION == 0 || rewardRound.totalStake == 0) {
-                // Add only the actually recycled remainder because missing, unexpired, or already-claimed rounds add 0.
-                amount += _recycleExpiredRewardRound({hook: hook, groupId: 0, token: token, round: round});
-            }
-
-            unchecked {
-                // The loop bound prevents overflow, and unchecked increment avoids redundant gas.
-                ++i;
-            }
         }
     }
 
@@ -385,11 +341,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
-                // Rounds with a nonzero denominator stay claimable so snapshot voters can materialize lazily. Empty
-                // active-voter rounds recycle only after their deadline.
-                if (rewardRound.totalStake == 0 && _rewardRoundExpired(rewardRound)) {
+                // Expired rounds forfeit unmaterialized inventory into the current active-voter set.
+                if (_rewardRoundExpired(rewardRound)) {
                     _recycleExpiredRewardRound({hook: hook, groupId: groupId, token: token, round: rewardRoundNumber});
                 } else {
+                    // Live rounds can still be materialized by snapshot voters into fresh vesting entries.
                     tokenAmount += _claimRewardRoundFor({hook: hook, tokenId: tokenId, rewardRound: rewardRound});
                 }
             }
@@ -482,11 +438,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     /// @notice The total stake denominator recorded when a token reward round is first funded.
-    /// @dev Non-expiring token distributors use `IVotes.getPastTotalSupply`. Expiring token distributors use
-    /// `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances such as AMM-held tokens do not share rewards.
+    /// @dev Always uses `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances such as AMM-held tokens do
+    /// not share rewards. `CLAIM_DURATION` only controls whether unmaterialized allocations can expire.
     /// @param hook The IVotes-compatible token contract.
     /// @param groupId The reward group (unused for token distributors — kept for base-hook conformance).
-    /// @param blockNumber The block number to get the total supply at.
+    /// @param blockNumber The block number to get the active total at.
     /// @return totalStakedAmount The stake denominator to record for the funded round.
     function _totalStake(
         address hook,
@@ -500,12 +456,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     {
         groupId; // Silence unused variable warning — token distributors are group-agnostic in weight.
 
-        // Non-expiring token distributions use all historical voting units, including undelegated balances.
-        if (CLAIM_DURATION == 0) {
-            return IVotes(hook).getPastTotalSupply(blockNumber);
-        }
-
-        // Expiring token distributions only use units delegated to nonzero delegates at the snapshot block.
+        // All token reward rounds split only across units delegated to nonzero delegates at the snapshot block.
         totalStakedAmount = IJBActiveVotes(hook).getPastTotalActiveVotes(blockNumber);
     }
 }

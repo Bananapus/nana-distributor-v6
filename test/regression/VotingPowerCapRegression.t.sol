@@ -99,12 +99,12 @@ contract VotingCapMockStore {
 }
 
 /// @notice Mock checkpoints with explicit per-address vote overrides for testing.
-/// @dev getPastTotalSupply computes from the store; getPastVotes uses explicit overrides.
+/// @dev Active totals compute from the store; getPastVotes uses explicit overrides.
 contract VotingCapMockCheckpoints {
     VotingCapMockStore public store;
     address public hookAddr;
 
-    /// @dev Override: if non-zero, getPastTotalSupply returns this instead of computing from store.
+    /// @dev Override: if non-zero, active total getters return this instead of computing from store.
     uint256 public totalSupplyOverride;
 
     /// @dev Per-address vote overrides. If set, getPastVotes returns this value.
@@ -127,17 +127,14 @@ contract VotingCapMockCheckpoints {
         votesOverrideSet[account] = true;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        if (totalSupplyOverride != 0) return totalSupplyOverride;
-        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
-        uint256 maxTierCount = store.maxTier();
-        for (uint256 i = 1; i <= maxTierCount; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 burnedCount = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - burnedCount;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
@@ -146,8 +143,31 @@ contract VotingCapMockCheckpoints {
         return type(uint256).max;
     }
 
+    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return VotingCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burnedCount = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burnedCount;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
+        uint256 maxTierCount = store.maxTier();
+        for (uint256 i = 1; i <= maxTierCount; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 
@@ -316,7 +336,7 @@ contract VotingPowerCapRegressionTest is Test {
         // NFT 1: min(50, 100 remaining) = 50 -> consumed = 50
         // NFT 2: min(50, 50 remaining) = 50 -> consumed = 100
         // NFT 3: min(50, 0 remaining) = 0 -> skipped
-        // Total effective stake = 100 out of 150 total supply.
+        // Total effective stake = 100 out of the 150 active-vote denominator.
         // Alice total = mulDiv(1500, 50, 150) + mulDiv(1500, 50, 150) = 500 + 500 = 1000 ether.
         uint256 claimed1 = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
         uint256 claimed2 = distributor.claimedFor(address(hook), 2, IERC20(address(rewardToken)));

@@ -61,6 +61,14 @@ contract RegressionVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }
@@ -114,8 +122,18 @@ contract RegressionCheckpoints {
         return totalSupplyAtSnapshot;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupplyAtSnapshot;
+    }
+
     function getPastVotes(address account, uint256) external view returns (uint256) {
         return votesAtSnapshot[account];
+    }
+
+    function getPastTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupplyAtSnapshot;
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {

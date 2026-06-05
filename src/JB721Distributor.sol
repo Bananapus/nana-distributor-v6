@@ -9,7 +9,6 @@ import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -19,7 +18,6 @@ import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
 import {IJB721Distributor} from "./interfaces/IJB721Distributor.sol";
-import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBVestContext} from "./structs/JBVestContext.sol";
@@ -97,6 +95,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
+    /// @notice Initializes the 721 distributor.
     /// @param directory The JB directory used to verify terminal/controller callers.
     /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
@@ -550,9 +549,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         internal
         returns (uint256 totalVestingAmount)
     {
-        // Tier-scoped groups distribute a tier's pot among that tier's eligible NFTs. Each NFT contributes its tier's
-        // voting units, with no per-owner cap: the denominator (summed `getPastTierVotingUnits`) counts exactly those
-        // eligible NFTs, so the shares reconcile without the all-tiers delegation-cap machinery.
+        // Tier-scoped groups distribute the pot among active delegated NFTs from the funded tier set. Each active NFT
+        // contributes its tier's voting units, with no per-owner cap: the denominator already sums active tier totals.
         if (ctx.groupId != 0) {
             for (uint256 j; j < tokenIds.length;) {
                 if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
@@ -639,8 +637,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
             if (owner == address(0)) return (0, newUniqueCount);
 
-            pastVotes = IVotes(address(IJB721TiersHook(ctx.hook).checkpoints()))
-                .getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
+            pastVotes =
+                IJB721TiersHook(ctx.hook).checkpoints().getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
             if (pastVotes == 0) return (0, newUniqueCount);
 
             bool found;
@@ -744,10 +742,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         }
     }
 
-    /// @notice The tier-scoped stake of a single NFT in a reward round: its tier's voting units if the NFT's tier is
-    /// in the group's set and the NFT existed at the round snapshot, else zero.
-    /// @dev No per-owner cap is applied. Eligibility (`ownerOfAt != 0`) plus tier membership matches exactly the set
-    /// counted by the `getPastTierVotingUnits` denominator, so per-NFT shares reconcile against the pot.
+    /// @notice The tier-scoped stake of a single NFT in a reward round.
+    /// @dev Returns the NFT's tier voting units only if the NFT's tier is in the funded set, the NFT existed at the
+    /// snapshot block, and the snapshot owner had delegated votes. No per-owner cap is applied because the denominator
+    /// is the tier set's active delegated total at the same snapshot block.
     /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
     /// @param tokenId The NFT token ID to weigh.
     /// @return stake The NFT's tier voting units, or 0 if ineligible.
@@ -757,11 +755,15 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
 
         // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
-        if (_snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock}) == address(0)) {
-            return 0;
-        }
+        address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
+        if (owner == address(0)) return 0;
 
-        // Eligible: weigh the NFT by its tier's voting units.
+        // The snapshot owner must have active delegated votes, otherwise this NFT was not counted in the denominator.
+        uint256 pastVotes =
+            IJB721TiersHook(ctx.hook).checkpoints().getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
+        if (pastVotes == 0) return 0;
+
+        // Active and tier-scoped: weigh the NFT by its tier's voting units.
         stake =
         IJB721TiersHook(ctx.hook)
         .STORE()
@@ -800,8 +802,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
         // Use the checkpoints module to verify the token's snapshot owner had voting power at the round's snapshot
         // block. If the token did not exist then, ownerOfAt returns zero above and the token is not eligible.
-        uint256 pastVotes = IVotes(address(IJB721TiersHook(hook).checkpoints()))
-            .getPastVotes({account: owner, timepoint: snapshotBlock});
+        uint256 pastVotes = IJB721TiersHook(hook).checkpoints().getPastVotes({account: owner, timepoint: snapshotBlock});
 
         // If the owner had no voting power at the snapshot block, the token is ineligible.
         if (pastVotes == 0) return 0;
@@ -811,10 +812,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         tokenStakeAmount = votingUnits < pastVotes ? votingUnits : pastVotes;
     }
 
-    /// @notice The total stake sharing a group's round rewards at a specific block.
-    /// @dev For the all-tiers group (0) this is `getPastTotalSupply` from the hook's checkpoints module (all voting
-    /// units that existed at `blockNumber`). For a tier-scoped group it is the summed
-    /// `getPastTierVotingUnits` over the group's tier set — the eligible voting units of those tiers at the snapshot.
+    /// @notice The total active stake sharing a group's round rewards at a specific block.
+    /// @dev For the all-tiers group (0) this is `getPastTotalActiveVotes` from the hook's checkpoints module. For a
+    /// tier-scoped group it is the summed `getPastTierActiveVotes` over the group's tier set. `CLAIM_DURATION` only
+    /// controls expiry.
     /// @param hook The hook to get the total stake for.
     /// @param groupId The reward group (0 = all tiers).
     /// @param blockNumber The block number to get the total staked amount at.
@@ -831,15 +832,15 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     {
         IJB721Checkpoints checkpoints = IJB721TiersHook(hook).checkpoints();
 
-        // All-tiers group (0): the global checkpointed voting supply.
+        // All-tiers group (0): the global checkpointed active voting supply.
         if (groupId == 0) {
-            return IVotes(address(checkpoints)).getPastTotalSupply(blockNumber);
+            return checkpoints.getPastTotalActiveVotes(blockNumber);
         }
 
-        // Tier-scoped group: sum the eligible voting units of each tier in the set at the snapshot block.
+        // Tier-scoped group: sum each funded tier's active voting units at the snapshot block.
         uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
         for (uint256 i; i < tierIds.length;) {
-            total += checkpoints.getPastTierVotingUnits({tierId: tierIds[i], blockNumber: blockNumber});
+            total += checkpoints.getPastTierActiveVotes({tierId: tierIds[i], blockNumber: blockNumber});
             unchecked {
                 ++i;
             }

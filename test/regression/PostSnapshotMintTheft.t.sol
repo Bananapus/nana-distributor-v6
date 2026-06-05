@@ -106,16 +106,14 @@ contract VPCapMockCheckpoints {
         votesOverrideSet[account] = true;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        if (totalSupplyOverride != 0) return totalSupplyOverride;
-        uint256 max = store.maxTier();
-        for (uint256 i = 1; i <= max; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 b = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - b;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
@@ -123,8 +121,30 @@ contract VPCapMockCheckpoints {
         return 0; // Default: no historical votes (realistic behavior).
     }
 
+    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return VPCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burnedCount = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burnedCount;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        uint256 max = store.maxTier();
+        for (uint256 i = 1; i <= max; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 
@@ -241,7 +261,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         hook._checkpoints().setVotesOverride(bob, 100);
         // Charlie has 0 voting power at snapshot (default).
 
-        // Fix total supply at 200 so post-snapshot mints don't inflate denominator.
+        // Fix active supply at 200 so post-snapshot mints don't inflate the denominator.
         hook._checkpoints().setTotalSupplyOverride(200);
     }
 

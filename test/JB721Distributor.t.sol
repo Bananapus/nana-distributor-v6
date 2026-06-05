@@ -100,15 +100,14 @@ contract MockJBController {
     }
 }
 
-/// @notice Mock checkpoints contract that provides IVotes-compatible getPastVotes/getPastTotalSupply.
-/// @dev Computes getPastTotalSupply dynamically from the store (tier data minus burned), matching
-/// the old _totalStake logic. getPastVotes returns type(uint256).max for any address so that
-/// min(votingUnits, pastVotes) always equals votingUnits.
+/// @notice Mock checkpoints contract that provides IVotes-compatible voting and active-total checkpoints.
+/// @dev Computes active totals dynamically from the store (tier data minus burned). `getPastVotes` returns
+/// type(uint256).max for any address unless overridden, so every mock owner is active by default.
 contract MockCheckpoints {
     MockStore public store;
     address public hookAddr;
 
-    /// @dev Override: if non-zero, getPastTotalSupply returns this instead of computing from store.
+    /// @dev Override: if non-zero, active total getters return this instead of computing from store.
     uint256 public totalSupplyOverride;
 
     /// @dev Per-address vote overrides. If set to non-zero, getPastVotes returns this value.
@@ -131,17 +130,14 @@ contract MockCheckpoints {
         votesOverrideSet[account] = true;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        if (totalSupplyOverride != 0) return totalSupplyOverride;
-        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
-        uint256 maxTier = store.maxTier();
-        for (uint256 i = 1; i <= maxTier; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 burned = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - burned;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
@@ -158,12 +154,39 @@ contract MockCheckpoints {
         tierVotingUnitsOverride[tierId] = value;
     }
 
-    function getPastTierVotingUnits(uint256 tierId, uint256) external view returns (uint256) {
-        return tierVotingUnitsOverride[tierId];
+    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
+    function getPastTierVotingUnits(uint256 tierId, uint256 blockNumber) external view returns (uint256 votingUnits) {
+        blockNumber;
+        votingUnits = _tierActiveVotes(tierId);
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        uint256 overrideValue = tierVotingUnitsOverride[tierId];
+        if (overrideValue != 0) return overrideValue;
+
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burned = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burned;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
+        uint256 maxTier = store.maxTier();
+        for (uint256 i = 1; i <= maxTier; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 

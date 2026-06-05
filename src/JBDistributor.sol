@@ -222,6 +222,7 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
+    /// @notice Initializes the shared distributor configuration.
     /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
