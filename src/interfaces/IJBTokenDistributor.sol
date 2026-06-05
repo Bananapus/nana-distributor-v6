@@ -13,5 +13,5 @@ import {IJBDistributor} from "./IJBDistributor.sol";
 interface IJBTokenDistributor is IJBDistributor, IJBSplitHook {
     /// @notice The JB directory used to verify terminal/controller callers.
     /// @return directory The JB directory.
-    function DIRECTORY() external view returns (IJBDirectory);
+    function DIRECTORY() external view returns (IJBDirectory directory);
 }

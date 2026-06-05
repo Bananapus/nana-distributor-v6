@@ -18,13 +18,15 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     //*********************************************************************//
 
     /// @notice The JB directory used to verify terminal/controller callers.
-    function DIRECTORY() external view returns (IJBDirectory);
+    /// @return directory The JB directory.
+    function DIRECTORY() external view returns (IJBDirectory directory);
 
     /// @notice Calculate how much of the token has been claimed for the given tokenId in a tier-scoped group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
+    /// @return tokenAmount The claimed token amount.
     function claimedFor(
         address hook,
         uint256[] calldata tierIds,
@@ -33,7 +35,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     )
         external
         view
-        returns (uint256);
+        returns (uint256 tokenAmount);
 
     /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in a
     /// tier-scoped group.
@@ -41,6 +43,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
+    /// @return tokenAmount The currently collectable token amount.
     function collectableFor(
         address hook,
         uint256[] calldata tierIds,
@@ -49,7 +52,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     )
         external
         view
-        returns (uint256);
+        returns (uint256 tokenAmount);
 
     /// @notice The tier set that defines a reward group, recorded when the group is first funded.
     /// @dev Empty for the all-tiers group (0).
@@ -99,21 +102,6 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
         external
         returns (uint256 loanId, uint256 collateralCount);
 
-    /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
-    /// @param hook The hook whose expired reward rounds should be recycled.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The reward token to recycle.
-    /// @param rounds The reward rounds to recycle.
-    /// @return amount The total amount recycled.
-    function recycleExpiredRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        IERC20 token,
-        uint256[] calldata rounds
-    )
-        external
-        returns (uint256 amount);
-
     /// @notice Collect vested tokens from a tier-scoped reward group.
     /// @param hook The hook whose stakers are collecting.
     /// @param tierIds The strictly-increasing tier set defining the group.
@@ -136,6 +124,21 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     /// @param token The token to fund with.
     /// @param amount The amount to fund.
     function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable;
+
+    /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
+    /// @param hook The hook whose expired reward rounds should be recycled.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param token The reward token to recycle.
+    /// @param rounds The reward rounds to recycle.
+    /// @return amount The total amount recycled.
+    function recycleExpiredRewards(
+        address hook,
+        uint256[] calldata tierIds,
+        IERC20 token,
+        uint256[] calldata rounds
+    )
+        external
+        returns (uint256 amount);
 
     /// @notice Recycle unlocked rewards from burned tokens in a tier-scoped group into the current reward round.
     /// @param hook The hook whose tokens were burned.

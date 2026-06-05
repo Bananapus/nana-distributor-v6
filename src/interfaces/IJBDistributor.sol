@@ -148,36 +148,45 @@ interface IJBDistributor {
 
     /// @notice The number of seconds after a reward round becomes claimable before unclaimed rewards expire.
     /// @dev A zero duration means reward rounds do not expire.
-    function CLAIM_DURATION() external view returns (uint48);
+    /// @return claimDuration The claim duration, in seconds.
+    function CLAIM_DURATION() external view returns (uint48 claimDuration);
 
     /// @notice The JB controller used for token registry lookups and revnet loan permissions.
-    function CONTROLLER() external view returns (IJBController);
+    /// @return controller The JB controller.
+    function CONTROLLER() external view returns (IJBController controller);
 
     /// @notice The duration of each round, specified in seconds.
-    function ROUND_DURATION() external view returns (uint256);
+    /// @return roundDuration The round duration, in seconds.
+    function ROUND_DURATION() external view returns (uint256 roundDuration);
 
     /// @notice The Revnet loans contract used to borrow against vesting revnet rewards.
-    function REV_LOANS() external view returns (IREVLoans);
+    /// @return revLoans The Revnet loans contract.
+    function REV_LOANS() external view returns (IREVLoans revLoans);
 
     /// @notice The REVOwner contract that must own a reward token's project to enable loan-backed collection.
-    function REV_OWNER() external view returns (IREVOwner);
+    /// @return revOwner The REVOwner contract.
+    function REV_OWNER() external view returns (IREVOwner revOwner);
 
     /// @notice The starting timestamp of the distributor.
-    function STARTING_TIMESTAMP() external view returns (uint256);
+    /// @return startingTimestamp The starting timestamp.
+    function STARTING_TIMESTAMP() external view returns (uint256 startingTimestamp);
 
     /// @notice The number of rounds until tokens are fully vested.
-    function VESTING_ROUNDS() external view returns (uint256);
+    /// @return vestingRounds The number of rounds until tokens are fully vested.
+    function VESTING_ROUNDS() external view returns (uint256 vestingRounds);
 
     /// @notice The balance of a token held for a specific hook's stakers.
     /// @param hook The hook whose balance to check.
     /// @param token The token to check the balance of.
-    function balanceOf(address hook, IERC20 token) external view returns (uint256);
+    /// @return balance The token balance held for the hook.
+    function balanceOf(address hook, IERC20 token) external view returns (uint256 balance);
 
     /// @notice The active Revnet loan using one token ID's vesting rewards as collateral.
     /// @param hook The hook the token ID belongs to.
     /// @param groupId The reward group (0 = the default group).
     /// @param tokenId The token ID whose vesting rewards are collateralized.
     /// @param token The reward token used as loan collateral.
+    /// @return loanId The active Revnet loan NFT ID, or 0 if none is active.
     function activeVestingLoanIdOf(
         address hook,
         uint256 groupId,
@@ -186,46 +195,54 @@ interface IJBDistributor {
     )
         external
         view
-        returns (uint256);
+        returns (uint256 loanId);
 
     /// @notice Calculate how much of the token has been claimed for the given tokenId in the default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
-    function claimedFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
+    /// @return tokenAmount The claimed token amount.
+    function claimedFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256 tokenAmount);
 
     /// @notice Calculate how much of the token is currently ready to be collected for the given tokenId in the
     /// default group.
     /// @param hook The hook the tokenId belongs to.
     /// @param tokenId The ID of the token to calculate the token amount for.
     /// @param token The address of the token to check.
-    function collectableFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256);
+    /// @return tokenAmount The currently collectable token amount.
+    function collectableFor(address hook, uint256 tokenId, IERC20 token) external view returns (uint256 tokenAmount);
 
     /// @notice The number of the current round.
-    function currentRound() external view returns (uint256);
+    /// @return round The current round number.
+    function currentRound() external view returns (uint256 round);
 
     /// @notice The block number recorded as the snapshot point for a round.
     /// @dev Returns 0 if no snapshot block has been recorded yet for this round.
     /// @param round The round to get the snapshot block of.
-    function roundSnapshotBlock(uint256 round) external view returns (uint256);
+    /// @return snapshotBlock The snapshot block recorded for the round.
+    function roundSnapshotBlock(uint256 round) external view returns (uint256 snapshotBlock);
 
     /// @notice The timestamp at which a round started.
     /// @param round The round to get the start timestamp of.
-    function roundStartTimestamp(uint256 round) external view returns (uint256);
+    /// @return timestamp The round's start timestamp.
+    function roundStartTimestamp(uint256 round) external view returns (uint256 timestamp);
 
     /// @notice The amount of a token that is currently vesting for a hook's stakers.
     /// @param hook The hook whose vesting amount to check.
     /// @param token The address of the token that is vesting.
-    function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
+    /// @return tokenAmount The amount of the token currently vesting.
+    function totalVestingAmountOf(address hook, IERC20 token) external view returns (uint256 tokenAmount);
 
     /// @notice The amount of vesting inventory currently collateralized in Revnet loans.
     /// @param hook The hook whose loaned vesting amount to check.
     /// @param token The reward token used as collateral.
-    function totalLoanedVestingAmountOf(address hook, IERC20 token) external view returns (uint256);
+    /// @return tokenAmount The amount of the token currently collateralized in loans.
+    function totalLoanedVestingAmountOf(address hook, IERC20 token) external view returns (uint256 tokenAmount);
 
     /// @notice The vesting position collateralized by a Revnet loan.
     /// @param loanId The Revnet loan NFT ID.
-    function vestingLoanOf(uint256 loanId) external view returns (JBVestingLoan memory);
+    /// @return vestingLoan The vesting loan data.
+    function vestingLoanOf(uint256 loanId) external view returns (JBVestingLoan memory vestingLoan);
 
     //*********************************************************************//
     // ---------------------------- transactions ------------------------- //
@@ -279,6 +296,9 @@ interface IJBDistributor {
     /// @param amount The amount to fund.
     function fund(address hook, IERC20 token, uint256 amount) external payable;
 
+    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
+    function poke() external;
+
     /// @notice Recycle unclaimed rewards from expired default-group reward rounds into the current reward round.
     /// @param hook The hook whose expired reward rounds should be recycled.
     /// @param token The reward token to recycle.
@@ -292,21 +312,6 @@ interface IJBDistributor {
         external
         returns (uint256 amount);
 
-    /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
-    function poke() external;
-
-    /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
-    /// @param loanId The Revnet loan NFT ID to repay.
-    /// @param maxRepayBorrowAmount The maximum amount of source token the caller is willing to repay.
-    /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
-    function repayVestingLoan(
-        uint256 loanId,
-        uint256 maxRepayBorrowAmount
-    )
-        external
-        payable
-        returns (uint256 paidOffLoanId);
-
     /// @notice Recycle unlocked rewards from burned tokens in the default group into the current reward round.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
@@ -319,6 +324,18 @@ interface IJBDistributor {
         address beneficiary
     )
         external;
+
+    /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
+    /// @param loanId The Revnet loan NFT ID to repay.
+    /// @param maxRepayBorrowAmount The maximum amount of source token the caller is willing to repay.
+    /// @return paidOffLoanId The paid-off loan ID returned by Revnet loans.
+    function repayVestingLoan(
+        uint256 loanId,
+        uint256 maxRepayBorrowAmount
+    )
+        external
+        payable
+        returns (uint256 paidOffLoanId);
 
     /// @notice Write off a distributor-held Revnet loan after Revnet liquidation permanently destroys its collateral.
     /// @param loanId The liquidated Revnet loan NFT ID.

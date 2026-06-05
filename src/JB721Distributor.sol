@@ -129,6 +129,48 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // ---------------------- external transactions ---------------------- //
     //*********************************************************************//
 
+    // The group-0 (all-tiers) `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both
+    // distributors share the exact same flow (authorize -> materialize past rounds via `_claimPastRewards` ->
+    // optionally release unlocked), so the round-claim logic lives once in the base and dispatches to this contract's
+    // `_claimPastRewards` / `_requireCanClaimTokenIds` overrides below. The tier-scoped overloads below derive a
+    // canonical group ID from the tier set and call the same base helpers.
+
+    /// @notice Begin vesting all unclaimed past reward rounds for the specified NFT token IDs in a tier-scoped group.
+    /// @param hook The 721 hook whose NFT owners are vesting.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The NFT token IDs to claim rewards for.
+    /// @param tokens The reward tokens to begin vesting.
+    function beginVesting(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens
+    )
+        external
+        override
+    {
+        _beginVesting({hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens});
+    }
+
+    /// @notice Fund a tier-scoped reward group: only holders of the given tiers can claim this pot.
+    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
+    /// delta to handle fee-on-transfer tokens correctly. The tier set is recorded on the group's first funding.
+    /// @param hook The 721 hook to fund (determines which staker pool receives the tokens).
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param token The token to fund with.
+    /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
+    function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable override {
+        // Derive the canonical group ID for the tier set.
+        uint256 groupId = _groupIdFor(tierIds);
+
+        // Record the tier set the first time a tier-scoped group is funded, so the stake math can scope it later.
+        if (groupId != 0 && _tierIdsOfGroup[hook][groupId].length == 0) {
+            _tierIdsOfGroup[hook][groupId] = tierIds;
+        }
+
+        _fund({hook: hook, groupId: groupId, token: token, amount: amount});
+    }
+
     /// @notice Receives tokens from a Juicebox payout split.
     /// @dev Only callable by a terminal or controller for the project in the context.
     /// @dev The hook address is read from `context.split.beneficiary`.
@@ -173,48 +215,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             // Assign only the amount actually received to this round's reward pot (all-tiers group, 0).
             _recordRewardFunding({hook: hook, groupId: 0, token: IERC20(context.token), amount: delta});
         }
-    }
-
-    // The group-0 (all-tiers) `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both
-    // distributors share the exact same flow (authorize -> materialize past rounds via `_claimPastRewards` ->
-    // optionally release unlocked), so the round-claim logic lives once in the base and dispatches to this contract's
-    // `_claimPastRewards` / `_requireCanClaimTokenIds` overrides below. The tier-scoped overloads below derive a
-    // canonical group ID from the tier set and call the same base helpers.
-
-    /// @notice Begin vesting all unclaimed past reward rounds for the specified NFT token IDs in a tier-scoped group.
-    /// @param hook The 721 hook whose NFT owners are vesting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The NFT token IDs to claim rewards for.
-    /// @param tokens The reward tokens to begin vesting.
-    function beginVesting(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens
-    )
-        external
-        override
-    {
-        _beginVesting({hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens});
-    }
-
-    /// @notice Fund a tier-scoped reward group: only holders of the given tiers can claim this pot.
-    /// @dev For native ETH, send `msg.value` and pass `IERC20(JBConstants.NATIVE_TOKEN)` as the token. Uses balance
-    /// delta to handle fee-on-transfer tokens correctly. The tier set is recorded on the group's first funding.
-    /// @param hook The 721 hook to fund (determines which staker pool receives the tokens).
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param token The token to fund with.
-    /// @param amount The amount to fund (ignored for native ETH — `msg.value` is used instead).
-    function fund(address hook, uint256[] calldata tierIds, IERC20 token, uint256 amount) external payable override {
-        // Derive the canonical group ID for the tier set.
-        uint256 groupId = _groupIdFor(tierIds);
-
-        // Record the tier set the first time a tier-scoped group is funded, so the stake math can scope it later.
-        if (groupId != 0 && _tierIdsOfGroup[hook][groupId].length == 0) {
-            _tierIdsOfGroup[hook][groupId] = tierIds;
-        }
-
-        _fund({hook: hook, groupId: groupId, token: token, amount: amount});
     }
 
     /// @notice Recycle unclaimed rewards from expired tier-scoped reward rounds into the current reward round.
@@ -317,27 +317,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // ----------------------- public transactions ----------------------- //
     //*********************************************************************//
 
-    /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
-    /// @param hook The 721 hook whose NFT owners are collecting.
-    /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the NFTs to collect for (caller must be authorized for all of them).
-    /// @param tokens The reward tokens to collect vested amounts of.
-    /// @param beneficiary The recipient of the collected tokens.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tierIds,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        external
-        override
-    {
-        _collectVestedRewards({
-            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
-        });
-    }
-
     /// @notice Borrow against one NFT token ID's uncollected vesting rewards in a tier-scoped group.
     /// @param hook The 721 hook whose NFT owner is borrowing against vesting rewards.
     /// @param tierIds The strictly-increasing tier set defining the group.
@@ -372,6 +351,27 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             minBorrowAmount: minBorrowAmount,
             prepaidFeePercent: prepaidFeePercent,
             beneficiary: beneficiary
+        });
+    }
+
+    /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
+    /// @param hook The 721 hook whose NFT owners are collecting.
+    /// @param tierIds The strictly-increasing tier set defining the group.
+    /// @param tokenIds The IDs of the NFTs to collect for (caller must be authorized for all of them).
+    /// @param tokens The reward tokens to collect vested amounts of.
+    /// @param beneficiary The recipient of the collected tokens.
+    function collectVestedRewards(
+        address hook,
+        uint256[] calldata tierIds,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        external
+        override
+    {
+        _collectVestedRewards({
+            hook: hook, groupId: _groupIdFor(tierIds), tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary
         });
     }
 

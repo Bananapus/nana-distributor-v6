@@ -296,6 +296,12 @@ abstract contract JBDistributor is IJBDistributor {
         _fund({hook: hook, groupId: 0, token: token, amount: amount});
     }
 
+    /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
+    /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
+    function poke() external override {
+        _ensureSnapshotBlock(currentRound());
+    }
+
     /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
     /// @dev Recycling is permissionless; any keeper or frontend can sweep an expired round.
     /// @param hook The hook whose expired rewards should be recycled.
@@ -313,12 +319,6 @@ abstract contract JBDistributor is IJBDistributor {
         returns (uint256 amount)
     {
         amount = _recycleExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
-    }
-
-    /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
-    /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
-    function poke() external override {
-        _ensureSnapshotBlock(currentRound());
     }
 
     /// @notice Recycle unlocked rewards tied to burned tokens into the current reward round.
@@ -413,27 +413,6 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- public transactions ----------------------- //
     //*********************************************************************//
 
-    /// @notice Begin vesting any unclaimed past reward rounds, then collect everything that has since unlocked and
-    /// transfer it to the beneficiary — so callers don't need to separately call `beginVesting`.
-    /// @dev The model-specific per-round claim math and the authorization check live in the `_claimPastRewards`
-    /// and `_requireCanClaimTokenIds` hooks each concrete distributor implements.
-    /// @param hook The hook whose stakers are collecting.
-    /// @param tokenIds The IDs of the tokens to collect for (caller must be authorized for all of them).
-    /// @param tokens The reward tokens to collect vested amounts of.
-    /// @param beneficiary The recipient of the collected tokens.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        public
-        virtual
-        override
-    {
-        _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
-    }
-
     /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
     /// @dev The distributor keeps custody of the loan NFT. Collection is blocked until repayment restores the
     /// collateral to the original vesting schedule.
@@ -470,6 +449,27 @@ abstract contract JBDistributor is IJBDistributor {
             prepaidFeePercent: prepaidFeePercent,
             beneficiary: beneficiary
         });
+    }
+
+    /// @notice Begin vesting any unclaimed past reward rounds, then collect everything that has since unlocked and
+    /// transfer it to the beneficiary — so callers don't need to separately call `beginVesting`.
+    /// @dev The model-specific per-round claim math and the authorization check live in the `_claimPastRewards`
+    /// and `_requireCanClaimTokenIds` hooks each concrete distributor implements.
+    /// @param hook The hook whose stakers are collecting.
+    /// @param tokenIds The IDs of the tokens to collect for (caller must be authorized for all of them).
+    /// @param tokens The reward tokens to collect vested amounts of.
+    /// @param beneficiary The recipient of the collected tokens.
+    function collectVestedRewards(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        public
+        virtual
+        override
+    {
+        _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
     }
 
     /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
