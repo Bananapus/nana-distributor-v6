@@ -15,27 +15,28 @@ import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 import {JBDistributor} from "./JBDistributor.sol";
+import {IJBActiveVotes} from "./interfaces/IJBActiveVotes.sol";
 import {IJBDistributor} from "./interfaces/IJBDistributor.sol";
 import {IJBTokenDistributor} from "./interfaces/IJBTokenDistributor.sol";
 import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
-/// @notice A singleton distributor that distributes ERC-20 rewards to IVotes-compatible token stakers with linear
-/// vesting.
+/// @notice A singleton distributor that distributes ERC-20 rewards to IVotes-compatible token holders with delegated
+/// voting power and linear vesting.
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their IVotes token)`.
-/// @dev The stake weight of each staker is their delegated voting power at the funded round's snapshot block.
+/// @dev The stake weight of each holder is their delegated voting power at the funded round's snapshot block.
 /// Holders must delegate (even to themselves) to participate.
-/// @dev Funded rewards are assigned to the funding round. Stakers claim historical rounds lazily; all unclaimed past
-/// rewards begin vesting when the staker claims, not when the rewards were funded.
+/// @dev Funded rewards are assigned to the funding round. Holders claim historical rounds lazily; all unclaimed past
+/// rewards begin vesting when the holder claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
 contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same staker address.
+    /// @notice Thrown when a tokenId has non-zero upper bits (above 160), which would alias to the same holder address.
     error JBTokenDistributor_InvalidTokenId(uint256 tokenId);
 
     /// @notice Thrown when native ETH does not match the split hook context amount.
@@ -66,21 +67,6 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     mapping(
         address hook => mapping(uint256 groupId => mapping(uint256 tokenId => mapping(IERC20 token => uint256)))
     ) public nextClaimRoundOf;
-
-    /// @notice The snapshot voting power a staker registered for an active-voter reward round.
-    /// @custom:param hook The IVotes token whose stakers are registering.
-    /// @custom:param groupId The reward group (0 = the default group).
-    /// @custom:param token The reward token being claimed.
-    /// @custom:param round The reward round.
-    /// @custom:param tokenId The encoded staker address.
-    mapping(
-        address hook
-            => mapping(
-            uint256 groupId => mapping(IERC20 token => mapping(uint256 round => mapping(uint256 tokenId => uint208)))
-        )
-    )
-        public
-        override registeredStakeOf;
 
     //*********************************************************************//
     // -------------------------- constructor ---------------------------- //
@@ -119,11 +105,11 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     // ---------------------- external transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice Recycle active-voter reward rounds only when no active voters registered before the deadline.
-    /// @dev For token distributors with a nonzero claim duration, the deadline closes the active-voter registration
-    /// window. Once at least one voter registered, the round's inventory is reserved for registered voters to
+    /// @notice Recycle active-voter reward rounds only when no active votes existed at the snapshot.
+    /// @dev For token distributors with a nonzero claim duration, the funded round records the hook's active-vote
+    /// total at the snapshot block. If that total is nonzero, the round's inventory is reserved for snapshot voters to
     /// materialize later, so permissionless recycling must not sweep it away. Deployments with `CLAIM_DURATION == 0`
-    /// keep the no-expiration path inherited from the base distributor.
+    /// keep the no-expiration total-supply path inherited from the base distributor.
     /// @param hook The hook whose expired rewards should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
@@ -218,12 +204,12 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice Claim one non-expiring reward round using the round's total supply denominator.
+    /// @notice Claim one reward round using its recorded denominator.
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenId The encoded staker address.
     /// @param rewardRound The stored reward-round data.
     /// @return tokenAmount The amount added to vesting.
-    function _claimNonExpiringRewardRoundFor(
+    function _claimRewardRoundFor(
         address hook,
         uint256 tokenId,
         JBRewardRoundData storage rewardRound
@@ -335,8 +321,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             lastRound: ctx.lastClaimableRound
         });
 
-        // Advance the cursor through resolved rounds. Active-voter rounds that are still inside their registration
-        // window keep the cursor pinned so the registered staker can materialize rewards after the deadline.
+        // Advance the cursor through resolved rounds.
         nextClaimRoundOf[ctx.hook][ctx.groupId][tokenId][token] = newNextClaimRound;
         if (tokenAmount == 0) return 0;
 
@@ -356,36 +341,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         });
     }
 
-    /// @notice Claim one finalized active-voter reward round using the registered-vote denominator.
-    /// @param hook The IVotes token whose stakers are claiming.
-    /// @param groupId The reward group (0 = the default group).
-    /// @param tokenId The encoded staker address.
-    /// @param token The reward token.
-    /// @param rewardRound The stored reward-round data.
-    /// @param rewardRoundNumber The reward round being claimed.
-    /// @return tokenAmount The amount added to vesting.
-    function _claimRegisteredRewardRoundFor(
-        address hook,
-        uint256 groupId,
-        uint256 tokenId,
-        IERC20 token,
-        JBRewardRoundData storage rewardRound,
-        uint256 rewardRoundNumber
-    )
-        internal
-        returns (uint256 tokenAmount)
-    {
-        uint256 tokenStakeAmount = registeredStakeOf[hook][groupId][token][rewardRoundNumber][tokenId];
-        if (tokenStakeAmount == 0) return 0;
-
-        uint256 claimAmount = mulDiv({x: rewardRound.amount, y: tokenStakeAmount, denominator: rewardRound.totalStake});
-        if (claimAmount == 0) return 0;
-
-        rewardRound.claimedAmount = _toUint208(uint256(rewardRound.claimedAmount) + claimAmount);
-        tokenAmount = claimAmount;
-    }
-
-    /// @notice Claim or register a staker's unclaimed rewards across a range of historical reward rounds.
+    /// @notice Claim a staker's unclaimed rewards across a range of historical reward rounds.
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenId The encoded staker address.
     /// @param token The reward token.
@@ -413,38 +369,12 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
             // Skip rounds that never received funding.
             if (rewardRound.amount != 0) {
-                // A zero claim duration keeps reward rounds immediately claimable without expiration. Nonzero durations
-                // use the deadline as an active-voter registration window, so undelegated or non-registering supply
-                // cannot dilute registered voters after the window closes.
-                if (CLAIM_DURATION == 0) {
-                    tokenAmount += _claimNonExpiringRewardRoundFor({
-                        hook: hook, tokenId: tokenId, rewardRound: rewardRound
-                    });
-                } else if (_rewardRoundExpired(rewardRound)) {
-                    if (rewardRound.totalStake == 0) {
-                        _recycleExpiredRewardRound({
-                            hook: hook, groupId: groupId, token: token, round: rewardRoundNumber
-                        });
-                    } else {
-                        tokenAmount += _claimRegisteredRewardRoundFor({
-                            hook: hook,
-                            groupId: groupId,
-                            tokenId: tokenId,
-                            token: token,
-                            rewardRound: rewardRound,
-                            rewardRoundNumber: rewardRoundNumber
-                        });
-                    }
+                // Rounds with a nonzero denominator stay claimable so snapshot voters can materialize lazily. Empty
+                // active-voter rounds recycle only after their deadline.
+                if (rewardRound.totalStake == 0 && _rewardRoundExpired(rewardRound)) {
+                    _recycleExpiredRewardRound({hook: hook, groupId: groupId, token: token, round: rewardRoundNumber});
                 } else {
-                    _registerActiveStakeFor({
-                        hook: hook,
-                        groupId: groupId,
-                        tokenId: tokenId,
-                        token: token,
-                        rewardRound: rewardRound,
-                        rewardRoundNumber: rewardRoundNumber
-                    });
-                    if (newNextClaimRound > rewardRoundNumber) newNextClaimRound = rewardRoundNumber;
+                    tokenAmount += _claimRewardRoundFor({hook: hook, tokenId: tokenId, rewardRound: rewardRound});
                 }
             }
 
@@ -452,41 +382,6 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
                 ++rewardRoundNumber;
             }
         }
-    }
-
-    /// @notice Register a staker's snapshot voting power for an active-voter reward round.
-    /// @param hook The IVotes token whose stakers are registering.
-    /// @param groupId The reward group (0 = the default group).
-    /// @param tokenId The encoded staker address.
-    /// @param token The reward token.
-    /// @param rewardRound The stored reward-round data.
-    /// @param rewardRoundNumber The reward round being registered.
-    function _registerActiveStakeFor(
-        address hook,
-        uint256 groupId,
-        uint256 tokenId,
-        IERC20 token,
-        JBRewardRoundData storage rewardRound,
-        uint256 rewardRoundNumber
-    )
-        internal
-    {
-        if (registeredStakeOf[hook][groupId][token][rewardRoundNumber][tokenId] != 0) return;
-
-        uint256 tokenStakeAmount = _tokenStakeAt({hook: hook, tokenId: tokenId, blockNumber: rewardRound.snapshotBlock});
-        if (tokenStakeAmount == 0) return;
-
-        registeredStakeOf[hook][groupId][token][rewardRoundNumber][tokenId] = _toUint208(tokenStakeAmount);
-        rewardRound.totalStake = _toUint208(uint256(rewardRound.totalStake) + tokenStakeAmount);
-
-        emit ActiveVoterRegistered({
-            hook: hook,
-            round: rewardRoundNumber,
-            tokenId: tokenId,
-            token: token,
-            stake: tokenStakeAmount,
-            caller: msg.sender
-        });
     }
 
     //*********************************************************************//
@@ -571,8 +466,8 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     /// @notice The total stake denominator recorded when a token reward round is first funded.
-    /// @dev Non-expiring token distributors use `IVotes.getPastTotalSupply`. Expiring token distributors start at zero
-    /// and add registered snapshot votes during the claim-duration window.
+    /// @dev Non-expiring token distributors use `IVotes.getPastTotalSupply`. Expiring token distributors use
+    /// `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances such as AMM-held tokens do not share rewards.
     /// @param hook The IVotes-compatible token contract.
     /// @param groupId The reward group (unused for token distributors — kept for base-hook conformance).
     /// @param blockNumber The block number to get the total supply at.
@@ -589,10 +484,10 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     {
         groupId; // Silence unused variable warning — token distributors are group-agnostic in weight.
 
-        // Active-voter rounds start with a zero denominator. Holders register snapshot votes during the claim-duration
-        // window, and only registered voting power shares the reward pot once the window closes.
-        if (CLAIM_DURATION != 0) return 0;
+        if (CLAIM_DURATION == 0) {
+            return IVotes(hook).getPastTotalSupply(blockNumber);
+        }
 
-        totalStakedAmount = IVotes(hook).getPastTotalSupply(blockNumber);
+        totalStakedAmount = IJBActiveVotes(hook).getPastTotalActiveVotes(blockNumber);
     }
 }

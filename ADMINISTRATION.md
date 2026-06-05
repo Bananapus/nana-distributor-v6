@@ -24,7 +24,7 @@
 | Role | How Assigned | Scope | Notes |
 | --- | --- | --- | --- |
 | Snapshot keeper | Any caller | Per distributor | `poke` can lock snapshot blocks before funding or claims |
-| Expiry keeper | Any caller | Per expired reward round | `recycleExpiredRewards` recycles eligible inventory after the distributor's deadline; active-voter token rounds with registered voters are protected |
+| Expiry keeper | Any caller | Per expired reward round | `recycleExpiredRewards` recycles eligible inventory after the distributor's deadline; active-voter token rounds with nonzero active votes are protected |
 | Token claimant | Encoded claimant address | Per token slot | Token distributor authority model |
 | NFT claimant | Current NFT owner | Per token ID | 721 distributor authority model |
 
@@ -45,7 +45,7 @@
 
 - review round timing and vesting-round count before deployment
 - choose claim duration carefully at deployment; `0` keeps token rewards on the non-expiring total-supply path, while a
-  nonzero value gives token holders a registration window for active-voter rewards
+  nonzero value requires token hooks that expose an active-vote total for active-voter rewards
 - verify the distributor holds the correct asset before claimants start vesting
 - do not assume token and 721 variants behave identically
 

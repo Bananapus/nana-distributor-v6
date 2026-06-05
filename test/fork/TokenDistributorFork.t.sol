@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 // Core contracts.
+import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
 import {JBPermissions} from "@bananapus/core-v6/src/JBPermissions.sol";
 import {JBProjects} from "@bananapus/core-v6/src/JBProjects.sol";
 import {JBDirectory} from "@bananapus/core-v6/src/JBDirectory.sol";
@@ -16,7 +17,6 @@ import {JBPrices} from "@bananapus/core-v6/src/JBPrices.sol";
 import {JBSplits} from "@bananapus/core-v6/src/JBSplits.sol";
 import {JBFundAccessLimits} from "@bananapus/core-v6/src/JBFundAccessLimits.sol";
 import {JBFeelessAddresses} from "@bananapus/core-v6/src/JBFeelessAddresses.sol";
-import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
 
 // Core interfaces.
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
@@ -41,12 +41,15 @@ import {JBCurrencyAmount} from "@bananapus/core-v6/src/structs/JBCurrencyAmount.
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
 // Permit2.
 import {IPermit2} from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 
 // Distributor.
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
+import {IJBActiveVotes} from "../../src/interfaces/IJBActiveVotes.sol";
 
 /// @notice Minimal holder that represents AMM custody of project tokens in fork tests.
 contract ForkAmmHolder {
@@ -56,6 +59,55 @@ contract ForkAmmHolder {
     /// @param amount The amount to return.
     function returnTokens(IERC20 token, address holder, uint256 amount) external {
         token.transfer(holder, amount);
+    }
+}
+
+/// @notice JBERC20 fork-test implementation with active-vote total checkpoints.
+contract ForkActiveJBERC20 is JBERC20, IJBActiveVotes {
+    using Checkpoints for Checkpoints.Trace208;
+
+    Checkpoints.Trace208 private _activeSupplyCheckpoints;
+
+    constructor(JBPermissions permissions, JBProjects projects) JBERC20(permissions, projects) {}
+
+    function getPastTotalActiveVotes(uint256 timepoint) external view returns (uint256 activeVotes) {
+        activeVotes = _activeSupplyCheckpoints.upperLookupRecent(_validateTimepoint(timepoint));
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = _activeSupplyCheckpoints.latest();
+    }
+
+    function _delegate(address account, address delegatee) internal override {
+        address oldDelegate = delegates(account);
+        uint256 votingUnits = _getVotingUnits(account);
+
+        super._delegate({account: account, delegatee: delegatee});
+
+        if (oldDelegate == address(0) && delegatee != address(0)) {
+            _updateActiveVotes({amount: votingUnits, increase: true});
+        } else if (oldDelegate != address(0) && delegatee == address(0)) {
+            _updateActiveVotes({amount: votingUnits, increase: false});
+        }
+    }
+
+    function _transferVotingUnits(address from, address to, uint256 amount) internal override {
+        bool decreaseActiveVotes = from != address(0) && delegates(from) != address(0);
+        bool increaseActiveVotes = to != address(0) && delegates(to) != address(0);
+
+        super._transferVotingUnits({from: from, to: to, amount: amount});
+
+        if (decreaseActiveVotes == increaseActiveVotes) return;
+        _updateActiveVotes({amount: amount, increase: increaseActiveVotes});
+    }
+
+    function _updateActiveVotes(uint256 amount, bool increase) internal {
+        if (amount == 0) return;
+
+        uint256 updated =
+            increase ? _activeSupplyCheckpoints.latest() + amount : _activeSupplyCheckpoints.latest() - amount;
+
+        _activeSupplyCheckpoints.push({key: clock(), value: SafeCast.toUint208(updated)});
     }
 }
 
@@ -200,9 +252,8 @@ contract TokenDistributorForkTest is Test {
 
         _beginVestingFor(alice, hook, tokens);
         _beginVestingFor(bob, hook, tokens);
-        _warpToClaimDeadline(hook, IERC20(JBConstants.NATIVE_TOKEN), 0);
-        _beginVestingFor(alice, hook, tokens);
-        _beginVestingFor(bob, hook, tokens);
+
+        (,,,, uint256 round0TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 0);
 
         uint256 aliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
         uint256 bobClaimed = distributor.claimedFor(hook, _tokenId(bob), IERC20(JBConstants.NATIVE_TOKEN));
@@ -211,6 +262,11 @@ contract TokenDistributorForkTest is Test {
 
         uint256 aliceInitialTokenBalance = IERC20(address(projectToken)).balanceOf(alice);
         uint256 bobInitialTokenBalance = IERC20(address(projectToken)).balanceOf(bob);
+        assertEq(
+            round0TotalStake,
+            aliceInitialTokenBalance + bobInitialTokenBalance,
+            "round 0 denominator matches active votes"
+        );
         uint256 lpTokenAmount = aliceInitialTokenBalance - bobInitialTokenBalance;
         assertGt(lpTokenAmount, 0, "Alice has tokens to move into AMM custody");
 
@@ -229,19 +285,9 @@ contract TokenDistributorForkTest is Test {
         _beginVestingFor(alice, hook, tokens);
         _beginVestingFor(bob, hook, tokens);
 
-        uint256 aliceRound1Stake =
-            distributor.registeredStakeOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 1, _tokenId(alice));
-        uint256 bobRound1Stake =
-            distributor.registeredStakeOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 1, _tokenId(bob));
-        uint256 ammRound1Stake =
-            distributor.registeredStakeOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 1, _tokenId(address(amm)));
+        (,,,, uint256 round1TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 1);
 
-        assertEq(aliceRound1Stake, bobRound1Stake, "Alice's LP transfer leaves her with Bob-sized active stake");
-        assertEq(ammRound1Stake, 0, "AMM-held tokens are not active voters");
-
-        _warpToClaimDeadline(hook, IERC20(JBConstants.NATIVE_TOKEN), 1);
-        _beginVestingFor(alice, hook, tokens);
-        _beginVestingFor(bob, hook, tokens);
+        assertEq(round1TotalStake, bobInitialTokenBalance * 2, "AMM-held tokens are not active voters");
 
         uint256 aliceAfterInactiveRound =
             distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
@@ -259,15 +305,12 @@ contract TokenDistributorForkTest is Test {
         _beginVestingFor(alice, hook, tokens);
         _beginVestingFor(bob, hook, tokens);
 
-        uint256 aliceRound2Stake =
-            distributor.registeredStakeOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 2, _tokenId(alice));
-        uint256 bobRound2Stake =
-            distributor.registeredStakeOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 2, _tokenId(bob));
-        assertGt(aliceRound2Stake, bobRound2Stake, "Returned tokens resume Alice's delegation");
-
-        _warpToClaimDeadline(hook, IERC20(JBConstants.NATIVE_TOKEN), 2);
-        _beginVestingFor(alice, hook, tokens);
-        _beginVestingFor(bob, hook, tokens);
+        (,,,, uint256 round2TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 2);
+        assertEq(
+            round2TotalStake,
+            aliceInitialTokenBalance + bobInitialTokenBalance,
+            "returned tokens resume Alice's delegation"
+        );
 
         uint256 aliceAfterReturnedRound =
             distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
@@ -573,7 +616,7 @@ contract TokenDistributorForkTest is Test {
         jbProjects = new JBProjects(multisig, address(0), address(0));
         jbDirectory = new JBDirectory(jbPermissions, jbProjects, multisig);
 
-        JBERC20 jbErc20 = new JBERC20(jbPermissions, jbProjects);
+        ForkActiveJBERC20 jbErc20 = new ForkActiveJBERC20(jbPermissions, jbProjects);
         jbTokens = new JBTokens(jbDirectory, jbErc20);
 
         jbRulesets = new JBRulesets(jbDirectory);

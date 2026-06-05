@@ -12,7 +12,7 @@
 
 ### Round and checkpoint semantics
 
-The token distributor depends on checkpointed voting power at the reward round's snapshot block. Holders must delegate for `getPastVotes` to count them. Deployments with `CLAIM_DURATION == 0` use `getPastTotalSupply`, so undelegated supply can dilute claims; deployments with nonzero claim duration use an active-voter registration window, so only registered snapshot votes share the pot.
+The token distributor depends on checkpointed voting power at the reward round's snapshot block. Holders must delegate for `getPastVotes` to count them. Deployments with `CLAIM_DURATION == 0` use `getPastTotalSupply`, so undelegated supply can dilute claims; deployments with nonzero claim duration use `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances such as AMM custody with no delegate do not share the pot.
 
 ### Funding path
 

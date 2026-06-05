@@ -5,7 +5,7 @@
 | If you're editing... | Verify... |
 |---|---|
 | `JBDistributor` vesting math | Claim totals, `totalVestingAmountOf`, and pool balances still reconcile across rounds |
-| `JBTokenDistributor` checkpoint logic | Non-expiring rounds read `getPastVotes` and `getPastTotalSupply` at the intended snapshot block; active-voter rounds register `getPastVotes` before the deadline and use the registered total as the denominator |
+| `JBTokenDistributor` checkpoint logic | Non-expiring rounds read `getPastVotes` and `getPastTotalSupply` at the intended snapshot block; active-voter rounds read `getPastVotes` and `getPastTotalActiveVotes` at the intended snapshot block |
 | `JB721Distributor` stake math | Minted, remaining, and burned supply still produce the intended tier-weighted total stake |
 | `processSplitWith` | Allowance-based `transferFrom` flow preserves actual received balances; split funding still records under `groupId == 0` only (a split cannot carry a tier set) |
 | `groupId` threading | The `groupId` dimension stays consistent across the reward (`rewardRoundOf`), vesting (`vestingDataOf`, `latestVestedIndexOf`, `nextClaimRoundOf`), and loan (`activeVestingLoanIdOf`, `JBVestingLoan`) maps; the `tierIds` overloads (`fund`/`beginVesting`/`collectVestedRewards`/`borrowAgainstVesting`/`recycleExpiredRewards`/`releaseForfeitedRewards`) live on `JB721Distributor` and derive the group ID via `_groupIdFor`; the base is tier-agnostic and group 0 is the default all-tiers pool |
@@ -16,7 +16,7 @@
 | Symptom | Likely cause |
 |---|---|
 | A holder gets no rewards in the token distributor | They never delegated, so `getPastVotes` returned zero |
-| Rewards appear stuck in the distributor | Supply was undelegated in a non-expiring token round, active voters did not register before a token deadline, vesting never began for the target token IDs, or the round boundary assumption is wrong |
+| Rewards appear stuck in the distributor | Supply was undelegated in a non-expiring token round, an active-voter token round had zero active votes and has not been recycled, vesting never began for the target token IDs, or the round boundary assumption is wrong |
 | 721 reward shares look diluted | Burned supply was not excluded correctly or token-to-tier mapping is wrong |
 | Split-hook funding credits the wrong amount | The caller did not grant a sufficient ERC-20 allowance before calling `processSplitWith` |
 

@@ -5,10 +5,10 @@
 - Raise dependency floors to the latest published versions; document NatSpec, comment, and lint conventions in
   STYLE_GUIDE.
 - Make token distributors with nonzero `CLAIM_DURATION` active-voter distributors. Funded token rounds start with
-  `totalStake == 0`; holders call `beginVesting` before the deadline to register snapshot `getPastVotes`, and after
-  the deadline only registered voting power shares the pot. Token rounds with no registered voters can be recycled
-  into the current round; registered active-voter rounds are protected from permissionless recycling. Deployments with
-  `CLAIM_DURATION == 0` keep the non-expiring `getPastTotalSupply` denominator.
+  `totalStake` equal to `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, and claimants use snapshot
+  `getPastVotes` against that active denominator. Token rounds with zero active votes can be recycled into the current
+  round after the deadline; active-voter rounds with nonzero active votes are protected from permissionless recycling.
+  Deployments with `CLAIM_DURATION == 0` keep the non-expiring `getPastTotalSupply` denominator.
 - Settle a repaid vesting loan before refunding any native overpayment. `repayVestingLoan` now runs
   `_restoreVestingCollateral` (which deletes the loan record and decrements `totalLoanedVestingAmountOf`) before the
   native `msg.sender.call` refund, following checks-effects-interactions. Previously the refund external call happened
@@ -26,7 +26,7 @@
   `getPastTierVotingUnits` denominator (no per-owner cap on the tier path; the all-tiers path uses the per-owner cap).
   Split funding via `processSplitWith` always lands in group 0. `JBTokenDistributor` exposes no tier API and threads
   `groupId` only for storage isolation; non-expiring token rounds use global `getPastTotalSupply`, while active-voter
-  token rounds use registered `getPastVotes`. Re-keyed the public state getters (`rewardRoundOf`, `vestingDataOf`,
+  token rounds use `getPastTotalActiveVotes`. Re-keyed the public state getters (`rewardRoundOf`, `vestingDataOf`,
   `latestVestedIndexOf`, `activeVestingLoanIdOf`, `nextClaimRoundOf`) with
   `groupId` as their 2nd argument, added a `groupId` field to the `Claimed`/`Collected` events, and a `groupId` member
   to the `JBVestingLoan` struct. Requires `@bananapus/721-hook-v6 >= 0.0.63` for `getPastTierVotingUnits`.

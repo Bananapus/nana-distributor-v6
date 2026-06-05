@@ -7,6 +7,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
@@ -22,6 +24,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {JBTokenDistributor} from "../src/JBTokenDistributor.sol";
 import {JBDistributor} from "../src/JBDistributor.sol";
+import {IJBActiveVotes} from "../src/interfaces/IJBActiveVotes.sol";
 import {IJBTokenDistributor} from "../src/interfaces/IJBTokenDistributor.sol";
 
 /// @notice Mock JB directory for testing.
@@ -88,15 +91,59 @@ contract MockJBController {
 }
 
 /// @notice ERC20Votes token for staking (mock for JBERC20).
-contract MockVotesToken is ERC20, ERC20Votes {
+contract MockVotesToken is ERC20, ERC20Votes, IJBActiveVotes {
+    using Checkpoints for Checkpoints.Trace208;
+
+    Checkpoints.Trace208 private _activeSupplyCheckpoints;
+
     constructor() ERC20("StakeToken", "STK") EIP712("StakeToken", "1") {}
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 timepoint) external view returns (uint256 activeVotes) {
+        activeVotes = _activeSupplyCheckpoints.upperLookupRecent(_validateTimepoint(timepoint));
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = _activeSupplyCheckpoints.latest();
+    }
+
+    function _delegate(address account, address delegatee) internal override {
+        address oldDelegate = delegates(account);
+        uint256 votingUnits = _getVotingUnits(account);
+
+        super._delegate({account: account, delegatee: delegatee});
+
+        if (oldDelegate == address(0) && delegatee != address(0)) {
+            _updateActiveVotes({amount: votingUnits, increase: true});
+        } else if (oldDelegate != address(0) && delegatee == address(0)) {
+            _updateActiveVotes({amount: votingUnits, increase: false});
+        }
+    }
+
+    function _transferVotingUnits(address from, address to, uint256 amount) internal override {
+        bool decreaseActiveVotes = from != address(0) && delegates(from) != address(0);
+        bool increaseActiveVotes = to != address(0) && delegates(to) != address(0);
+
+        super._transferVotingUnits({from: from, to: to, amount: amount});
+
+        if (decreaseActiveVotes == increaseActiveVotes) return;
+        _updateActiveVotes({amount: amount, increase: increaseActiveVotes});
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
+    }
+
+    function _updateActiveVotes(uint256 amount, bool increase) internal {
+        if (amount == 0) return;
+
+        uint256 updated =
+            increase ? _activeSupplyCheckpoints.latest() + amount : _activeSupplyCheckpoints.latest() - amount;
+
+        _activeSupplyCheckpoints.push({key: clock(), value: SafeCast.toUint208(updated)});
     }
 }
 
@@ -346,12 +393,13 @@ contract JBTokenDistributorTest is Test {
 
         IERC20[] memory tokens = _singleRewardToken();
 
-        // Round 0: Alice and Bob are active voters and both register before the deadline.
+        // Round 0: Alice and Bob are active voters, so the active denominator is fixed at funding.
         _beginVestingFor(alice, tokens);
         _beginVestingFor(bob, tokens);
-        _warpToClaimDeadline(0, IERC20(address(rewardToken)));
-        _beginVestingFor(alice, tokens);
-        _beginVestingFor(bob, tokens);
+
+        (,,,, uint256 round0TotalStake) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
+        assertEq(round0TotalStake, 1000 ether, "round 0 counts all active votes");
 
         assertEq(
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken))),
@@ -375,27 +423,9 @@ contract JBTokenDistributorTest is Test {
         _beginVestingFor(alice, tokens);
         _beginVestingFor(bob, tokens);
 
-        assertEq(
-            distributor.registeredStakeOf(address(votesToken), 0, IERC20(address(rewardToken)), 1, _tokenId(alice)),
-            300 ether,
-            "Alice only registers the tokens she still holds"
-        );
-        assertEq(
-            distributor.registeredStakeOf(address(votesToken), 0, IERC20(address(rewardToken)), 1, _tokenId(bob)),
-            300 ether,
-            "Bob registers unchanged stake"
-        );
-        assertEq(
-            distributor.registeredStakeOf(
-                address(votesToken), 0, IERC20(address(rewardToken)), 1, _tokenId(address(amm))
-            ),
-            0,
-            "AMM-held tokens do not register"
-        );
-
-        _warpToClaimDeadline(1, IERC20(address(rewardToken)));
-        _beginVestingFor(alice, tokens);
-        _beginVestingFor(bob, tokens);
+        (,,,, uint256 round1TotalStake) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 1);
+        assertEq(round1TotalStake, 600 ether, "AMM-held tokens are excluded from active votes");
 
         assertEq(
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken))),
@@ -417,9 +447,10 @@ contract JBTokenDistributorTest is Test {
 
         _beginVestingFor(alice, tokens);
         _beginVestingFor(bob, tokens);
-        _warpToClaimDeadline(2, IERC20(address(rewardToken)));
-        _beginVestingFor(alice, tokens);
-        _beginVestingFor(bob, tokens);
+
+        (,,,, uint256 round2TotalStake) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 2);
+        assertEq(round2TotalStake, 1000 ether, "returned tokens count again without redelegating");
 
         assertEq(
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken))),
@@ -751,7 +782,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(aliceClaimed, 1050 ether, "Prior round reward becomes claimable next round");
     }
 
-    function test_expiringRewards_registerBeforeDeadlineThenClaimAfterDeadline() public {
+    function test_expiringRewards_useActiveSnapshotDenominatorAndClaimImmediately() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -765,7 +796,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(amount, 1000 ether, "round funded amount");
         assertEq(claimedAmount, 0, "nothing claimed yet");
         assertEq(claimDeadline, distributor.roundStartTimestamp(1) + claimDuration, "deadline starts at claimable");
-        assertEq(totalStake, 0, "active-voter rounds start unregistered");
+        assertEq(totalStake, 1000 ether, "active-voter rounds record active votes at funding");
 
         _advanceToRound(1);
         _beginVestingFor(alice, _singleRewardToken());
@@ -773,37 +804,35 @@ contract JBTokenDistributorTest is Test {
 
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 0, "pre-deadline call only registers Alice");
+        assertEq(aliceClaimed, 700 ether, "Alice claims from the active-vote denominator");
 
-        assertEq(
-            distributor.registeredStakeOf(address(votesToken), 0, IERC20(address(rewardToken)), 0, _tokenId(alice)),
-            700 ether,
-            "Alice registers her snapshot voting power"
-        );
+        uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
+        assertEq(bobClaimed, 300 ether, "Bob claims from the active-vote denominator");
 
         (,, claimedAmount,, totalStake) =
             distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
-        assertEq(claimedAmount, 0, "registered rewards have not materialized");
-        assertEq(totalStake, 1000 ether, "registered voters set the denominator");
+        assertEq(claimedAmount, 1000 ether, "active rewards materialize immediately");
+        assertEq(totalStake, 1000 ether, "denominator stays fixed");
 
         _warpToClaimDeadline(0, IERC20(address(rewardToken)));
         _beginVestingFor(alice, _singleRewardToken());
 
         aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 700 ether, "Alice claims after the active-voter window closes");
+        assertEq(aliceClaimed, 700 ether, "deadline does not create a second claim");
 
         (,, claimedAmount,,) = distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
-        assertEq(claimedAmount, 700 ether, "claimed amount tracks materialized vesting");
+        assertEq(claimedAmount, 1000 ether, "claimed amount tracks materialized vesting");
     }
 
-    function test_expiringRewards_permissionlessRecycleAfterDeadline() public {
+    function test_expiringRewards_emptyActiveRoundRecyclesAfterDeadline() public {
+        uint48 claimDuration = 10;
+        _fundExpiringDistributor(1000 ether, claimDuration);
+
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
         votesToken.delegate(bob);
-
-        uint48 claimDuration = 10;
-        _fundExpiringDistributor(1000 ether, claimDuration);
+        _advanceBlock();
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
         _advanceBlock();
@@ -835,8 +864,6 @@ contract JBTokenDistributorTest is Test {
 
         _advanceToRound(2);
         _beginVestingFor(bob, _singleRewardToken());
-        _beginVestingFor(alice, _singleRewardToken());
-        _warpToClaimDeadline(1, IERC20(address(rewardToken)));
         _beginVestingFor(alice, _singleRewardToken());
 
         aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
@@ -905,12 +932,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(unregisteredRewardToken.balanceOf(address(distributor)), 1 ether, "unsupported inventory remains");
     }
 
-    function test_expiringUnregisteredErc20Rewards_lateClaimRecyclesAndAdvancesCursor() public {
-        vm.prank(alice);
-        votesToken.delegate(alice);
-        vm.prank(bob);
-        votesToken.delegate(bob);
-
+    function test_expiringEmptyErc20Rewards_lateClaimRecyclesAndAdvancesCursor() public {
         uint48 claimDuration = 10;
         MockRewardToken unregisteredRewardToken = new MockRewardToken();
 
@@ -929,6 +951,12 @@ contract JBTokenDistributorTest is Test {
         distributor.fund(address(votesToken), IERC20(address(unregisteredRewardToken)), 1);
 
         vm.warp(distributor.roundStartTimestamp(1) + claimDuration);
+        _advanceBlock();
+
+        vm.prank(alice);
+        votesToken.delegate(alice);
+        vm.prank(bob);
+        votesToken.delegate(bob);
         _advanceBlock();
 
         unregisteredRewardToken.mint(address(this), 1_000_000 ether);
@@ -958,8 +986,6 @@ contract JBTokenDistributorTest is Test {
         _advanceToRound(2);
         _beginVestingFor(alice, tokens);
         _beginVestingFor(bob, tokens);
-        _warpToClaimDeadline(1, IERC20(address(unregisteredRewardToken)));
-        _beginVestingFor(alice, tokens);
 
         assertEq(
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(unregisteredRewardToken))),
@@ -988,7 +1014,7 @@ contract JBTokenDistributorTest is Test {
         assertEq(rewardToken.totalSupply(), 1 ether, "recycling does not burn supply");
     }
 
-    function test_expiringRewards_registeredRoundDoesNotRecycleUnclaimedShares() public {
+    function test_expiringRewards_activeRoundDoesNotRecycleUnclaimedShares() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -1007,11 +1033,11 @@ contract JBTokenDistributorTest is Test {
             hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
-        assertEq(recycled, 0, "registered active-voter rounds do not recycle");
+        assertEq(recycled, 0, "active-voter rounds with active votes do not recycle");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))),
             1000 ether,
-            "registered round inventory remains"
+            "active round inventory remains"
         );
         assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "all inventory remains in distributor");
         assertEq(rewardToken.totalSupply(), 1000 ether, "recycling does not burn supply");
@@ -1019,14 +1045,14 @@ contract JBTokenDistributorTest is Test {
         _beginVestingFor(alice, _singleRewardToken());
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 1000 ether, "Alice receives all rewards as the only active voter");
+        assertEq(aliceClaimed, 700 ether, "Alice's active share is preserved");
 
         _beginVestingFor(bob, _singleRewardToken());
         uint256 bobClaimed = distributor.claimedFor(address(votesToken), _tokenId(bob), IERC20(address(rewardToken)));
-        assertEq(bobClaimed, 0, "Bob gets no share without registering before the deadline");
+        assertEq(bobClaimed, 300 ether, "Bob can claim lazily after the deadline");
     }
 
-    function test_expiringRewards_lateClaimRecyclesExpiredRound() public {
+    function test_expiringRewards_lateActiveClaimVestsExpiredRound() public {
         vm.prank(alice);
         votesToken.delegate(alice);
         vm.prank(bob);
@@ -1042,21 +1068,12 @@ contract JBTokenDistributorTest is Test {
 
         uint256 aliceClaimed =
             distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 0, "expired rewards do not vest from the expired round");
+        assertEq(aliceClaimed, 700 ether, "expired active rewards still vest for snapshot voters");
         assertEq(
             distributor.balanceOf(address(votesToken), IERC20(address(rewardToken))), 1000 ether, "inventory remains"
         );
-        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "late claim recycles in place");
+        assertEq(rewardToken.balanceOf(address(distributor)), 1000 ether, "late claim keeps inventory in place");
         assertEq(rewardToken.totalSupply(), 1000 ether, "late claim does not burn supply");
-
-        _advanceToRound(2);
-        _beginVestingFor(alice, _singleRewardToken());
-        _beginVestingFor(bob, _singleRewardToken());
-        _warpToClaimDeadline(1, IERC20(address(rewardToken)));
-        _beginVestingFor(alice, _singleRewardToken());
-
-        aliceClaimed = distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
-        assertEq(aliceClaimed, 700 ether, "Alice receives her share of the recycled round");
     }
 
     function test_poke_recordsSnapshotBlock() public {

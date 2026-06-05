@@ -813,8 +813,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     }
 
     /// @notice The total stake sharing a group's round rewards at a specific block.
-    /// @dev For the all-tiers group (0) this is `getPastTotalSupply` from the hook's checkpoints module (all NFTs that
-    /// existed and were delegated at `blockNumber`). For a tier-scoped group it is the summed
+    /// @dev For the all-tiers group (0) this is `getPastTotalSupply` from the hook's checkpoints module (all voting
+    /// units that existed at `blockNumber`). For a tier-scoped group it is the summed
     /// `getPastTierVotingUnits` over the group's tier set — the eligible voting units of those tiers at the snapshot.
     /// @param hook The hook to get the total stake for.
     /// @param groupId The reward group (0 = all tiers).

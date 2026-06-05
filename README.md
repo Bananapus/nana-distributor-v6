@@ -43,7 +43,7 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 1. a project funds the distributor, often through a payout split
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
 3. the distributor's immutable claim duration decides whether token rewards use the non-expiring total-supply path or
-   the active-voter registration path
+   the active-vote-total path
 4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
 5. anyone can recycle expired reward rounds after their deadline when the round has no protected claimant set
 6. recipients collect their vested share as the configured vesting schedule unlocks
@@ -65,11 +65,11 @@ This repo does not explain why an allocation exists. It only defines how funded 
 - ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
   token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
 - `CLAIM_DURATION` is fixed at deployment; `0` means token rewards use the non-expiring total-supply denominator,
-  otherwise token rewards use the deadline as an active-voter registration window
-- in token distributors with nonzero claim duration, a funded round starts with `totalStake == 0`; holders register
-  their snapshot `getPastVotes` before the deadline, and only registered voting power shares the pot after the deadline
-- `recycleExpiredRewards` is permissionless; for active-voter token rounds it only recycles rounds with no registered
-  voters, while already-materialized vesting entries and registered active-voter rounds remain protected
+  otherwise token rewards use `IJBActiveVotes.getPastTotalActiveVotes` as the denominator
+- in token distributors with nonzero claim duration, a funded round records the hook's active-vote total at the
+  snapshot block; only addresses with `getPastVotes` at that block share the pot
+- `recycleExpiredRewards` is permissionless; for active-voter token rounds it only recycles rounds whose recorded
+  active-vote total is zero, while already-materialized vesting entries and nonzero active-vote rounds remain protected
 - eligible expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
 - revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
   distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
@@ -144,8 +144,8 @@ script/
 - distributors are only as trustworthy as the vesting parameters and funding they receive
 - operational mistakes often come from funding the wrong asset or underfunding the distributor
 - teams should review claim timing and snapshot assumptions with the same care they review the payout source
-- deployers that set a nonzero claim duration should choose a window long enough for expected token holders to register
-  active voting power; token rounds with no registrations can be recycled by anyone after the deadline
+- token distributors with a nonzero claim duration require hooks that expose `IJBActiveVotes`; token rounds with no
+  active votes at the snapshot can be recycled by anyone after the deadline
 
 ## For AI agents
 
