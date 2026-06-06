@@ -69,6 +69,11 @@ contract RegressionVotes {
         return votesOf[account];
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
     }
@@ -80,6 +85,10 @@ contract Regression721Store {
     function tierOfTokenId(address, uint256, bool) external view returns (JB721Tier memory tier) {
         tier.votingUnits = votingUnits;
         tier.initialSupply = 100;
+    }
+
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
     }
 
     /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
@@ -109,8 +118,32 @@ contract Regression721Checkpoints {
         return votesOf[account];
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesOf[account];
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -239,7 +272,7 @@ contract RegressionFreshVerificationTest is Test {
         assertEq(reward.balanceOf(address(distributor)), rewardAmount);
     }
 
-    function test_721LateMintedTokenCannotClaimRoundSnapshotRewardsFromOwnersPastVotes() public {
+    function test_721LateMintedTokenCannotClaimRoundSnapshotRewardsFromOwnersActiveUnits() public {
         address alice = makeAddr("alice");
 
         RegressionDirectory directory = new RegressionDirectory();

@@ -66,6 +66,14 @@ contract TMVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }
@@ -73,8 +81,22 @@ contract TMVotesToken is ERC20, ERC20Votes {
 
 /// @notice Minimal 721 hook/checkpoints pair for JB721Distributor funding-path tests.
 contract TM721Checkpoints {
+    function getPastTotalActiveVotes(uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 1;
+    }
+
     function getPastTotalSupply(uint256) external pure returns (uint256) {
         return 1;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 1;
+    }
+
+    function getPastAccountTierActiveVotes(address, uint256, uint256) external pure returns (uint256 activeVotes) {
+        activeVotes = 1;
     }
 }
 

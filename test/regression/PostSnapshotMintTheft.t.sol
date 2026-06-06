@@ -74,6 +74,10 @@ contract VPCapMockStore {
         return tiers[tokenTiers[tokenId]];
     }
 
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256 tierId) {
+        tierId = tokenTiers[tokenId];
+    }
+
     function setBurnedFor(uint256 tierId, uint256 count) external {
         burned[tierId] = count;
     }
@@ -91,10 +95,17 @@ contract VPCapMockCheckpoints {
 
     mapping(address => uint256) public votesOverride;
     mapping(address => bool) public votesOverrideSet;
+    mapping(address account => mapping(uint256 tierId => uint256)) public accountTierActiveVotesOverride;
+    mapping(address account => mapping(uint256 tierId => bool)) public accountTierActiveVotesOverrideSet;
 
     constructor(VPCapMockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
+    }
+
+    function setAccountTierActiveVotesOverride(address account, uint256 tierId, uint256 value) external {
+        accountTierActiveVotesOverride[account][tierId] = value;
+        accountTierActiveVotesOverrideSet[account][tierId] = true;
     }
 
     function setTotalSupplyOverride(uint256 value) external {
@@ -106,16 +117,14 @@ contract VPCapMockCheckpoints {
         votesOverrideSet[account] = true;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        if (totalSupplyOverride != 0) return totalSupplyOverride;
-        uint256 max = store.maxTier();
-        for (uint256 i = 1; i <= max; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 b = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - b;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
@@ -123,8 +132,67 @@ contract VPCapMockCheckpoints {
         return 0; // Default: no historical votes (realistic behavior).
     }
 
+    function getPastTotalTierActiveVotes(
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        if (accountTierActiveVotesOverrideSet[account][tierId]) {
+            return accountTierActiveVotesOverride[account][tierId];
+        }
+
+        VPCapMockHook hook = VPCapMockHook(hookAddr);
+        uint256 tokenCount = hook.tokenIdCount();
+
+        for (uint256 i; i < tokenCount;) {
+            uint256 tokenId = hook.tokenIdAt(i);
+
+            if (store.tokenTiers(tokenId) == tierId && hook.ownerOfAt(tokenId, blockNumber) == account) {
+                JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+                activeVotes += tier.votingUnits;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return VPCapMockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burnedCount = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burnedCount;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        uint256 max = store.maxTier();
+        for (uint256 i = 1; i <= max; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 
@@ -132,6 +200,8 @@ contract VPCapMockHook {
     VPCapMockStore public immutable _store;
     VPCapMockCheckpoints public _checkpoints;
     mapping(uint256 => address) public owners;
+    mapping(uint256 tokenId => bool tracked) public tokenTracked;
+    uint256[] public tokenIds;
 
     constructor(VPCapMockStore s) {
         _store = s;
@@ -163,20 +233,35 @@ contract VPCapMockHook {
     }
 
     function setOwner(uint256 tokenId, address owner) external {
+        _trackTokenId(tokenId);
         owners[tokenId] = owner;
+    }
+
+    function tokenIdAt(uint256 index) external view returns (uint256 tokenId) {
+        tokenId = tokenIds[index];
+    }
+
+    function tokenIdCount() external view returns (uint256 count) {
+        count = tokenIds.length;
+    }
+
+    function _trackTokenId(uint256 tokenId) internal {
+        if (tokenTracked[tokenId]) return;
+
+        tokenTracked[tokenId] = true;
+        tokenIds.push(tokenId);
     }
 }
 
 // --- Tests ---------------------------------------------------------------
 
-/// @title VotingPowerCapSufficiencyTest
-/// @notice Proves that the `_consumedVotesOf` tracking against `getPastVotes` is sufficient
-/// to prevent post-snapshot minted NFTs from extracting excess rewards — no `mintBlockOf`
-/// storage on the 721 hook is needed.
+/// @title ActiveTierCapSufficiencyTest
+/// @notice Proves that consumed active tier accounting prevents post-snapshot minted NFTs from extracting excess
+/// rewards when a hook does not expose mint-block storage.
 ///
-/// Key invariant: an owner's total vested rewards are bounded by their historical voting
-/// power at the snapshot block, regardless of which specific tokens they vest.
-contract VotingPowerCapSufficiencyTest is Test {
+/// Key invariant: an owner's total vested rewards are bounded by their historical active tier units at the snapshot
+/// block, regardless of which specific tokens they vest.
+contract ActiveTierCapSufficiencyTest is Test {
     JB721Distributor distributor;
     VPCapMockToken rewardToken;
     VPCapMockHook hook;
@@ -236,12 +321,12 @@ contract VotingPowerCapSufficiencyTest is Test {
         store.setTokenTier(2, 1);
         hook.setOwner(2, bob);
 
-        // Set realistic historical voting power: each holder had 100 at snapshot.
-        hook._checkpoints().setVotesOverride(alice, 100);
-        hook._checkpoints().setVotesOverride(bob, 100);
-        // Charlie has 0 voting power at snapshot (default).
+        // Each snapshot holder has 100 active tier units.
+        hook._checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
+        hook._checkpoints().setAccountTierActiveVotesOverride(bob, 1, 100);
+        hook._checkpoints().setAccountTierActiveVotesOverride(charlie, 1, 0);
 
-        // Fix total supply at 200 so post-snapshot mints don't inflate denominator.
+        // Fix active supply at 200 so post-snapshot mints don't inflate the denominator.
         hook._checkpoints().setTotalSupplyOverride(200);
     }
 
@@ -259,10 +344,10 @@ contract VotingPowerCapSufficiencyTest is Test {
         distributor.fund(address(hook), IERC20(address(rewardToken)), amount);
     }
 
-    /// @notice Post-snapshot mint cannot extract more than the owner's historical voting power.
-    /// Alice has 100 votes at snapshot. She mints token 3 after snapshot and vests both.
+    /// @notice Post-snapshot mint cannot extract more than the owner's historical active tier units.
+    /// Alice has 100 active units at snapshot. She mints token 3 after snapshot and vests both.
     /// Total extraction: 500 ether (capped at 100/200 of pool), NOT 1000 ether.
-    function test_votingPowerCap_preventsOverExtraction() public {
+    function test_activeTierCap_preventsOverExtraction() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
@@ -293,7 +378,7 @@ contract VotingPowerCapSufficiencyTest is Test {
     /// @notice Vesting only a post-snapshot token still capped by historical votes.
     /// Alice skips token 1, vests only token 3 (post-snapshot). Gets 500 ether through it.
     /// Then token 1 gets 0 because the budget is spent. Total: still 500.
-    function test_votingPowerCap_postSnapshotOnlyToken_sameTotal() public {
+    function test_activeTierCap_postSnapshotOnlyToken_sameTotal() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
@@ -313,7 +398,7 @@ contract VotingPowerCapSufficiencyTest is Test {
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 token3Claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(token3Claimed, 500 ether, "Token 3 vests using Alice's historical 100 votes");
+        assertEq(token3Claimed, 500 ether, "Token 3 vests using Alice's historical 100 active units");
 
         // Now vest token 1. Alice's budget is already consumed.
         tokenIds[0] = 1;
@@ -324,16 +409,16 @@ contract VotingPowerCapSufficiencyTest is Test {
         assertEq(token1Claimed, 0, "Token 1 gets 0 (budget spent on token 3)");
 
         // Total: 500 ether — exactly what Alice is entitled to.
-        assertEq(token3Claimed + token1Claimed, 500 ether, "Total extraction bounded by historical votes");
+        assertEq(token3Claimed + token1Claimed, 500 ether, "Total extraction bounded by active units");
     }
 
-    /// @notice No historical voting power → zero rewards, even with a valid NFT.
-    function test_votingPowerCap_noHistoricalVotes_zeroRewards() public {
+    /// @notice No historical active tier units means zero rewards, even with a valid NFT.
+    function test_activeTierCap_noHistoricalActiveUnits_zeroRewards() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
 
-        // AFTER snapshot: Charlie (0 votes at snapshot) mints token 3.
+        // AFTER snapshot: Charlie (0 active tier units at snapshot) mints token 3.
         vm.roll(block.number + 5);
         store.setTokenTier(3, 1);
         hook.setOwner(3, charlie);
@@ -347,12 +432,12 @@ contract VotingPowerCapSufficiencyTest is Test {
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(claimed, 0, "No historical votes = no rewards");
+        assertEq(claimed, 0, "No historical active units = no rewards");
     }
 
-    /// @notice Multiple post-snapshot tokens still bounded by historical voting power.
+    /// @notice Multiple post-snapshot tokens are still bounded by historical active tier units.
     /// Alice mints 3 new tokens after snapshot. Total extraction: still 500 ether.
-    function test_votingPowerCap_multiplePostSnapshotTokens_bounded() public {
+    function test_activeTierCap_multiplePostSnapshotTokens_bounded() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
@@ -386,7 +471,7 @@ contract VotingPowerCapSufficiencyTest is Test {
 
     /// @notice Burn-and-remint: Alice burns pre-snapshot token, mints replacement after.
     /// Total extraction: still 500 ether (same as if she kept the original).
-    function test_votingPowerCap_burnAndRemint_bounded() public {
+    function test_activeTierCap_burnAndRemint_bounded() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();
@@ -409,11 +494,11 @@ contract VotingPowerCapSufficiencyTest is Test {
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         uint256 claimed = distributor.claimedFor(address(hook), 3, IERC20(address(rewardToken)));
-        assertEq(claimed, 500 ether, "Replacement token capped at Alice's historical 100 votes");
+        assertEq(claimed, 500 ether, "Replacement token capped at Alice's historical 100 active units");
     }
 
     /// @notice Cross-owner isolation: Alice's post-snapshot mint doesn't affect Bob's rewards.
-    function test_votingPowerCap_crossOwnerIsolation() public {
+    function test_activeTierCap_crossOwnerIsolation() public {
         _fundHook(1000 ether);
         _advanceToRound(1);
         distributor.poke();

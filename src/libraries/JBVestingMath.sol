@@ -55,7 +55,7 @@ library JBVestingMath {
         }
     }
 
-    /// @notice The amount remaining after the previously claimed share is deducted.
+    /// @notice The amount remaining after the already claimed share is deducted.
     /// @dev Computing `amount - paid` releases any floor-division dust on the final unlock.
     /// @param amount The original vesting entry amount.
     /// @param shareClaimed The cumulative share already claimed.

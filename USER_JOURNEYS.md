@@ -8,7 +8,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 - teams funding a distributor from a split or post-mint allocation
 - token holders or NFT holders collecting vested rewards
-- keepers recycling expired unclaimed reward rounds
+- keepers recycling eligible expired reward rounds
 - revnet reward claimants borrowing against vesting revnet rewards
 - operators configuring round timing and deployment shape
 - auditors reviewing snapshot timing and stake-accounting correctness
@@ -32,46 +32,55 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Main Flow**
 1. Fund the distributor directly or through a payout split.
 2. The accepted amount is assigned to the current reward round for the chosen stake source.
-3. The distributor records that round's snapshot block and total checkpointed stake.
-4. The distributor's immutable claim duration determines whether the funded round expires.
+3. The distributor records that round's snapshot block and the stake model for the distributor type.
+4. The distributor records the active-vote denominator for token rounds, collection-wide 721 rounds, or tier-scoped
+   721 rounds.
 5. Confirm the tracked balance matches what the distributor received.
 6. Use the distributor as the vesting surface, not as the source of entitlement logic.
 
 **Round assignment:** If a rewarder sends money to the distributor during round N, that accepted amount is reserved for the historical stakers or NFT owners at round N's snapshot. It does not vest immediately and does not get split among whoever shows up first. It becomes claimable starting in round N + 1, and each eligible claimant can show up later to materialize their own historical share into a vesting entry.
 
-**Expiring rewards:** The claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero deployment claim duration means no expiration. Direct funding and split funding use the same immutable duration, so permissionless direct funding cannot choose an incompatible deadline for a shared hook/token/round bucket.
+**Expiring rewards:** The claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero deployment claim duration means reward rounds do not expire. Token funding always records `getPastTotalActiveVotes` at the snapshot block, and addresses with snapshot `getPastVotes` share that pot whenever they claim later. Direct funding and split funding use the same immutable duration, so permissionless direct funding cannot choose an incompatible deadline for a shared hook/token/round bucket.
 
 **Failure Modes**
 - wrong asset funded
 - underfunded distributor
 - caller assumes funding alone starts vesting
-- deployer sets too short a claim duration and unclaimed rewards become recyclable
+- deployer uses a hook that does not expose `IJBActiveVotes` for a nonzero-claim-duration token distributor
 
 **Postconditions**
 - rewards are reserved for the funding round's historical stakers or NFT owners
 - current-round rewards become claimable only after a later round starts
-- expiring reward rounds retain a recyclable unclaimed remainder after their claim deadline
+- active-voter token rounds with zero active votes retain a recyclable amount after their claim deadline
 
 ## Journey 2: Start a vesting round
 
-**Actor:** for token rewards, the encoded staker; for 721 rewards, the current NFT owner.
+**Actor:** any holder, helper, keeper, or frontend.
 
 **Intent:** materialize rewards into vesting.
 
 **Preconditions**
 - the round timing and parameters are valid
 - the stake source is usable and non-zero
-- token stakers are claiming their own encoded address
-- NFT owners are claiming token IDs they currently own
+- token IDs encode valid staker addresses
+- NFT token IDs are live and, when batched, strictly increasing
 
 **Main Flow**
-1. Call `beginVesting`.
-2. Claim past funded reward rounds through `currentRound - 1` into a fresh vesting entry.
-3. The distributor uses each funded round's recorded snapshot block and total stake.
-4. If a past round has expired, the claim transaction recycles its unclaimed remainder instead of vesting it.
-5. Vesting entries become claimable over the configured schedule.
+1. Call `beginVesting` for the holder's encoded token slot or NFT token IDs.
+2. Claim past funded reward rounds through `currentRound - 1` into a fresh vesting entry when the round is ready.
+3. The distributor uses each funded round's recorded snapshot block and the distributor-specific stake denominator.
+4. For active-voter token rounds with a nonzero recorded active total, the call materializes the holder's snapshot
+   `getPastVotes` share immediately, whether before or after the deadline.
+5. If an expired round has no protected claimant set, the claim transaction recycles its unclaimed amount instead of
+   vesting it.
+6. Vesting entries become claimable over the configured schedule.
 
-**Snapshot timing:** Funding records the funding round's snapshot block and total stake or `IVotes` supply. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
+**Helper behavior:** Starting vesting is permissionless because no reward tokens leave the distributor. A helper can
+start a holder's vesting clock without needing wallet access from the holder.
+
+**Snapshot timing:** Funding records the funding round's snapshot block. Token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding, and 721 rounds record the relevant checkpointed active total. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
+
+**AMM custody lifecycle:** For active-voter token rounds, the denominator uses total active votes at the funded round's snapshot block. If a holder transfers tokens into an AMM before a round's snapshot, those tokens no longer count toward the holder's votes for that round, and an AMM that does not delegate has no share. When the holder removes liquidity and the tokens return before a later round's snapshot, the returned tokens count again for that later round if the holder's delegate is still set.
 
 **Failure Modes**
 - zero total stake or zero historical voting power
@@ -80,58 +89,64 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Postconditions**
 - one fresh vesting entry exists for each claimant/token/reward-token combination with cumulative past rewards, if any
-- expired unclaimed rewards recycle into the current reward round and cannot be claimed from the expired round later
+- expired rounds with zero active votes recycle into the current reward round and cannot be claimed from the
+  expired round later
 
 ## Journey 3: Collect vested rewards
 
-**Actor:** eligible recipient.
+**Actor:** holder, approved helper, keeper, or frontend.
 
 **Intent:** collect the share that has unlocked for a round.
 
 **Preconditions**
-- the recipient is authorized under the distributor type
+- the recipient is either authorized under the distributor type or is the canonical beneficiary for every token ID
 - either some share has already vested, or the claimant has unclaimed past reward rounds to materialize
 
 **Main Flow**
-1. Call the relevant claim function.
+1. Call `collectVestedRewards`.
 2. The distributor first materializes unclaimed past reward rounds into a new vesting entry.
-3. The distributor checks authority and unlocked amount.
-4. The vested share transfers to the claimant.
+3. The distributor checks whether the caller controls the token IDs or is sending rewards to their canonical
+   beneficiary.
+4. The vested share transfers to the beneficiary.
 
 **Failure Modes**
-- invalid claimant
+- helper tries to route rewards away from the canonical beneficiary
 - claim batch includes invalid 721 token IDs
 - reward token transfer fails
 
 **Postconditions**
-- vested rewards move to the claimant
+- vested rewards move to the requested beneficiary
 - any newly materialized past rewards begin vesting from this claim round
 
 ## Journey 4: Recycle expired rewards
 
 **Actor:** any caller.
 
-**Intent:** move expired unclaimed reward inventory into the current reward round.
+**Intent:** move recyclable expired reward inventory into the current reward round.
 
 **Preconditions**
 - the distributor was deployed with a nonzero claim duration
 - the claim deadline has passed
-- some funded amount has not yet started vesting
+- the round has no protected claimant set, or the distributor path otherwise exposes an unclaimed remainder
 
 **Main Flow**
-1. Call `burnExpiredRewards` with the hook, reward token, and expired round numbers.
-2. The distributor computes each round's unclaimed remainder as funded amount minus amount already materialized into vesting.
-3. The expired round is marked settled.
-4. The unclaimed remainder is recorded into the current reward round without leaving distributor inventory.
+1. Call `recycleExpiredRewards` with the hook, reward token, and expired round numbers.
+2. Active-voter token rounds with nonzero active votes are skipped so snapshot voters can still claim.
+3. Otherwise, the distributor computes each round's recyclable amount as funded amount minus amount already
+   materialized into vesting.
+4. The expired round is marked settled.
+5. The recycled amount is recorded into the current reward round without leaving distributor inventory.
 
 **Failure Modes**
 - round is not expired, so nothing recycles
+- the token round has nonzero active votes, so nothing recycles
 - the whole round has already been claimed into vesting, so nothing recycles
 - the distributor was deployed with an unintended claim duration
 
 **Postconditions**
-- the expired unclaimed remainder is no longer available through the expired round
-- the recycled amount becomes claimable from the current reward round after a later round starts
+- the recycled amount is no longer available through the expired round
+- the recycled amount becomes claimable from the current reward round after a later round starts, using that new
+  round's recorded stake denominator
 - already-materialized vesting entries remain intact
 
 ## Journey 5: Recycle rewards for burned NFTs
@@ -146,9 +161,11 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Main Flow**
 1. Call `releaseForfeitedRewards`.
-2. The distributor reduces current vesting obligations for those forfeited claims.
-3. The released value remains in distributor inventory.
-4. The released value is recorded into the current reward round.
+2. The distributor verifies the NFT token IDs are burned and strictly increasing.
+3. The distributor materializes any unclaimed historical reward shares for those burned NFTs.
+4. The distributor reduces current vesting obligations only for the portion that has unlocked.
+5. The released value remains in distributor inventory.
+6. The released value is recorded into the current reward round.
 
 **Failure Modes**
 - caller expects the same behavior from the token distributor
@@ -156,6 +173,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 **Postconditions**
 - forfeited 721 rewards are no longer available to the burned NFT
+- still-locked forfeited rewards remain accounted as vesting until a later forfeiture call unlocks them
 - forfeited 721 rewards become available through the current reward round after a later round starts
 
 ## Journey 6: Borrow against vesting Revnet rewards
@@ -219,9 +237,9 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 2. The distributor derives `groupId = keccak256(abi.encode(tierIds))` and records the tier set on the group's first funding (queryable via `tierIdsOf(hook, groupId)`).
 3. The accepted amount is assigned to the current reward round for that group.
 4. Only holders whose NFT tier is in the funded set — and whose NFT existed at the round snapshot — can claim the pot.
-5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTierVotingUnits` over the funded tier set. There is no per-owner vote cap on the tier path.
+5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTotalTierActiveVotes` over the funded tier set, and each token's numerator is capped by the snapshot owner's remaining `getPastAccountTierActiveVotes` for that token's tier and reward group.
 
-**Group model:** `groupId == 0` is the all-tiers group — the default pool, claimed by the plain (no-`tierIds`) signatures. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `burnExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
+**Group model:** `groupId == 0` is the all-tiers group — the default pool, claimed by the plain (no-`tierIds`) signatures. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
 
 **Failure Modes**
 - tier IDs are not strictly increasing, so the group ID cannot be derived
@@ -231,7 +249,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Postconditions**
 - the pot is reserved for holders of the funded tiers at the funding round's snapshot
 - the tier set is permanently recorded for that group on its first funding
-- all-tiers (group 0) accounting is independent of every tier-scoped group
+- all-tiers (group 0) accounting is independent of every tier-scoped group, even though both modes enforce the same owner-tier active-vote cap
 
 ## Trust boundaries
 

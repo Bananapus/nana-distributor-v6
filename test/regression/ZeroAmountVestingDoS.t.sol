@@ -48,6 +48,11 @@ contract MockVotes {
         return votesOf[account];
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
     }

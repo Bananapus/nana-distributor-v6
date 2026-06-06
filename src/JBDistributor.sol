@@ -27,9 +27,10 @@ import {JBVestingLoan} from "./structs/JBVestingLoan.sol";
 /// to stakers with linear vesting. Each round, a snapshot is taken of the distributable balance, and stakers can
 /// claim their pro-rata share based on their stake weight at the snapshot block. Claimed tokens vest linearly over
 /// `VESTING_ROUNDS` rounds and can be collected as they unlock.
-/// @dev Subclasses define how stake is measured (`_tokenStake`, `_totalStake`), who can claim (`_canClaim`), and
-/// what "burned" means (`_tokenBurned`). Two concrete implementations exist: `JBTokenDistributor` (IVotes tokens)
-/// and `JB721Distributor` (Juicebox 721 NFTs).
+/// @dev Subclasses define how stake is measured (`_tokenStake`, `_totalStake`), who can redirect collected rewards
+/// (`_claimBeneficiaryOf`, `_canClaim`), how token IDs are validated (`_validateTokenIds`), and what "burned" means
+/// (`_tokenBurned`). Two concrete implementations exist: `JBTokenDistributor` (IVotes tokens) and `JB721Distributor`
+/// (Juicebox 721 NFTs).
 abstract contract JBDistributor is IJBDistributor {
     using SafeERC20 for IERC20;
 
@@ -222,6 +223,7 @@ abstract contract JBDistributor is IJBDistributor {
     // -------------------------- constructor ---------------------------- //
     //*********************************************************************//
 
+    /// @notice Initializes the shared distributor configuration.
     /// @param controller The JB controller used for token registry lookups and revnet loan permissions.
     /// @param revLoans The Revnet loans contract used to borrow against vested revnet rewards.
     /// @param revOwner The REVOwner contract that must own revnet reward token projects.
@@ -266,10 +268,10 @@ abstract contract JBDistributor is IJBDistributor {
     //*********************************************************************//
 
     /// @notice Begin vesting all unclaimed past reward rounds for the specified token IDs.
-    /// @dev Materializes each token ID's pro-rata share of every past (non-current) reward round into fresh vesting
+    /// @dev Permissionless. Materializes each token ID's pro-rata share of every past reward round into fresh vesting
     /// entries that start now and unlock over `VESTING_ROUNDS`. Current-round funding is excluded until a later round
-    /// starts. The model-specific per-round claim math and the authorization check live in the `_claimPastRewards`
-    /// and `_requireCanClaimTokenIds` hooks each concrete distributor implements.
+    /// starts. The model-specific per-round claim math and token ID validation live in the `_claimPastRewards` and
+    /// `_validateTokenIds` hooks each concrete distributor implements.
     /// @param hook The hook (IVotes token or 721 hook) whose stakers are vesting.
     /// @param tokenIds The staker token IDs to claim rewards for.
     /// @param tokens The reward tokens to begin vesting.
@@ -296,13 +298,19 @@ abstract contract JBDistributor is IJBDistributor {
         _fund({hook: hook, groupId: 0, token: token, amount: amount});
     }
 
+    /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
+    /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
+    function poke() external override {
+        _ensureSnapshotBlock(currentRound());
+    }
+
     /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
     /// @dev Recycling is permissionless; any keeper or frontend can sweep an expired round.
     /// @param hook The hook whose expired rewards should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function burnExpiredRewards(
+    function recycleExpiredRewards(
         address hook,
         IERC20 token,
         uint256[] calldata rounds
@@ -312,17 +320,12 @@ abstract contract JBDistributor is IJBDistributor {
         override
         returns (uint256 amount)
     {
-        amount = _burnExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
+        amount = _recycleExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
     }
 
-    /// @notice Record the snapshot block for the current round (and eagerly for the next round). Callable by anyone —
-    /// keepers or frontends can call this early in a round to lock the snapshot block before any claims occur.
-    function poke() external override {
-        _ensureSnapshotBlock(currentRound());
-    }
-
-    /// @notice Recycle unlocked rewards tied to burned tokens into the current reward round.
-    /// @dev Anyone can call this for burned tokens.
+    /// @notice Recycle rewards tied to burned tokens into the current reward round as they unlock.
+    /// @dev Anyone can call this for burned tokens. Unclaimed historical shares are materialized before unlocked
+    /// forfeited amounts are recycled.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
     /// @param tokens The reward tokens to recycle.
@@ -413,27 +416,6 @@ abstract contract JBDistributor is IJBDistributor {
     // ----------------------- public transactions ----------------------- //
     //*********************************************************************//
 
-    /// @notice Begin vesting any unclaimed past reward rounds, then collect everything that has since unlocked and
-    /// transfer it to the beneficiary — so callers don't need to separately call `beginVesting`.
-    /// @dev The model-specific per-round claim math and the authorization check live in the `_claimPastRewards`
-    /// and `_requireCanClaimTokenIds` hooks each concrete distributor implements.
-    /// @param hook The hook whose stakers are collecting.
-    /// @param tokenIds The IDs of the tokens to collect for (caller must be authorized for all of them).
-    /// @param tokens The reward tokens to collect vested amounts of.
-    /// @param beneficiary The recipient of the collected tokens.
-    function collectVestedRewards(
-        address hook,
-        uint256[] calldata tokenIds,
-        IERC20[] calldata tokens,
-        address beneficiary
-    )
-        public
-        virtual
-        override
-    {
-        _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
-    }
-
     /// @notice Borrow from a revnet using one token ID's uncollected vesting rewards as collateral.
     /// @dev The distributor keeps custody of the loan NFT. Collection is blocked until repayment restores the
     /// collateral to the original vesting schedule.
@@ -470,6 +452,27 @@ abstract contract JBDistributor is IJBDistributor {
             prepaidFeePercent: prepaidFeePercent,
             beneficiary: beneficiary
         });
+    }
+
+    /// @notice Begin vesting any unclaimed past reward rounds, then collect everything that has since unlocked and
+    /// transfer it to the beneficiary — so callers don't need to separately call `beginVesting`.
+    /// @dev Authorized holders can collect to any beneficiary. Helpers can collect only to the canonical beneficiary
+    /// for every token ID they do not control.
+    /// @param hook The hook whose stakers are collecting.
+    /// @param tokenIds The IDs of the tokens to collect for.
+    /// @param tokens The reward tokens to collect vested amounts of.
+    /// @param beneficiary The recipient of the collected tokens.
+    function collectVestedRewards(
+        address hook,
+        uint256[] calldata tokenIds,
+        IERC20[] calldata tokens,
+        address beneficiary
+    )
+        public
+        virtual
+        override
+    {
+        _collectVestedRewards({hook: hook, groupId: 0, tokenIds: tokenIds, tokens: tokens, beneficiary: beneficiary});
     }
 
     /// @notice Repay a distributor-held Revnet loan and restore its collateral to the original vesting schedule.
@@ -576,11 +579,6 @@ abstract contract JBDistributor is IJBDistributor {
         internal
         virtual;
 
-    /// @notice Revert unless the caller is authorized to claim each token ID.
-    /// @param hook The hook whose token IDs are being checked.
-    /// @param tokenIds The token IDs to check.
-    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual;
-
     /// @notice Shared begin-vesting logic across reward groups.
     /// @param hook The hook whose stakers are vesting.
     /// @param groupId The reward group (0 = the default group).
@@ -600,8 +598,8 @@ abstract contract JBDistributor is IJBDistributor {
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
-        // Only the entity authorized for these token IDs may start their vesting clock.
-        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
+        // Validate token IDs before a permissionless helper can materialize vesting state.
+        _validateTokenIds({hook: hook, tokenIds: tokenIds});
 
         // Materialize all unclaimed historical reward rounds into fresh vesting entries that start now.
         _claimPastRewards({hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens});
@@ -628,8 +626,11 @@ abstract contract JBDistributor is IJBDistributor {
         // Revert if no token IDs are provided.
         if (tokenIds.length == 0) revert JBDistributor_EmptyTokenIds({tokenIdCount: tokenIds.length});
 
-        // Only the entity authorized for these token IDs may materialize and collect their rewards.
-        _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
+        // Validate token IDs before a permissionless helper can materialize vesting state.
+        _validateTokenIds({hook: hook, tokenIds: tokenIds});
+
+        // Only authorized holders can redirect rewards; helpers must send them to the canonical beneficiary.
+        _requireCanCollectTo({hook: hook, tokenIds: tokenIds, beneficiary: beneficiary});
 
         // Before collecting, bring the token IDs current by starting vesting for any past reward rounds.
         _claimPastRewards({hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens});
@@ -641,6 +642,8 @@ abstract contract JBDistributor is IJBDistributor {
     }
 
     /// @notice Shared forfeiture-release logic across reward groups.
+    /// @dev Materializes unclaimed historical shares for burned token IDs before recycling the currently unlocked
+    /// forfeited amount.
     /// @param hook The hook whose tokens were burned.
     /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The IDs of the burned tokens.
@@ -658,6 +661,9 @@ abstract contract JBDistributor is IJBDistributor {
         // Do not let reward-token callbacks mutate vesting state during inbound balance-delta accounting.
         _requireNotAcceptingToken();
 
+        // Let concrete distributors enforce forfeiture-only validation before claim cursors can move.
+        _validateForfeitedTokenIds({hook: hook, tokenIds: tokenIds});
+
         // Make sure that all staker token IDs are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
@@ -668,7 +674,10 @@ abstract contract JBDistributor is IJBDistributor {
             }
         }
 
-        // Unlock the rewards and recycle the forfeited amount.
+        // Materialize any still-unclaimed historical shares using the same reward math as live claims.
+        _claimPastRewards({hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens});
+
+        // Unlock the vested forfeiture amount and recycle it into the current reward round.
         _unlockRewards({
             hook: hook,
             groupId: groupId,
@@ -685,7 +694,7 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
     /// @return amount The total amount recycled.
-    function _burnExpiredRewards(
+    function _recycleExpiredRewards(
         address hook,
         uint256 groupId,
         IERC20 token,
@@ -748,7 +757,7 @@ abstract contract JBDistributor is IJBDistributor {
         // Revnet loan-backed collection is disabled unless a trusted loans contract was set at deployment.
         if (address(REV_LOANS) == address(0)) revert JBDistributor_RevnetLoansNotConfigured();
 
-        // Make sure that all tokens can be claimed by this sender.
+        // Only the authorized holder can collateralize vesting rewards and choose the loan beneficiary.
         _requireCanClaimTokenIds({hook: hook, tokenIds: tokenIds});
 
         // Bundle the remaining borrow parameters to keep the loan workflow readable and stack-safe.
@@ -1548,6 +1557,41 @@ abstract contract JBDistributor is IJBDistributor {
     /// @return canClaim True if the account can collect rewards for this token ID.
     function _canClaim(address hook, uint256 tokenId, address account) internal view virtual returns (bool canClaim);
 
+    /// @notice The canonical beneficiary for permissionless collection of a token ID's rewards.
+    /// @param hook The hook the token ID belongs to.
+    /// @param tokenId The token ID to get the claim beneficiary of.
+    /// @return beneficiary The address that helpers can collect the token ID's rewards to.
+    function _claimBeneficiaryOf(address hook, uint256 tokenId) internal view virtual returns (address beneficiary);
+
+    /// @notice Revert unless the caller can collect the requested token IDs to the beneficiary.
+    /// @dev A caller that controls a token ID can route that token ID's collected rewards anywhere. A helper that
+    /// does not control the token ID can only collect to that token ID's canonical beneficiary.
+    /// @param hook The hook the token IDs belong to.
+    /// @param tokenIds The token IDs whose collected rewards will be transferred.
+    /// @param beneficiary The address that will receive the collected rewards.
+    function _requireCanCollectTo(address hook, uint256[] calldata tokenIds, address beneficiary) internal view {
+        for (uint256 i; i < tokenIds.length;) {
+            uint256 tokenId = tokenIds[i];
+
+            // Holders can choose any beneficiary for token IDs they control.
+            if (!_canClaim({hook: hook, tokenId: tokenId, account: msg.sender})) {
+                // Helpers can only send rewards to the token ID's canonical beneficiary.
+                if (beneficiary != _claimBeneficiaryOf({hook: hook, tokenId: tokenId})) {
+                    revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: msg.sender});
+                }
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice Revert unless the caller is authorized to redirect rewards or borrow against each token ID.
+    /// @param hook The hook whose token IDs are being checked.
+    /// @param tokenIds The token IDs to check.
+    function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual;
+
     /// @notice Revert if called while an inbound ERC-20 transfer is being measured.
     /// @dev Reward tokens are arbitrary contracts. This guard prevents token callbacks from mutating distributor
     /// accounting midway through a balance-delta measurement.
@@ -1570,12 +1614,22 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations,
-    /// and their unlocked forfeited rewards can be recycled via `releaseForfeitedRewards`.
+    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations, and
+    /// their historical forfeited rewards can be materialized and recycled via `releaseForfeitedRewards`.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The token ID to check.
     /// @return tokenWasBurned True if the token has been burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view virtual returns (bool tokenWasBurned);
+
+    /// @notice Validate token IDs passed to `releaseForfeitedRewards`.
+    /// @dev Defaults to no additional validation. Concrete distributors can enforce ordering or model-specific rules
+    /// that are not captured by `_tokenBurned`.
+    /// @param hook The hook the token IDs belong to.
+    /// @param tokenIds The token IDs to validate for forfeiture.
+    function _validateForfeitedTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual {
+        hook;
+        tokenIds;
+    }
 
     /// @notice The stake weight of a specific token ID, used to calculate its pro-rata share of distributions.
     /// @dev Subclasses define how stake is measured.
@@ -1600,4 +1654,9 @@ abstract contract JBDistributor is IJBDistributor {
         view
         virtual
         returns (uint256 totalStakedAmount);
+
+    /// @notice Revert unless each token ID is valid for this concrete distributor.
+    /// @param hook The hook the token IDs belong to.
+    /// @param tokenIds The token IDs to validate.
+    function _validateTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual;
 }

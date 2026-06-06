@@ -8,13 +8,13 @@
 
 `JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
-Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets unclaimed remainders be recycled permissionlessly after the configured claim window.
+Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets eligible expired inventory recycle. Token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding and split rewards only among addresses with snapshot `getPastVotes`; rounds with no active votes can be recycled permissionlessly after the deadline.
 
 ## Core invariants
 
 - snapshot timing must stay coherent
 - tracked funded balance must cover current vesting obligations
-- claim authority must match the distributor type
+- beneficiary routing must match the distributor type
 - expired recycling must only move unclaimed reward-round inventory
 - 721 forfeiture handling must not over-allocate or recycle value accidentally
 - token and 721 variants must preserve the same core vesting math
@@ -41,8 +41,9 @@ Both variants can be used as `IJBSplitHook` receivers. Each deployment has one i
 ```text
 fund token distributor
   -> assign accepted amount to current reward round
-  -> record snapshot block and total IVotes supply for that round
-  -> record the deployment's fixed claim deadline when the duration is nonzero
+  -> record snapshot block
+  -> if claim duration is 0, record total IVotes supply for that round
+  -> if claim duration is nonzero, record total active votes for that round
   -> staker later claims rounds <= currentRound - 1
   -> one fresh vesting entry starts at claim time
 ```
@@ -54,7 +55,7 @@ fund 721 distributor
   -> assign accepted amount to current reward round
   -> record snapshot block and total 721 checkpointed stake for that round
   -> record the deployment's fixed claim deadline when the duration is nonzero
-  -> current NFT owner later claims rounds <= currentRound - 1
+  -> any helper can materialize rounds <= currentRound - 1 for a live current owner
   -> one fresh vesting entry starts at claim time
 ```
 
@@ -64,8 +65,9 @@ fund 721 distributor
 any caller
   -> provide hook, reward token, and expired reward rounds
   -> distributor skips non-expired or already-settled rounds
-  -> unclaimed remainder is funded amount minus amount already materialized into vesting
-  -> unclaimed remainder stays in tracked inventory and is recorded into the current reward round
+  -> active-voter token rounds with nonzero active votes are left for snapshot voters to claim
+  -> otherwise recyclable amount is funded amount minus amount already materialized into vesting
+  -> recyclable amount stays in tracked inventory and is recorded into the current reward round
 ```
 
 ### Revnet vesting loan write-off
@@ -79,11 +81,22 @@ any caller
   -> the stale collection lock is cleared while newer vesting entries remain collectable
 ```
 
+### 721 forfeiture recycle
+
+```text
+any caller
+  -> provide burned NFT token IDs and reward tokens
+  -> distributor verifies the token IDs are burned and strictly increasing
+  -> unclaimed historical shares for those burned NFTs are materialized into vesting entries
+  -> the currently unlocked forfeited amount is recycled into the current reward round
+  -> still-locked forfeited vesting remains accounted until a later forfeiture call unlocks it
+```
+
 ### Collect
 
 ```text
 claimant
-  -> prove authority for the token ID or encoded claimant slot
+  -> choose an authorized beneficiary route for the token ID or encoded claimant slot
   -> compute unlocked share
   -> transfer the vested amount
 ```
@@ -98,11 +111,11 @@ fund a tier-scoped pot
   -> tier set recorded on first funding, group ID derived from the tier set
   -> only holders of NFTs in those tiers can claim that pot
   -> tier-scoped overloads of beginVesting / collectVestedRewards / borrowAgainstVesting /
-     burnExpiredRewards / releaseForfeitedRewards thread the same groupId
+     recycleExpiredRewards / releaseForfeitedRewards thread the same groupId
 ```
 
-- **Denominator.** For a tier-scoped pot, `JB721Distributor` computes the round's total stake as the summed `getPastTierVotingUnits(tierId, snapshotBlock)` over the funded tier set (from the 721 hook's checkpoints module). Each eligible NFT — its tier is in the set and it existed at the round snapshot — contributes its tier's `votingUnits`. There is **no per-owner vote cap** on the tier path; eligibility plus tier membership matches exactly the set the denominator counts, so numerator and denominator reconcile. The all-tiers (group 0) path applies a per-owner vote cap instead.
-- **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; its stake weight stays global `getPastTotalSupply` because token distributors have no tier concept.
+- **Denominator and numerator.** For the all-tiers group, `JB721Distributor` records `getPastTotalActiveVotes(snapshotBlock)` from the 721 hook's checkpoints module. For a tier-scoped pot, it records the summed `getPastTotalTierActiveVotes(tierId, snapshotBlock)` over the funded tier set. Both modes claim with the same numerator rule: each eligible NFT contributes up to its tier's `votingUnits`, capped by the snapshot owner's remaining `getPastAccountTierActiveVotes(owner, tierId, snapshotBlock)` for that reward group.
+- **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; token weight never has a tier dimension. Token rounds use `getPastTotalActiveVotes`; `CLAIM_DURATION` only controls expiry.
 - **Split funding is group-0 only.** `processSplitWith` always records funding under group 0 — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
 
 ## Accounting model
@@ -116,13 +129,14 @@ The main variables are snapshot balance, total vesting amount, reward-round clai
 - wrong snapshots can misallocate a whole round
 - bad constructor parameters can brick a distributor instance
 - split-funding caller assumptions matter because `processSplitWith` expects an ERC-20 allowance and pulls tokens via `transferFrom`
-- claim-duration assumptions matter because expired unclaimed rewards are recyclable by anyone
+- claim-duration assumptions matter because token active-voter rounds require hooks with an active-vote total, and
+  rounds with no active votes are recyclable by anyone
 - 721 and token variants intentionally differ in ownership model and forfeiture behavior
 
 ## Safe change guide
 
 - review snapshot timing and vesting math together
-- if claim authority changes, re-check both distributor variants separately
+- if beneficiary-routing authority changes, re-check both distributor variants separately
 - if funding semantics change, test the allowance-based `transferFrom` flow explicitly
 
 ## Canonical checks

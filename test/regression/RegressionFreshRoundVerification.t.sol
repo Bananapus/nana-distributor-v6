@@ -50,6 +50,11 @@ contract RegressionFreshVotes {
         return votesOf[account];
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
     }
@@ -59,6 +64,10 @@ contract RegressionFresh721Store {
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier.votingUnits = 100;
         tier.initialSupply = 100;
+    }
+
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
     }
 
     function mintBlockOf(address, uint256 tokenId) external pure returns (uint256) {
@@ -87,8 +96,32 @@ contract RegressionFresh721Checkpoints {
         return votesOf[account];
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
     function getPastTotalSupply(uint256) external view returns (uint256) {
         return totalSupply;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupply;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesOf[account];
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -128,7 +161,7 @@ contract RegressionFresh721Hook {
 }
 
 contract RegressionFreshRoundVerificationTest is Test {
-    function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierVotes() public {
+    function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierActiveUnits() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
         JB721Distributor distributor = new JB721Distributor(

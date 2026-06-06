@@ -6,13 +6,13 @@
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — system overview, modules, trust boundaries, and core invariants.
 - [USER_JOURNEYS.md](./USER_JOURNEYS.md) — end-to-end flows for funders and claimants across token and 721 variants.
-- [INVARIANTS.md](./INVARIANTS.md) — per-section invariants for snapshot fairness, vesting math, claim authority, loans, and recycling.
+- [INVARIANTS.md](./INVARIANTS.md) — per-section invariants for snapshot fairness, vesting math, beneficiary routing, loans, and recycling.
 - [RISKS.md](./RISKS.md) — risk register with priority risks and the minimum invariants to verify.
 - [ADMINISTRATION.md](./ADMINISTRATION.md) — deployment parameters, control posture, and recovery guidance.
 - [SKILLS.md](./SKILLS.md) — quick index for routing tasks into the right sub-document.
 - [STYLE_GUIDE.md](./STYLE_GUIDE.md) — Solidity and repo conventions used across the Juicebox V6 ecosystem.
 - [AUDIT_INSTRUCTIONS.md](./AUDIT_INSTRUCTIONS.md) — audit framing, targets, and suggested hunting grounds.
-- [CHANGELOG.md](./CHANGELOG.md) — release notes and dependency bumps.
+- [CHANGELOG.md](./CHANGELOG.md) - V5 to V6 migration changelog.
 
 ## Overview
 
@@ -22,7 +22,7 @@ The package separates distribution mechanics by asset type:
 
 - `JBDistributor` coordinates shared round and vesting logic
 - `JBTokenDistributor` distributes ERC-20 balances using `IVotes` checkpointed voting power
-- `JB721Distributor` distributes value to 721 holders using checkpointed voting power, ensuring only holders at the funded round's snapshot block are eligible
+- `JB721Distributor` distributes value to active 721 holders using the hook's checkpointed owner and active-vote data, ensuring only holders at the funded round's snapshot block are eligible
 
 Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
 
@@ -36,18 +36,19 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 | --- | --- |
 | `JBDistributor` | Shared round-based vesting, claiming, and accounting logic. |
 | `JBTokenDistributor` | ERC-20 distributor keyed to `IVotes` checkpointed voting power. |
-| `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's `CHECKPOINTS()` module. Only NFTs held at the funded round's snapshot block are eligible. |
+| `JB721Distributor` | NFT-aware distributor keyed to checkpointed voting power from the hook's checkpoint module. Only NFTs held at the funded round's snapshot block are eligible. |
 
 ## Mental model
 
 1. a project funds the distributor, often through a payout split
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
-3. the distributor's immutable claim duration decides whether funded reward rounds expire
-4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
-5. anyone can recycle expired unclaimed reward rounds after their deadline
-6. recipients collect their vested share as the configured vesting schedule unlocks
+3. each funded reward round records an active-vote snapshot denominator for its token, collection, or tier group
+4. anyone can start vesting completed past reward rounds for an encoded token staker or current NFT owner
+5. anyone can recycle expired reward-round inventory that has not started vesting after the claim deadline
+6. recipients collect their vested share as the configured vesting schedule unlocks; helpers can collect only to the
+   canonical holder
 7. eligible claimants can borrow against vesting revnet rewards without bypassing the vesting schedule
-8. some unclaimable value can be recycled through explicit cleanup paths, depending on the distributor type
+8. burned 721 rewards can be materialized and recycled through explicit cleanup paths as they vest
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -61,13 +62,20 @@ This repo does not explain why an allocation exists. It only defines how funded 
 ## Integration traps
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
-- ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
-  token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
-- `CLAIM_DURATION` is fixed at deployment; `0` means reward rounds do not expire, otherwise all funding paths use the
-  same deadline measured from when the funded round first becomes claimable
-- `burnExpiredRewards` is permissionless and only recycles the unclaimed remainder; already-materialized vesting entries
-  remain claimable on their normal vesting curve
-- expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
+- ERC-20 and ERC-721 distributions share historical reward-round accounting, but their canonical beneficiaries differ:
+  token rewards belong to the encoded staker address, while 721 rewards belong to the current NFT owner
+- `beginVesting` is permissionless because no value leaves the distributor; `collectVestedRewards` is permissionless
+  only when paid to the canonical beneficiary, while an authorized holder can still choose any beneficiary
+- `CLAIM_DURATION` is fixed at deployment; `0` means reward rounds do not expire, while nonzero values set the window
+  after which unmaterialized reward inventory can be recycled
+- token distributors record `IJBActiveVotes.getPastTotalActiveVotes` at the funded round's snapshot block; only
+  addresses with `getPastVotes` at that block share the pot
+- 721 distributors record the hook checkpoint module's active total for all-tiers rewards, or the summed active totals
+  for a tier-scoped reward group; both modes cap each NFT claim by the snapshot owner's remaining active units for that
+  NFT's tier
+- `recycleExpiredRewards` is permissionless; it recycles the expired round's unmaterialized remainder while preserving
+  amounts that already started vesting
+- eligible expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
 - revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
   distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
   collateral immediately
@@ -75,15 +83,17 @@ This repo does not explain why an allocation exists. It only defines how funded 
   stale collection lock and forfeit only the vesting rewards that were collateralized by that loan
 - distributors deployed with `VESTING_ROUNDS == 0` disable revnet vesting loans because rewards are immediately
   collectible instead of locked in a vesting position
-- `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token
-  forfeiture path
+- `releaseForfeitedRewards` matters for 721 distributions; it first materializes any unclaimed historical shares for
+  burned NFTs, then recycles only the amount unlocked by the vesting schedule. Token-vote distributions do not have the
+  same burned-token forfeiture path
 - reward, vesting, and loan accounting carries a `groupId`: `0` is the all-tiers group (the default pool), a non-zero
   group is `keccak256(abi.encode(tierIds))`. The tier overloads live on `JB721Distributor`; the base is tier-agnostic.
   Split funding via `processSplitWith` always lands in group 0 — a split cannot carry a tier set; tier-scoped pots
   require the explicit `fund(hook, tierIds, token, amount)` overload, and claims/collections must pass the same
   `tierIds` to hit that group
 - tier-scoped 721 pots weigh each eligible NFT by its tier's `votingUnits` against a summed
-  `getPastTierVotingUnits` denominator, which requires `@bananapus/721-hook-v6 >= 0.0.63` for that checkpoints API
+  `getPastTotalTierActiveVotes` denominator, then cap each numerator with `getPastAccountTierActiveVotes`; this
+  requires `@bananapus/721-hook-v6 >= 0.0.73` for the active-vote checkpoints API
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 
@@ -141,8 +151,8 @@ script/
 - distributors are only as trustworthy as the vesting parameters and funding they receive
 - operational mistakes often come from funding the wrong asset or underfunding the distributor
 - teams should review claim timing and snapshot assumptions with the same care they review the payout source
-- deployers that set a nonzero claim duration should choose a window long enough for expected claimants, because
-  expired unclaimed rewards can be recycled by anyone
+- token distributors require hooks that expose `IJBActiveVotes`; expiring token rounds recycle any unmaterialized
+  remainder after the deadline
 
 ## For AI agents
 

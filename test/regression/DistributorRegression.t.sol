@@ -28,7 +28,7 @@ import {
     VotingCapMockHook,
     VotingCapMockRewardToken,
     VotingCapMockStore
-} from "./VotingPowerCapRegression.t.sol";
+} from "./ActiveTierCapRegression.t.sol";
 
 contract RegressionDirectory {
     mapping(uint256 projectId => mapping(address terminal => bool)) public terminals;
@@ -66,6 +66,14 @@ contract RegressionVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }
@@ -75,7 +83,7 @@ contract DistributorRegressionTest is Test {
     uint256 constant ROUND_DURATION = 100;
     uint256 constant VESTING_ROUNDS = 1;
 
-    function test_721OwnerVotingCapResetsAcrossBeginVestingCalls() public {
+    function test_721OwnerTierActiveCapPersistsAcrossBeginVestingCalls() public {
         VotingCapMockStore store = new VotingCapMockStore();
         VotingCapMockHook hook = new VotingCapMockHook(store);
         VotingCapMockDirectory directory = new VotingCapMockDirectory();
@@ -124,7 +132,7 @@ contract DistributorRegressionTest is Test {
         hook.setOwner(1, alice);
         hook.setOwner(2, alice);
         hook.setOwner(3, alice);
-        hook._checkpoints().setVotesOverride(alice, 100);
+        hook._checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
 
         rewardToken.mint(address(this), 1500 ether);
         rewardToken.approve(address(distributor), 1500 ether);

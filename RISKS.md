@@ -13,9 +13,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | Priority | Risk | Why it matters | Primary controls |
 |----------|------|----------------|------------------|
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
-| P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs can brick an instance; zero total stake can leave reward rounds unclaimable. | Deployment-time validation and operator runbooks. |
+| P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs can brick an instance; no eligible stake can leave reward rounds unclaimable until cleanup rules apply. | Deployment-time validation and operator runbooks. |
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
-| P1 | Expiry window misconfiguration | Too-short claim durations make otherwise valid unclaimed rewards recyclable by anyone. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
+| P1 | Expiry window misconfiguration | Too-short claim durations can make zero-active rounds recyclable earlier than intended. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
 | P1 | Revnet loan custody mismatch | If the claimant receives the loan NFT, they can repay directly and bypass vesting. | The distributor owns loan NFTs, blocks collection while collateralized, and restores collateral only through `repayVestingLoan`. |
 | P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`; native value transfers (e.g. the vesting-loan overpayment refund) can call back into the recipient. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. Settle a repaid vesting loan's state before refunding any native overpayment, so a re-entrant write-off cannot double-decrement the loaned-vesting inventory (checks-effects-interactions). |
 
@@ -29,7 +29,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 - **Reward-round snapshots are write-once per (hook, token, round).** Accepted funding is assigned to the current reward round and records that round's snapshot block plus total stake. Later funding in the same round accumulates into the same reward pot.
 - **Late claims do not reallocate historical rewards.** Funded reward rounds are reserved for historical stakers or NFT owners and are not reassigned merely because someone claims late.
-- **Expiring rounds recycle only unclaimed inventory.** A nonzero immutable claim duration records a deadline for each funded round. After that deadline, anyone can recycle the funded amount that has not yet started vesting into the current reward round. Already-materialized vesting entries are unaffected.
+- **Expiring token rounds are active-voter rounds.** A nonzero immutable claim duration records the hook's
+  `getPastTotalActiveVotes` at the funded round's snapshot block. Only addresses with snapshot `getPastVotes` share
+  the pot. A token round with zero active votes can be recycled into the current reward round after its deadline.
 - **Claim duration is deployment-wide.** To keep per-round storage compact, one hook/token/round has one claim deadline. Funding calls do not accept caller-chosen deadlines.
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled through the current round.** Burned-token forfeiture removes only the currently
@@ -40,7 +42,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   If Revnet liquidates the loan, anyone can write it off so the destroyed collateral is forfeited and the local
   collection lock is cleared. Distributors with `VESTING_ROUNDS == 0` reject vesting loans because there is no locked
   vesting period to finance.
-- **Undelegated `IVotes` balances can dilute participation.**
+- **Undelegated `IVotes` balances dilute only non-expiring token rounds.** Token distributors with
+  `CLAIM_DURATION == 0` use `getPastTotalSupply` as the denominator. Token distributors with nonzero claim duration
+  use `getPastTotalActiveVotes`, so undelegated balances do not share the active-voter pot.
 - **721 owner voting budgets are spent only by nonzero allocations.** If a token's pro-rata reward rounds to zero, it
   must not consume the owner's per-round voting cap.
 
@@ -58,7 +62,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Empty historical claims can be no-ops.** Token and 721 historical claims can succeed without creating a vesting entry when no past reward rounds are claimable or the claimant had zero eligible stake.
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
-- **Expired recycling is permissionless but deadline-gated.** Any caller can recycle expired inventory, but non-expired and non-expiring rounds recycle zero.
+- **Expired recycling is permissionless but deadline-gated.** Any caller can recycle eligible expired inventory, but
+  non-expired rounds, non-expiring rounds, and active-voter token rounds with nonzero active votes recycle zero.
 - **Loan-backed collection is intentionally locked while a loan is active.** If a token ID's vesting rewards are
   collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid or
   liquidated and written off.
@@ -70,7 +75,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   Underpaying and overpaying both revert so terminal context accounting cannot drift from actual native value delivered.
   ERC-20 split contexts must send no native value.
 - **Fee-on-transfer handling uses balance-delta accounting.** The `transferFrom` path measures `balanceAfter - balanceBefore` to credit the actual received amount.
-- **Expiration is explicit at deployment.** Split funding and plain `fund` both use the same immutable duration. Deploy with `0` for non-expiring rewards.
+- **Expiration is explicit at deployment.** Split funding and plain `fund` both use the same immutable duration. Deploy
+  token distributors with `0` for the non-expiring total-supply path, or a nonzero duration for the active-voter
+  active-total path.
 - **Reward-token callbacks fail closed during funding.** While `fund` or `processSplitWith` is measuring an inbound
   ERC-20 balance delta, reentrant `fund`, `beginVesting`, `collectVestedRewards`, and `releaseForfeitedRewards` calls
   revert. This prevents both over-crediting from nested funding and under-crediting from same-token collection netting
@@ -82,8 +89,10 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Token distributor rewards follow delegated voting power.** For `IVotes` hooks, the encoded claimant address is the
   delegate/account whose `getPastVotes` are used. This may differ from underlying token ownership if holders delegate
   to someone else.
-- **Token distributor hooks must be IVotes-compatible at funding time.** Funding records the current reward round's
-  `getPastTotalSupply` snapshot, so arbitrary non-IVotes hook addresses are not valid token-distributor hooks.
+- **Token distributor hooks must be IVotes-compatible.** Non-expiring token funding records the current reward round's
+  `getPastTotalSupply` snapshot. Active-voter token funding records the current reward round's
+  `getPastTotalActiveVotes` snapshot and claims use each claimant's `getPastVotes` snapshot. Arbitrary non-IVotes hook
+  addresses are not valid token-distributor hooks.
 - **721 distributor hooks must expose compatible checkpoint data at funding time.** Funding records the current reward
   round's `getPastTotalSupply` snapshot through the 721 hook's checkpoints module, so arbitrary addresses are not valid
   721 hooks.
@@ -101,17 +110,22 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - `totalLoanedVestingAmountOf` is backed by distributor-owned loan NFTs and returns to normal inventory on repayment,
   or is removed from vesting inventory on liquidation write-off
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
-- round snapshots stay stable within a round once initialized, including zero-balance ones (a reward round's snapshot block and total stake are write-once, fixed on the first `_recordRewardRound` credit and never re-snapshotted by later funding)
-- expired recycling settles the old round and records `amount - claimedAmount` into the current round without changing tracked balance
+- round snapshots stay stable within a round once initialized, including zero-balance ones; active-voter token rounds
+  seal `totalStake` from `getPastTotalActiveVotes` at the fixed snapshot block
+- expired recycling settles eligible expired rounds and records the recycled amount into the current round without changing
+  tracked balance; active-voter token rounds with nonzero active votes do not recycle
 - `latestVestedIndexOf` advances contiguously
-- burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their unlocked forfeited rewards recycle only through the explicit forfeiture path
+- burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their historical forfeited rewards
+  materialize and recycle only through the explicit forfeiture path
 - only the encoded address can begin vesting or collect from the token distributor
-- only the current NFT owner can begin vesting or collect from the 721 distributor
+- only live NFT IDs can begin vesting, and collection helpers must route to the current NFT owner unless the owner
+  redirects rewards themselves
 - native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
   token balance delta with no accompanying `msg.value`
 - ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
 - 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
-- late claim transactions recycle expired rounds instead of vesting them
+- late claim transactions recycle expired token rounds only when the round's recorded active-vote total is zero; active
+  snapshot voters can still vest their share after the deadline
 
 ## 7. Accepted behaviors
 
@@ -127,13 +141,16 @@ In both concrete distributors, current-round funding is assigned to the current 
 
 ### 7.2 Expired unclaimed rewards are recyclable
 
-Deployers can set a claim duration to attach a claim window to all funding paths. The window starts when the funded reward round first becomes claimable, not when the transfer lands. After the deadline, `burnExpiredRewards` can be called by anyone. The recycled amount is the round's funded amount minus the amount already materialized into vesting.
+Deployers can set a claim duration to attach a deadline to all funding paths. The window starts when the funded reward round first becomes claimable, not when the transfer lands. For token distributors, a nonzero duration uses the hook's active-vote total at funding. After the deadline, `recycleExpiredRewards` can be called by anyone, but active-voter token rounds with nonzero active votes recycle zero.
 
-This is intentionally different from late non-expiring claims. Non-expiring rounds remain reserved for historical stakers or NFT owners indefinitely. Expiring rounds trade that indefinite claimability for permissionless cleanup after the deployer's configured window.
+This is intentionally different from late non-expiring claims. Non-expiring rounds remain reserved for historical stakers or NFT owners indefinitely. Active-voter token rounds trade total-supply dilution for an active-vote denominator; rounds with zero active votes can be cleaned up permissionlessly after the deployer's configured window.
 
 ### 7.3 Rewards can remain undistributed when stake is missing
 
-If participants have zero effective stake for a funded reward round, their share is not redirected to later claimants. It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For 721 distributions, already-materialized unvested or forfeited value can still return to the distributable pool under the 721-specific rules.
+If participants have zero effective stake for a funded reward round, their share is not redirected to later claimants.
+It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For
+721 distributions, burned NFTs' unclaimed historical shares can be materialized through `releaseForfeitedRewards`, and
+the unlocked forfeited value can return to the distributable pool under the 721-specific rules.
 
 ### 7.4 721 and `IVotes` variants intentionally differ
 
@@ -145,7 +162,8 @@ They share the vesting engine but not the same ownership model.
 
 ### 7.6 Burned-token forfeiture follows the vesting curve
 
-`releaseForfeitedRewards()` does not immediately free the full nominal amount of every burned token's vesting entry. It
-uses the same linear unlock math as collection, with `ownerClaim = false`, so only the currently unlocked portion is
-removed from `totalVestingAmountOf` and recycled into the current reward round. Still-locked forfeited portions stay
-accounted as vesting until a later forfeiture call unlocks and recycles them.
+`releaseForfeitedRewards()` does not immediately free the full nominal amount tied to every burned token. It first
+materializes any unclaimed historical shares for the burned token IDs, then uses the same linear unlock math as
+collection, with `ownerClaim = false`. Only the currently unlocked portion is removed from `totalVestingAmountOf` and
+recycled into the current reward round. Still-locked forfeited portions stay accounted as vesting until a later
+forfeiture call unlocks and recycles them.

@@ -34,6 +34,10 @@ contract MockRewardToken is ERC20 {
 }
 
 contract Mock721Store {
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
+    }
+
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier.votingUnits = 100;
     }
@@ -55,8 +59,32 @@ contract Mock721Checkpoints {
         return account == snapshotOwner ? 100 : 0;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 100;
+    }
+
     function getPastTotalSupply(uint256) external pure returns (uint256) {
         return 100;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 100;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = account == snapshotOwner ? 100 : 0;
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {

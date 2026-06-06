@@ -100,15 +100,14 @@ contract MockJBController {
     }
 }
 
-/// @notice Mock checkpoints contract that provides IVotes-compatible getPastVotes/getPastTotalSupply.
-/// @dev Computes getPastTotalSupply dynamically from the store (tier data minus burned), matching
-/// the old _totalStake logic. getPastVotes returns type(uint256).max for any address so that
-/// min(votingUnits, pastVotes) always equals votingUnits.
+/// @notice Mock checkpoints contract that provides IVotes-compatible voting and active-total checkpoints.
+/// @dev Computes active totals dynamically from the store (tier data minus burned). `getPastVotes` returns
+/// type(uint256).max for any address unless overridden, so every mock owner is active by default.
 contract MockCheckpoints {
     MockStore public store;
     address public hookAddr;
 
-    /// @dev Override: if non-zero, getPastTotalSupply returns this instead of computing from store.
+    /// @dev Override: if non-zero, active total getters return this instead of computing from store.
     uint256 public totalSupplyOverride;
 
     /// @dev Per-address vote overrides. If set to non-zero, getPastVotes returns this value.
@@ -117,9 +116,20 @@ contract MockCheckpoints {
     /// @dev Tracks whether a per-address override was explicitly set (to allow setting 0).
     mapping(address => bool) public votesOverrideSet;
 
+    /// @dev Per-account, per-tier active vote overrides. If set, the account-tier getter returns this value.
+    mapping(address account => mapping(uint256 tierId => uint256)) public accountTierActiveVotesOverride;
+
+    /// @dev Tracks whether an account-tier active vote override was explicitly set.
+    mapping(address account => mapping(uint256 tierId => bool)) public accountTierActiveVotesOverrideSet;
+
     constructor(MockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
+    }
+
+    function setAccountTierActiveVotesOverride(address account, uint256 tierId, uint256 value) external {
+        accountTierActiveVotesOverride[account][tierId] = value;
+        accountTierActiveVotesOverrideSet[account][tierId] = true;
     }
 
     function setTotalSupplyOverride(uint256 value) external {
@@ -131,22 +141,19 @@ contract MockCheckpoints {
         votesOverrideSet[account] = true;
     }
 
-    function getPastTotalSupply(uint256) external view returns (uint256 total) {
-        if (totalSupplyOverride != 0) return totalSupplyOverride;
-        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
-        uint256 maxTier = store.maxTier();
-        for (uint256 i = 1; i <= maxTier; i++) {
-            JB721Tier memory tier = store.tierOf(hookAddr, i, false);
-            if (tier.id == 0 || tier.initialSupply == 0) continue;
-            uint256 burned = store.burned(i);
-            uint256 held = tier.initialSupply - tier.remainingSupply - burned;
-            total += held * tier.votingUnits;
-        }
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        blockNumber;
+        activeVotes = _totalActiveVotes();
+    }
+
+    function getPastTotalSupply(uint256 blockNumber) external view returns (uint256 totalSupply) {
+        blockNumber;
+        totalSupply = _totalActiveVotes();
     }
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
         if (votesOverrideSet[account]) return votesOverride[account];
-        // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
+        // Default: avoid constraining mock callers that still inspect IVotes-style account votes.
         return type(uint256).max;
     }
 
@@ -158,12 +165,71 @@ contract MockCheckpoints {
         tierVotingUnitsOverride[tierId] = value;
     }
 
-    function getPastTierVotingUnits(uint256 tierId, uint256) external view returns (uint256) {
-        return tierVotingUnitsOverride[tierId];
+    function getPastTotalTierActiveVotes(
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        blockNumber;
+        activeVotes = _tierActiveVotes(tierId);
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        if (accountTierActiveVotesOverrideSet[account][tierId]) {
+            return accountTierActiveVotesOverride[account][tierId];
+        }
+
+        MockHook hook = MockHook(hookAddr);
+        uint256 tokenCount = hook.tokenIdCount();
+
+        for (uint256 i; i < tokenCount;) {
+            uint256 tokenId = hook.tokenIdAt(i);
+
+            if (store.tokenTiers(tokenId) == tierId && hook.ownerOfAt(tokenId, blockNumber) == account) {
+                JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+                activeVotes += tier.votingUnits;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return MockHook(hookAddr).ownerOfAt(tokenId, blockNumber);
+    }
+
+    function _tierActiveVotes(uint256 tierId) internal view returns (uint256 activeVotes) {
+        uint256 overrideValue = tierVotingUnitsOverride[tierId];
+        if (overrideValue != 0) return overrideValue;
+
+        JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+        if (tier.id == 0 || tier.initialSupply == 0) return 0;
+
+        uint256 burned = store.burned(tierId);
+        uint256 held = tier.initialSupply - tier.remainingSupply - burned;
+        activeVotes = held * tier.votingUnits;
+    }
+
+    function _totalActiveVotes() internal view returns (uint256 activeVotes) {
+        if (totalSupplyOverride != 0) return totalSupplyOverride;
+        // Dynamically compute from store: sum over tiers of (minted - burned) * votingUnits.
+        uint256 maxTier = store.maxTier();
+        for (uint256 i = 1; i <= maxTier; i++) {
+            activeVotes += _tierActiveVotes(i);
+        }
     }
 }
 
@@ -174,6 +240,8 @@ contract MockHook {
 
     mapping(uint256 tokenId => address owner) public owners;
     mapping(uint256 tokenId => mapping(uint256 blockNumber => address owner)) public historicalOwnerOf;
+    mapping(uint256 tokenId => bool tracked) public tokenTracked;
+    uint256[] public tokenIds;
 
     constructor(MockStore store) {
         _store = store;
@@ -208,15 +276,32 @@ contract MockHook {
     }
 
     function setOwner(uint256 tokenId, address owner) external {
+        _trackTokenId(tokenId);
         owners[tokenId] = owner;
     }
 
     function setHistoricalOwner(uint256 tokenId, uint256 blockNumber, address owner) external {
+        _trackTokenId(tokenId);
         historicalOwnerOf[tokenId][blockNumber] = owner;
+    }
+
+    function tokenIdAt(uint256 index) external view returns (uint256 tokenId) {
+        tokenId = tokenIds[index];
+    }
+
+    function tokenIdCount() external view returns (uint256 count) {
+        count = tokenIds.length;
     }
 
     function burn(uint256 tokenId) external {
         delete owners[tokenId];
+    }
+
+    function _trackTokenId(uint256 tokenId) internal {
+        if (tokenTracked[tokenId]) return;
+
+        tokenTracked[tokenId] = true;
+        tokenIds.push(tokenId);
     }
 }
 
@@ -930,6 +1015,37 @@ contract JB721DistributorTest is Test {
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, bob);
     }
 
+    function test_helperCanBeginVestingForCurrentOwner() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        _advanceToNextRound();
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+    }
+
+    function test_helperCanCollectToCurrentOwner() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        _advanceToNextRound();
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
+
+        assertEq(rewardToken.balanceOf(alice), 250 ether);
+        assertEq(rewardToken.balanceOf(bob), 0);
+    }
+
     function test_collectVestedRewards_nothingToCollect() public {
         // No vesting started -- collecting should succeed with zero transfer.
         uint256[] memory tokenIds = new uint256[](1);
@@ -1092,6 +1208,50 @@ contract JB721DistributorTest is Test {
         (uint256 recycledAmount,,,,) =
             distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), distributor.currentRound());
         assertEq(recycledAmount, 125 ether);
+    }
+
+    function test_releaseForfeitedRewards_materializesUnclaimedBurnedRewards() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
+        hook.setHistoricalOwner(1, snapshotBlock, alice);
+
+        _advanceToNextRound();
+        hook.burn(1);
+
+        distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
+
+        // The burned NFT's historical share is no longer stranded in the reward round.
+        (,, uint256 claimedAmount,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
+        assertEq(claimedAmount, 250 ether);
+
+        // The materialized share follows the vesting curve before it can recycle.
+        assertEq(distributor.nextClaimRoundOf(address(hook), 0, 1, IERC20(address(rewardToken))), 1);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 250 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+
+        _advanceToRound(1 + VESTING_ROUNDS);
+        distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
+
+        // Once fully vested, the forfeited share recycles into the current active NFT set.
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 250 ether);
+    }
+
+    function test_releaseForfeitedRewards_duplicateBurnedTokenIds_reverts() public {
+        _fundHook(1000 ether);
+
+        _advanceToNextRound();
+        hook.burn(1);
+
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 1, 1));
+        distributor.releaseForfeitedRewards(address(hook), _duplicateTokenIds(1), _singleRewardToken(), address(0));
     }
 
     /// @notice Burned token IDs are skipped during beginVesting — no overbooking.
@@ -1309,7 +1469,7 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 recycled = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.recycleExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
@@ -1342,7 +1502,7 @@ contract JB721DistributorTest is Test {
         vm.roll(block.number + 1);
 
         vm.prank(charlie);
-        uint256 recycled = distributor.burnExpiredRewards({
+        uint256 recycled = distributor.recycleExpiredRewards({
             hook: address(hook), token: IERC20(address(rewardToken)), rounds: _singleRound(0)
         });
 
@@ -1385,31 +1545,36 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
     }
 
-    function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
+    function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerActiveVotes() public {
         uint256[] memory tokenIds = _singleTokenId(1);
         IERC20[] memory tokens = _singleRewardToken();
-
-        hook.CHECKPOINTS().setVotesOverride(alice, 100);
-        hook.CHECKPOINTS().setVotesOverride(charlie, 0);
 
         _fundHook(1000 ether);
         (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
         hook.setHistoricalOwner(1, snapshotBlock, alice);
 
-        // The NFT transfers before anyone claims, so the current owner is the only account authorized to claim.
+        // The NFT transfers before anyone claims, so helpers can start vesting but collection belongs to Charlie.
         hook.setOwner(1, charlie);
 
         _advanceToRound(1);
 
         vm.prank(alice);
-        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        vm.prank(charlie);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        // The amount proves the claim used Alice's snapshot votes, not Charlie's current zero votes.
+        // The amount proves the claim used Alice's snapshot active units, not Charlie's current custody.
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
+
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, charlie);
+
+        assertEq(rewardToken.balanceOf(charlie), 250 ether);
+        assertEq(rewardToken.balanceOf(alice), 0);
     }
 
     function test_beginVesting_duplicateTokenIdsRevertsBeforeConsumingSiblingRewards() public {
@@ -1419,7 +1584,6 @@ contract JB721DistributorTest is Test {
         store.setTokenTier(siblingTokenId, 1);
         hook.setOwner(2, alice);
         hook.setOwner(siblingTokenId, alice);
-        hook.CHECKPOINTS().setVotesOverride(alice, 400);
 
         _fundHook(1600 ether);
         (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
@@ -1487,11 +1651,12 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), lateTokenId, IERC20(address(rewardToken))), 0);
     }
 
-    function test_ownerVotingCapPersistsAcrossSeparateDelayedClaims() public {
+    function test_ownerTierActiveCapPersistsAcrossSeparateDelayedClaims() public {
         IERC20[] memory tokens = _singleRewardToken();
 
+        store.setTokenTier(2, 1);
         hook.setOwner(2, alice);
-        hook.CHECKPOINTS().setVotesOverride(alice, 100);
+        hook.CHECKPOINTS().setAccountTierActiveVotesOverride(alice, 1, 100);
         hook.CHECKPOINTS().setTotalSupplyOverride(100);
 
         _fundHook(1000 ether);

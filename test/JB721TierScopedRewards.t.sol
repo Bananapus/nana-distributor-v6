@@ -146,6 +146,39 @@ contract JB721TierScopedRewards is Test {
     }
 
     // =====================================================================
+    // Same-owner tier caps are enforced within tier-scoped groups.
+    // =====================================================================
+    function test_tierScoped_capsMultipleTokensBySnapshotOwnerTierActiveVotes() public {
+        uint256 siblingTokenId = 4;
+        store.setTokenTier(siblingTokenId, 1);
+        hook.setOwner(siblingTokenId, alice);
+
+        // Alice owns two tier-1 NFTs, but only one tier-1 active unit budget is available at the snapshot.
+        hook.checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
+
+        _fundTier(_tiers1(1), 100);
+        _advanceToNextRound();
+
+        uint256[] memory tokenIds = new uint256[](2);
+        tokenIds[0] = TOKEN_1;
+        tokenIds[1] = siblingTokenId;
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _tiers1(1), tokenIds, _rewardTokens());
+
+        assertEq(
+            distributor.claimedFor(address(hook), _tiers1(1), TOKEN_1, IERC20(address(rewardToken))),
+            100,
+            "first tier-1 token consumes the active tier budget"
+        );
+        assertEq(
+            distributor.claimedFor(address(hook), _tiers1(1), siblingTokenId, IERC20(address(rewardToken))),
+            0,
+            "second tier-1 token has no remaining active tier budget"
+        );
+    }
+
+    // =====================================================================
     // A token not owned at the snapshot block is ineligible for that pot.
     // =====================================================================
     function test_postSnapshotMint_getsZero() public {
@@ -201,6 +234,49 @@ contract JB721TierScopedRewards is Test {
         distributor.collectVestedRewards(address(hook), set, _single(TOKEN_1), tokens, alice);
 
         assertEq(rewardToken.balanceOf(alice), 100, "alice collected full tier-1 share");
+    }
+
+    function test_helperCanBeginVestingTierScopedForCurrentOwner() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+
+        assertEq(
+            distributor.claimedFor(address(hook), set, TOKEN_1, IERC20(address(rewardToken))),
+            100,
+            "helper should start Alice's tier-scoped vesting"
+        );
+    }
+
+    function test_helperCanCollectTierScopedToCurrentOwner() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+        _advanceToRound(distributor.currentRound() + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        distributor.collectVestedRewards(address(hook), set, _single(TOKEN_1), _rewardTokens(), alice);
+
+        assertEq(rewardToken.balanceOf(alice), 100, "helper should collect only to Alice");
+        assertEq(rewardToken.balanceOf(bob), 0, "helper should not receive Alice's rewards");
+    }
+
+    function test_helperCannotCollectTierScopedToSelf() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+        _advanceToRound(distributor.currentRound() + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        distributor.collectVestedRewards(address(hook), set, _single(TOKEN_1), _rewardTokens(), bob);
     }
 
     // =====================================================================

@@ -61,6 +61,10 @@ contract MockStore {
     function tierOfTokenId(address, uint256 tokenId, bool) external view returns (JB721Tier memory) {
         return tierOfToken[tokenId];
     }
+
+    function tierIdOfToken(uint256 tokenId) external pure returns (uint256 tierId) {
+        tierId = tokenId;
+    }
 }
 
 contract MockCheckpoints {
@@ -74,8 +78,30 @@ contract MockCheckpoints {
         return 100;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 100;
+    }
+
     function getPastVotes(address, uint256) external pure returns (uint256) {
         return 100;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+        blockNumber;
+        return 100;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256,
+        uint256
+    )
+        external
+        pure
+        returns (uint256 activeVotes)
+    {
+        activeVotes = account == address(0) ? 0 : 100;
     }
 
     function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {

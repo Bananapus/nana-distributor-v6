@@ -61,6 +61,14 @@ contract RegressionVotesToken is ERC20, ERC20Votes {
         _mint(to, amount);
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
     }
@@ -85,6 +93,10 @@ contract RegressionStore {
 
     function tierOfTokenId(address, uint256 tokenId, bool) external view returns (JB721Tier memory) {
         return tiers[tokenTiers[tokenId]];
+    }
+
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256 tierId) {
+        tierId = tokenTiers[tokenId];
     }
 
     /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
@@ -114,8 +126,32 @@ contract RegressionCheckpoints {
         return totalSupplyAtSnapshot;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupplyAtSnapshot;
+    }
+
     function getPastVotes(address account, uint256) external view returns (uint256) {
         return votesAtSnapshot[account];
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return totalSupplyAtSnapshot;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesAtSnapshot[account];
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -234,7 +270,7 @@ contract RegressionAccountingTest is Test {
         );
     }
 
-    function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
+    function test_721LateMintWithoutSnapshotOwnerCannotUseSnapshotActiveUnits() public {
         JB721Distributor distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
             IJBController(address(0)),
@@ -302,7 +338,7 @@ contract RegressionAccountingTest is Test {
         assertEq(distributor.balanceOf(address(hook), tokens[0]), 1000 ether, "funded balance remains available");
     }
 
-    function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
+    function test_721SnapshotActiveUnitsCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
         JB721Distributor distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
             IJBController(address(0)),

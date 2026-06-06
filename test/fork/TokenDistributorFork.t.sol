@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 // Core contracts.
+import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
 import {JBPermissions} from "@bananapus/core-v6/src/JBPermissions.sol";
 import {JBProjects} from "@bananapus/core-v6/src/JBProjects.sol";
 import {JBDirectory} from "@bananapus/core-v6/src/JBDirectory.sol";
@@ -16,16 +17,15 @@ import {JBPrices} from "@bananapus/core-v6/src/JBPrices.sol";
 import {JBSplits} from "@bananapus/core-v6/src/JBSplits.sol";
 import {JBFundAccessLimits} from "@bananapus/core-v6/src/JBFundAccessLimits.sol";
 import {JBFeelessAddresses} from "@bananapus/core-v6/src/JBFeelessAddresses.sol";
-import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
 
 // Core interfaces.
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
-import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
-import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {IJBRulesetApprovalHook} from "@bananapus/core-v6/src/interfaces/IJBRulesetApprovalHook.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
+import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
+import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
 // Core structs.
 import {JBRulesetConfig} from "@bananapus/core-v6/src/structs/JBRulesetConfig.sol";
@@ -40,15 +40,24 @@ import {JBCurrencyAmount} from "@bananapus/core-v6/src/structs/JBCurrencyAmount.
 // Core libraries.
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 
-// OZ.
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 // Permit2.
 import {IPermit2} from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 
 // Distributor.
 import {JBTokenDistributor} from "../../src/JBTokenDistributor.sol";
+
+/// @notice Minimal holder that represents AMM custody of project tokens in fork tests.
+contract ForkAmmHolder {
+    /// @notice Return tokens from AMM custody to a holder.
+    /// @param token The token to return.
+    /// @param holder The recipient of the tokens.
+    /// @param amount The amount to return.
+    function returnTokens(IERC20 token, address holder, uint256 amount) external {
+        token.transfer(holder, amount);
+    }
+}
 
 /// @notice Fork tests for JBTokenDistributor against real JB core on mainnet fork.
 /// @dev Deploys full JB core, launches a project with JBERC20, and tests the complete
@@ -82,15 +91,20 @@ contract TokenDistributorForkTest is Test {
     uint256 projectId;
     IJBToken projectToken;
 
+    // -- Fork state --
+    uint256 forkBlockNumber;
+
     // -- Config --
     uint256 constant ROUND_DURATION = 1 weeks;
     uint256 constant VESTING_ROUNDS = 4;
+    uint48 constant ACTIVE_CLAIM_DURATION = 1 days;
 
     // Mainnet Permit2.
     IPermit2 constant PERMIT2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
 
     function setUp() public {
         vm.createSelectFork("ethereum", 24_981_600);
+        forkBlockNumber = block.number;
 
         // Create labeled addresses and ensure they're clean EOAs (no mainnet code).
         multisig = makeAddr("test_distributor_multisig");
@@ -128,7 +142,7 @@ contract TokenDistributorForkTest is Test {
         JBERC20(address(projectToken)).delegate(bob);
 
         // Advance a block so getPastVotes works.
-        vm.roll(block.number + 1);
+        _advanceBlock();
     }
 
     // ======================================================================
@@ -172,13 +186,99 @@ contract TokenDistributorForkTest is Test {
         assertEq(bob.balance - bobBefore, bobClaimed, "Bob ETH collected");
     }
 
-    /// @notice Undelegated tokens don't earn rewards — funds not allocated to undelegated holders.
+    /// @notice Active-voter rewards ignore AMM-held tokens, then include returned tokens after liquidity removal.
+    function test_fork_activeRewards_lpTokensInactiveThenActiveAgain() public {
+        _deployActiveDistributor(ACTIVE_CLAIM_DURATION);
+
+        address hook = address(projectToken);
+        ForkAmmHolder amm = new ForkAmmHolder();
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(JBConstants.NATIVE_TOKEN);
+
+        distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
+        _advanceToRound(1);
+
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
+
+        (,,,, uint256 round0TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 0);
+
+        uint256 aliceClaimed = distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
+        uint256 bobClaimed = distributor.claimedFor(hook, _tokenId(bob), IERC20(JBConstants.NATIVE_TOKEN));
+        assertEq(aliceClaimed + bobClaimed, 10 ether, "round 0 fully allocated to active voters");
+        assertGt(aliceClaimed, bobClaimed, "Alice has the larger initial stake");
+
+        uint256 aliceInitialTokenBalance = IERC20(address(projectToken)).balanceOf(alice);
+        uint256 bobInitialTokenBalance = IERC20(address(projectToken)).balanceOf(bob);
+        assertEq(
+            round0TotalStake,
+            aliceInitialTokenBalance + bobInitialTokenBalance,
+            "round 0 denominator matches active votes"
+        );
+        uint256 lpTokenAmount = aliceInitialTokenBalance - bobInitialTokenBalance;
+        assertGt(lpTokenAmount, 0, "Alice has tokens to move into AMM custody");
+
+        vm.prank(alice);
+        IERC20(address(projectToken)).transfer(address(amm), lpTokenAmount);
+        assertEq(
+            IERC20(address(projectToken)).balanceOf(alice),
+            bobInitialTokenBalance,
+            "Alice ERC-20 balance matches Bob after LP transfer"
+        );
+        _advanceBlocks(2);
+
+        distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
+        _advanceToRound(2);
+
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
+
+        (,,,, uint256 round1TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 1);
+
+        assertEq(round1TotalStake, bobInitialTokenBalance * 2, "AMM-held tokens are not active voters");
+
+        uint256 aliceAfterInactiveRound =
+            distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
+        uint256 bobAfterInactiveRound = distributor.claimedFor(hook, _tokenId(bob), IERC20(JBConstants.NATIVE_TOKEN));
+
+        assertEq(aliceAfterInactiveRound - aliceClaimed, 5 ether, "Alice gets half while LP tokens are inactive");
+        assertEq(bobAfterInactiveRound - bobClaimed, 5 ether, "Bob gets half while LP tokens are inactive");
+
+        amm.returnTokens(IERC20(address(projectToken)), alice, lpTokenAmount);
+        _advanceBlocks(2);
+
+        distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
+        _advanceToRound(3);
+
+        _beginVestingFor(alice, hook, tokens);
+        _beginVestingFor(bob, hook, tokens);
+
+        (,,,, uint256 round2TotalStake) = distributor.rewardRoundOf(hook, 0, IERC20(JBConstants.NATIVE_TOKEN), 2);
+        assertEq(
+            round2TotalStake,
+            aliceInitialTokenBalance + bobInitialTokenBalance,
+            "returned tokens resume Alice's delegation"
+        );
+
+        uint256 aliceAfterReturnedRound =
+            distributor.claimedFor(hook, _tokenId(alice), IERC20(JBConstants.NATIVE_TOKEN));
+        uint256 bobAfterReturnedRound = distributor.claimedFor(hook, _tokenId(bob), IERC20(JBConstants.NATIVE_TOKEN));
+
+        assertGt(
+            aliceAfterReturnedRound - aliceAfterInactiveRound,
+            bobAfterReturnedRound - bobAfterInactiveRound,
+            "Alice gets the larger share after removing liquidity"
+        );
+        assertEq(aliceAfterReturnedRound + bobAfterReturnedRound, 30 ether, "all active rounds allocated");
+    }
+
+    /// @notice Undelegated tokens do not earn rewards; funds are not allocated to undelegated holders.
     function test_fork_undelegatedTokens_noRewards() public {
         address hook = address(projectToken);
 
         // Carol pays but does NOT delegate.
         _payProject(carol, 50 ether);
-        vm.roll(block.number + 1);
+        _advanceBlock();
 
         distributor.fund{value: 10 ether}(hook, IERC20(JBConstants.NATIVE_TOKEN), 10 ether);
         _advanceToRound(1);
@@ -194,9 +294,9 @@ contract TokenDistributorForkTest is Test {
         uint256 carolClaimed = distributor.claimedFor(hook, _tokenId(carol), IERC20(JBConstants.NATIVE_TOKEN));
         assertEq(carolClaimed, 0, "Carol should have 0 (not delegated)");
 
-        // Undelegated portion (Carol's supply) dilutes total supply, reducing Alice/Bob allocations.
+        // Carol's undelegated supply is excluded from the denominator, so active voters split the full round.
         uint256 totalVesting = distributor.totalVestingAmountOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
-        assertLt(totalVesting, 10 ether, "Not all funds distributed (undelegated supply dilutes)");
+        assertEq(totalVesting, 10 ether, "Active voters split the full reward round");
     }
 
     /// @notice Partial vesting — collect mid-way through vesting period.
@@ -281,7 +381,7 @@ contract TokenDistributorForkTest is Test {
 
         // Pay more ETH into the project to build payout balance.
         _payProject(alice, 20 ether);
-        vm.roll(block.number + 1);
+        _advanceBlock();
 
         uint256 distributorNativeBefore = address(distributor).balance;
         uint256 creditedBefore = distributor.balanceOf(hook, IERC20(JBConstants.NATIVE_TOKEN));
@@ -293,8 +393,7 @@ contract TokenDistributorForkTest is Test {
             token: JBConstants.NATIVE_TOKEN,
             amount: 10 ether,
             currency: uint256(uint160(JBConstants.NATIVE_TOKEN)),
-            minTokensPaidOut: 0,
-            referralProjectId: 0
+            minTokensPaidOut: 0
         });
 
         // Verify distributor received funds.
@@ -331,7 +430,7 @@ contract TokenDistributorForkTest is Test {
         assertEq(nextSnapshot, blockBefore - 1, "Eager lock round+1");
 
         // Idempotent.
-        vm.roll(block.number + 10);
+        _advanceBlocks(10);
         distributor.poke();
         assertEq(distributor.roundSnapshotBlock(1), snapshotBlock, "Poke idempotent");
     }
@@ -419,12 +518,27 @@ contract TokenDistributorForkTest is Test {
         distributor.beginVesting(hook, _singleTokenId(staker), tokens);
     }
 
+    function _advanceBlock() internal {
+        _advanceBlocks(1);
+    }
+
+    function _advanceBlocks(uint256 count) internal {
+        forkBlockNumber += count;
+        vm.roll(forkBlockNumber);
+    }
+
     function _advanceToRound(uint256 round) internal {
         uint256 target = distributor.roundStartTimestamp(round) + 1;
         // Test helper only moves time forward to the requested round boundary.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < target) vm.warp(target);
-        vm.roll(block.number + 1);
+        _advanceBlock();
+    }
+
+    function _warpToClaimDeadline(address hook, IERC20 token, uint256 round) internal {
+        (,,, uint256 deadline,) = distributor.rewardRoundOf(hook, 0, token, round);
+        vm.warp(deadline);
+        _advanceBlock();
     }
 
     function _payProject(address payer, uint256 amount) internal {
@@ -495,6 +609,21 @@ contract TokenDistributorForkTest is Test {
         );
 
         // Mark the distributor as feeless so payouts to it aren't reduced by the 2.5% fee.
+        vm.prank(multisig);
+        jbFeelessAddresses.setFeelessAddress(address(distributor), true);
+    }
+
+    function _deployActiveDistributor(uint48 claimDuration) internal {
+        distributor = new JBTokenDistributor(
+            IJBDirectory(address(jbDirectory)),
+            IJBController(address(0)),
+            IREVLoans(address(0)),
+            IREVOwner(address(0)),
+            ROUND_DURATION,
+            VESTING_ROUNDS,
+            claimDuration
+        );
+
         vm.prank(multisig);
         jbFeelessAddresses.setFeelessAddress(address(distributor), true);
     }

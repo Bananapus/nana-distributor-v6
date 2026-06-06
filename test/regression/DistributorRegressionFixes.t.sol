@@ -31,7 +31,7 @@ import {
     VotingCapMockRewardToken,
     VotingCapMockStore,
     VotingCapMockCheckpoints
-} from "./VotingPowerCapRegression.t.sol";
+} from "./ActiveTierCapRegression.t.sol";
 
 // =========================================================================
 // Mock contracts for JBTokenDistributor tests.
@@ -74,6 +74,14 @@ contract DistributorMockVotesToken is ERC20, ERC20Votes {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256 activeVotes) {
+        activeVotes = getPastTotalSupply(blockNumber);
+    }
+
+    function getTotalActiveVotes() external view returns (uint256 activeVotes) {
+        activeVotes = totalSupply();
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
@@ -264,11 +272,11 @@ contract DistributorRegressionFixesTest is Test {
     // =====================================================================
 
     /// @notice Calling beginVesting multiple times in the same round for the same owner's
-    ///         different tokens should not reset the voting power cap.
+    ///         different tokens should not reset the active tier cap.
     function test_H24_fix_caps_across_calls() public {
         // Alice has 3 NFTs x 50 voting units = 150 total.
-        // Her pastVotes is only 100 — so she should be capped at 100 total.
-        hook._checkpoints().setVotesOverride(alice, 100);
+        // Her active tier units are only 100, so she should be capped at 100 total.
+        hook._checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
 
         // Fund with 1500 ether. Total stake = 150 (3 minted * 50 voting units).
         nftRewardToken.mint(address(this), 1500 ether);
@@ -280,9 +288,7 @@ contract DistributorRegressionFixesTest is Test {
         tokens[0] = IERC20(address(nftRewardToken));
 
         // Call beginVesting THREE TIMES, each with a single token ID.
-        // Without the fix, each call resets the consumed voting power to 0,
-        // allowing Alice to claim 50 voting units per call = 150 total (bypassing the 100 cap).
-        // With the fix, consumed votes persist in storage across calls.
+        // Consumed active tier units persist in storage across calls so Alice cannot replay the 100-unit cap.
         uint256[] memory singleId = new uint256[](1);
 
         vm.startPrank(alice);
@@ -303,7 +309,7 @@ contract DistributorRegressionFixesTest is Test {
 
         uint256 totalClaimed = claimed1 + claimed2 + claimed3;
 
-        // With cap enforced: Alice has 100 pastVotes out of 150 total stake.
+        // With cap enforced: Alice has 100 active tier units out of 150 total stake.
         // NFT 1: effective stake = min(50, 100 remaining) = 50, reward = 1500 * 50/150 = 500
         // NFT 2: effective stake = min(50, 50 remaining) = 50, reward = 1500 * 50/150 = 500
         // NFT 3: effective stake = min(50, 0 remaining) = 0, reward = 0

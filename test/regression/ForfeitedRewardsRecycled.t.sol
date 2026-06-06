@@ -93,6 +93,10 @@ contract Mock721Store {
         return _tier;
     }
 
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
+    }
+
     function setBurned(uint256 count) external {
         burned = count;
     }
@@ -109,8 +113,32 @@ contract Mock721Checkpoints {
         return (3 - hook.STORE().burned()) * 100;
     }
 
+    function getPastTotalActiveVotes(uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return (3 - hook.STORE().burned()) * 100;
+    }
+
     function getPastVotes(address account, uint256) external pure returns (uint256) {
         return account == address(0) ? 0 : 100;
+    }
+
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+        blockNumber;
+        return (3 - hook.STORE().burned()) * 100;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        pure
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = account == address(0) ? 0 : 100;
     }
 
     function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
