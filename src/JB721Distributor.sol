@@ -76,14 +76,24 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
 
-    /// @notice Tracks voting power consumed per hook/token/reward round/owner to prevent cap resets across calls.
+    /// @notice Tracks account-tier active voting units consumed by each 721 reward group and round.
+    /// @dev The cap is group-scoped so all-tiers rewards and tier-scoped rewards can be claimed independently.
     /// @custom:param hook The hook address.
+    /// @custom:param groupId The reward group.
     /// @custom:param token The reward token.
     /// @custom:param rewardRound The reward round.
-    /// @custom:param owner The NFT owner.
+    /// @custom:param owner The snapshot NFT owner.
+    /// @custom:param tierId The tier whose active units are consumed.
     mapping(
-        address hook => mapping(IERC20 token => mapping(uint256 rewardRound => mapping(address owner => uint256)))
-    ) internal _consumedVotesOf;
+        address hook
+            => mapping(
+            uint256 groupId
+                => mapping(
+                IERC20 token
+                    => mapping(uint256 rewardRound => mapping(address owner => mapping(uint256 tierId => uint256)))
+            )
+        )
+    ) internal _consumedTierVotesOf;
 
     /// @notice The tier set that defines a reward group, recorded the first time the group is funded.
     /// @dev Empty for the default group (0 = all tiers). Read by the stake math to scope the tier-set denominator.
@@ -549,40 +559,22 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         internal
         returns (uint256 totalVestingAmount)
     {
-        // Tier-scoped groups distribute the pot among active delegated NFTs from the funded tier set. Each active NFT
-        // contributes its tier's voting units, with no per-owner cap: the denominator already sums active tier totals.
-        if (ctx.groupId != 0) {
-            for (uint256 j; j < tokenIds.length;) {
-                if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
-                    uint256 stake = _tierScopedStake({ctx: ctx, tokenId: tokenIds[j]});
-                    if (stake != 0) {
-                        uint256 tokenAmount =
-                            mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
-                        tokenAmounts[j] += tokenAmount;
-                        totalVestingAmount += tokenAmount;
-                    }
-                }
-
-                unchecked {
-                    ++j;
-                }
-            }
-
-            return totalVestingAmount;
-        }
-
-        // All-tiers group (0): split the pot pro-rata across delegated voting power, capping each owner so multiple
-        // NFTs cannot over-claim beyond the owner's checkpointed votes.
-        // Allocate scratch arrays sized to the maximum possible number of distinct snapshot owners.
+        // Allocate scratch arrays sized to the maximum possible number of distinct owner-tier caps in this batch.
         address[] memory owners = new address[](tokenIds.length);
+        uint256[] memory tierIds = new uint256[](tokenIds.length);
         uint256[] memory consumed = new uint256[](tokenIds.length);
         uint256 uniqueCount;
 
         // Claim each token ID that has not yet advanced past this reward round.
         for (uint256 j; j < tokenIds.length;) {
-            if (nextClaimRoundOf[ctx.hook][0][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
+            if (nextClaimRoundOf[ctx.hook][ctx.groupId][tokenIds[j]][ctx.token] <= ctx.rewardRound) {
                 (uint256 tokenAmount, uint256 newUniqueCount) = _claimRewardRoundForTokenId({
-                    ctx: ctx, tokenId: tokenIds[j], owners: owners, consumed: consumed, uniqueCount: uniqueCount
+                    ctx: ctx,
+                    tokenId: tokenIds[j],
+                    owners: owners,
+                    tierIds: tierIds,
+                    consumed: consumed,
+                    uniqueCount: uniqueCount
                 });
 
                 uniqueCount = newUniqueCount;
@@ -595,27 +587,29 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             }
         }
 
-        // Persist consumed voting power to storage to prevent cap resets across separate claim calls.
+        // Persist consumed active tier units to storage to prevent cap resets across separate claim calls.
         for (uint256 k; k < uniqueCount;) {
-            _consumedVotesOf[ctx.hook][ctx.token][ctx.rewardRound][owners[k]] = consumed[k];
+            _consumedTierVotesOf[ctx.hook][ctx.groupId][ctx.token][ctx.rewardRound][owners[k]][tierIds[k]] = consumed[k];
             unchecked {
                 ++k;
             }
         }
     }
 
-    /// @notice Claim one NFT token ID for one historical reward round, enforcing the snapshot owner's vote cap.
+    /// @notice Claim one NFT token ID for one historical reward round, enforcing the snapshot owner's tier cap.
     /// @param ctx The reward-round context.
     /// @param tokenId The NFT token ID to claim for.
     /// @param owners A scratch array mapping slot indices to snapshot owners for deduplication.
-    /// @param consumed A scratch array tracking consumed voting power by owner slot.
-    /// @param uniqueCount The number of distinct snapshot owners seen so far in this reward-round batch.
+    /// @param tierIds A scratch array mapping slot indices to tier IDs for deduplication.
+    /// @param consumed A scratch array tracking consumed active tier voting units by owner-tier slot.
+    /// @param uniqueCount The number of distinct snapshot owner-tier pairs seen so far in this reward-round batch.
     /// @return tokenAmount The reward amount vested for this token ID.
-    /// @return newUniqueCount The updated count of distinct snapshot owners after processing this token ID.
+    /// @return newUniqueCount The updated count of distinct snapshot owner-tier pairs after processing this token ID.
     function _claimRewardRoundForTokenId(
         JBVestContext memory ctx,
         uint256 tokenId,
         address[] memory owners,
+        uint256[] memory tierIds,
         uint256[] memory consumed,
         uint256 uniqueCount
     )
@@ -625,25 +619,36 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     {
         newUniqueCount = uniqueCount;
 
-        uint256 votingUnits =
-            IJB721TiersHook(ctx.hook)
-        .STORE()
-        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
+        // Read the token's tier so all-tiers and tier-scoped groups use the same active tier cap.
+        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
+
+        // Tier-scoped groups only include NFTs whose tier is part of the funded tier set.
+        if (ctx.groupId != 0 && !_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) {
+            return (0, newUniqueCount);
+        }
 
         uint256 ownerIndex;
-        uint256 pastVotes;
+        uint256 activeTierVotes;
+        uint256 votingUnits;
         {
+            // Read the token's tier voting units once; this is the per-token maximum claim numerator.
+            votingUnits =
+            IJB721TiersHook(ctx.hook)
+            .STORE()
+            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
+
             // Use the funding round's snapshot block, not the block at which the NFT owner finally claims.
             address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
             if (owner == address(0)) return (0, newUniqueCount);
 
-            pastVotes =
-                IJB721TiersHook(ctx.hook).checkpoints().getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
-            if (pastVotes == 0) return (0, newUniqueCount);
+            // Cap this NFT against the snapshot owner's active units for this exact tier.
+            activeTierVotes = IJB721TiersHook(ctx.hook).checkpoints()
+                .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: ctx.snapshotBlock});
+            if (activeTierVotes == 0) return (0, newUniqueCount);
 
             bool found;
             for (uint256 k; k < newUniqueCount;) {
-                if (owners[k] == owner) {
+                if (owners[k] == owner && tierIds[k] == tierId) {
                     ownerIndex = k;
                     found = true;
                     break;
@@ -656,15 +661,17 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             if (!found) {
                 ownerIndex = newUniqueCount;
                 owners[newUniqueCount] = owner;
+                tierIds[newUniqueCount] = tierId;
                 // Initialize from persistent storage to prevent cap resets across separate claim calls.
-                consumed[newUniqueCount] = _consumedVotesOf[ctx.hook][ctx.token][ctx.rewardRound][owner];
+                consumed[newUniqueCount] =
+                    _consumedTierVotesOf[ctx.hook][ctx.groupId][ctx.token][ctx.rewardRound][owner][tierId];
                 unchecked {
                     ++newUniqueCount;
                 }
             }
         }
 
-        uint256 remaining = pastVotes > consumed[ownerIndex] ? pastVotes - consumed[ownerIndex] : 0;
+        uint256 remaining = activeTierVotes > consumed[ownerIndex] ? activeTierVotes - consumed[ownerIndex] : 0;
         uint256 stake = votingUnits < remaining ? votingUnits : remaining;
         if (stake == 0) return (0, newUniqueCount);
 
@@ -672,7 +679,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         tokenAmount = mulDiv({x: ctx.distributable, y: stake, denominator: ctx.totalStakeAmount});
         if (tokenAmount == 0) return (0, newUniqueCount);
 
-        // Only non-zero reward claims consume the snapshot owner's voting budget.
+        // Only non-zero reward claims consume the snapshot owner's active tier budget.
         consumed[ownerIndex] += stake;
     }
 
@@ -742,34 +749,6 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         }
     }
 
-    /// @notice The tier-scoped stake of a single NFT in a reward round.
-    /// @dev Returns the NFT's tier voting units only if the NFT's tier is in the funded set, the NFT existed at the
-    /// snapshot block, and the snapshot owner had delegated votes. No per-owner cap is applied because the denominator
-    /// is the tier set's active delegated total at the same snapshot block.
-    /// @param ctx The reward-round context (carries the group's tier set and snapshot block).
-    /// @param tokenId The NFT token ID to weigh.
-    /// @return stake The NFT's tier voting units, or 0 if ineligible.
-    function _tierScopedStake(JBVestContext memory ctx, uint256 tokenId) internal view returns (uint256 stake) {
-        // The NFT's tier must be one of the funded tiers.
-        uint256 tierId = IJB721TiersHook(ctx.hook).STORE().tierIdOfToken(tokenId);
-        if (!_isTierInSet({tierId: tierId, tierIds: ctx.tierIds})) return 0;
-
-        // The NFT must have existed at the round snapshot block (proven via the checkpoint owner history).
-        address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
-        if (owner == address(0)) return 0;
-
-        // The snapshot owner must have active delegated votes, otherwise this NFT was not counted in the denominator.
-        uint256 pastVotes =
-            IJB721TiersHook(ctx.hook).checkpoints().getPastVotes({account: owner, timepoint: ctx.snapshotBlock});
-        if (pastVotes == 0) return 0;
-
-        // Active and tier-scoped: weigh the NFT by its tier's voting units.
-        stake =
-        IJB721TiersHook(ctx.hook)
-        .STORE()
-        .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
-    }
-
     /// @notice Checks if the given token was burned.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The tokenId to check.
@@ -790,6 +769,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param tokenId The ID of the token to get the stake weight of.
     /// @return tokenStakeAmount The voting units of the token's tier (or 0 if ineligible).
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
+        uint256 tierId = IJB721TiersHook(hook).STORE().tierIdOfToken(tokenId);
         uint256 votingUnits =
             IJB721TiersHook(hook)
         .STORE()
@@ -800,16 +780,15 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         address owner = _snapshotOwnerOf({hook: hook, tokenId: tokenId, snapshotBlock: snapshotBlock});
         if (owner == address(0)) return 0;
 
-        // Use the checkpoints module to verify the token's snapshot owner had voting power at the round's snapshot
-        // block. If the token did not exist then, ownerOfAt returns zero above and the token is not eligible.
-        uint256 pastVotes = IJB721TiersHook(hook).checkpoints().getPastVotes({account: owner, timepoint: snapshotBlock});
+        // Read the owner's active units for this token's tier at the snapshot block.
+        uint256 activeTierVotes = IJB721TiersHook(hook).checkpoints()
+            .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: snapshotBlock});
 
-        // If the owner had no voting power at the snapshot block, the token is ineligible.
-        if (pastVotes == 0) return 0;
+        // If the owner had no active units in this tier at the snapshot block, the token is ineligible.
+        if (activeTierVotes == 0) return 0;
 
-        // Cap at the token's tier voting units — the owner's past votes may cover multiple tokens,
-        // but each individual token's stake is at most its tier's voting units.
-        tokenStakeAmount = votingUnits < pastVotes ? votingUnits : pastVotes;
+        // Cap at the token's tier voting units; owner-level consumption is applied when a round is claimed.
+        tokenStakeAmount = votingUnits < activeTierVotes ? votingUnits : activeTierVotes;
     }
 
     /// @notice The total active stake sharing a group's round rewards at a specific block.

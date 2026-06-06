@@ -66,6 +66,10 @@ contract RegressionFresh721Store {
         tier.initialSupply = 100;
     }
 
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
+    }
+
     function mintBlockOf(address, uint256 tokenId) external pure returns (uint256) {
         return tokenId == 1 ? 1 : 1_000_000;
     }
@@ -106,6 +110,20 @@ contract RegressionFresh721Checkpoints {
         return totalSupply;
     }
 
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesOf[account];
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return RegressionFresh721Hook(hook).ownerOfAt(tokenId, blockNumber);
     }
@@ -143,7 +161,7 @@ contract RegressionFresh721Hook {
 }
 
 contract RegressionFreshRoundVerificationTest is Test {
-    function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierVotes() public {
+    function test_postSnapshot721TokenCannotClaimUsingOwnersEarlierActiveUnits() public {
         address alice = makeAddr("alice");
         RegressionFreshDirectory directory = new RegressionFreshDirectory();
         JB721Distributor distributor = new JB721Distributor(

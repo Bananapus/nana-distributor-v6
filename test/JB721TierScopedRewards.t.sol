@@ -146,6 +146,39 @@ contract JB721TierScopedRewards is Test {
     }
 
     // =====================================================================
+    // Same-owner tier caps are enforced within tier-scoped groups.
+    // =====================================================================
+    function test_tierScoped_capsMultipleTokensBySnapshotOwnerTierActiveVotes() public {
+        uint256 siblingTokenId = 4;
+        store.setTokenTier(siblingTokenId, 1);
+        hook.setOwner(siblingTokenId, alice);
+
+        // Alice owns two tier-1 NFTs, but only one tier-1 active unit budget is available at the snapshot.
+        hook.checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
+
+        _fundTier(_tiers1(1), 100);
+        _advanceToNextRound();
+
+        uint256[] memory tokenIds = new uint256[](2);
+        tokenIds[0] = TOKEN_1;
+        tokenIds[1] = siblingTokenId;
+
+        vm.prank(alice);
+        distributor.beginVesting(address(hook), _tiers1(1), tokenIds, _rewardTokens());
+
+        assertEq(
+            distributor.claimedFor(address(hook), _tiers1(1), TOKEN_1, IERC20(address(rewardToken))),
+            100,
+            "first tier-1 token consumes the active tier budget"
+        );
+        assertEq(
+            distributor.claimedFor(address(hook), _tiers1(1), siblingTokenId, IERC20(address(rewardToken))),
+            0,
+            "second tier-1 token has no remaining active tier budget"
+        );
+    }
+
+    // =====================================================================
     // A token not owned at the snapshot block is ineligible for that pot.
     // =====================================================================
     function test_postSnapshotMint_getsZero() public {

@@ -65,6 +65,8 @@ contract InvariantMockHook {
     InvariantMockCheckpoints public immutable _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
+    mapping(uint256 tokenId => bool tracked) public tokenTracked;
+    uint256[] public tokenIds;
 
     constructor(InvariantMockStore store) {
         _store = store;
@@ -94,11 +96,27 @@ contract InvariantMockHook {
     }
 
     function setOwner(uint256 tokenId, address owner) external {
+        _trackTokenId(tokenId);
         owners[tokenId] = owner;
+    }
+
+    function tokenIdAt(uint256 index) external view returns (uint256 tokenId) {
+        tokenId = tokenIds[index];
+    }
+
+    function tokenIdCount() external view returns (uint256 count) {
+        count = tokenIds.length;
     }
 
     function burn(uint256 tokenId) external {
         delete owners[tokenId];
+    }
+
+    function _trackTokenId(uint256 tokenId) internal {
+        if (tokenTracked[tokenId]) return;
+
+        tokenTracked[tokenId] = true;
+        tokenIds.push(tokenId);
     }
 }
 
@@ -135,6 +153,32 @@ contract InvariantMockCheckpoints {
     {
         blockNumber;
         activeVotes = _tierActiveVotes(tierId);
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        InvariantMockHook hook = InvariantMockHook(hookAddr);
+        uint256 tokenCount = hook.tokenIdCount();
+
+        for (uint256 i; i < tokenCount;) {
+            uint256 tokenId = hook.tokenIdAt(i);
+
+            if (store.tokenTiers(tokenId) == tierId && hook.ownerOfAt(tokenId, blockNumber) == account) {
+                JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+                activeVotes += tier.votingUnits;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -187,6 +231,10 @@ contract InvariantMockStore {
 
     function tierOfTokenId(address, uint256 tokenId, bool) external view returns (JB721Tier memory) {
         return tiers[tokenTiers[tokenId]];
+    }
+
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256 tierId) {
+        tierId = tokenTiers[tokenId];
     }
 
     function setBurnedFor(uint256 tierId, uint256 count) external {

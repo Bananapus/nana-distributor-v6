@@ -26,7 +26,8 @@ deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract packa
   each claimant's share uses snapshot `getPastVotes`. Undelegated balances, including AMM-held tokens, do not share
   rewards.
 - 721 distributors allocate all-tiers and tier-scoped reward rounds against checkpointed active vote totals from the
-  hook. A tier-scoped group sums `getPastTotalTierActiveVotes` for the funded tier set.
+  hook. Tier-scoped groups sum `getPastTotalTierActiveVotes` for the funded tier set, and both 721 modes cap each NFT
+  numerator by the snapshot owner's `getPastAccountTierActiveVotes` for the token's tier.
 - Expired reward rounds recycle the unmaterialized remainder after the deadline while preserving rewards that already
   started vesting. Deployments with `CLAIM_DURATION == 0` keep rounds non-expiring.
 - Distributor flows include claim, collect, recycle, vesting-loan, and liquidation/write-off event surface that V5

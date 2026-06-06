@@ -95,6 +95,10 @@ contract RegressionStore {
         return tiers[tokenTiers[tokenId]];
     }
 
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256 tierId) {
+        tierId = tokenTiers[tokenId];
+    }
+
     /// @dev Returns 0 for all tokens (backward-compatible: allows vesting).
     function mintBlockOf(address, uint256) external pure returns (uint256) {
         return 0;
@@ -134,6 +138,20 @@ contract RegressionCheckpoints {
     function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
         blockNumber;
         return totalSupplyAtSnapshot;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesAtSnapshot[account];
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -252,7 +270,7 @@ contract RegressionAccountingTest is Test {
         );
     }
 
-    function test_721LateMintWithoutSnapshotOwnerCannotUseOwnersPastVotes() public {
+    function test_721LateMintWithoutSnapshotOwnerCannotUseSnapshotActiveUnits() public {
         JB721Distributor distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
             IJBController(address(0)),
@@ -320,7 +338,7 @@ contract RegressionAccountingTest is Test {
         assertEq(distributor.balanceOf(address(hook), tokens[0]), 1000 ether, "funded balance remains available");
     }
 
-    function test_721SnapshotVotesCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
+    function test_721SnapshotActiveUnitsCannotBeReusedAcrossSeparateSnapshotTokenClaims() public {
         JB721Distributor distributor = new JB721Distributor(
             IJBDirectory(address(directory)),
             IJBController(address(0)),

@@ -15,8 +15,8 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.1.3 `poke()` is permissionless.** Any keeper or frontend can call `poke()` to lock the current round's snapshot block before any pay/claim activity (`src/JBDistributor.sol:331-333`). Locking earlier is always equal or better for stakers; locking later cannot exceed the prevailing `block.number - 1`.
 - **A.1.4 Per-round reward pots keep a fixed snapshot.** When `_recordRewardRound` first credits a round, it writes `snapshotBlock`, `claimDeadline`, and `totalStake` into `rewardRoundOf[hook][groupId][token][round]`. Subsequent funding in the same round increases `.amount` but never re-snapshots stake, block, or denominator. Non-expiring token rounds and 721 rounds seal their normal total stake at first credit; active-voter token rounds seal `IJBActiveVotes.getPastTotalActiveVotes` at first credit.
 - **A.1.5 Token-distributor stake is delegated voting power at the snapshot block.** Token claimants use `IVotes.getPastVotes` for the encoded staker address. Deployments with `CLAIM_DURATION == 0` use `IVotes.getPastTotalSupply` as the denominator. Deployments with nonzero claim duration use `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances do not share that active-voter round.
-- **A.1.6 721 stake is `min(tier.votingUnits, owner.pastVotes)` at the snapshot block.** `JB721Distributor._tokenStake` queries the hook's checkpoints module: `_snapshotOwnerOf` returns the owner-at-snapshot (or zero), and `IVotes.getPastVotes` on the checkpoints module gates that owner's effective claim (`src/JB721Distributor.sol:483-505, 531-550`). Late mints, post-snapshot transfers, and undelegated owners receive zero.
-- **A.1.7 Per-owner voting-power cap across an NFT batch.** When an owner holds multiple NFTs in the batch, `_claimRewardRoundForTokenId` uses per-owner `consumed[]` accounting to cap the aggregate claim at the owner's snapshot `pastVotes`, persisted into `_consumedVotesOf[hook][token][round][owner]` across calls (`src/JB721Distributor.sol:365-427`, persisted at `:350` and seeded from storage at `:410`). An owner with N NFTs of V voting units each cannot claim `N×V` if `pastVotes < N×V`.
+- **A.1.6 721 stake is capped by snapshot owner-tier active votes.** `JB721Distributor._tokenStake` queries the hook's checkpoints module: `_snapshotOwnerOf` returns the owner-at-snapshot (or zero), and `getPastAccountTierActiveVotes(owner, tierId, snapshotBlock)` gates that owner's effective claim for the token's tier. Late mints, post-snapshot transfers, and owners without active units in the token's tier receive zero.
+- **A.1.7 Per-owner, per-tier active-vote cap across each NFT reward group.** When an owner holds multiple NFTs in the same tier, `_claimRewardRoundForTokenId` uses owner-tier `consumed[]` accounting to cap the aggregate claim at the owner's snapshot active units for that tier, persisted into `_consumedTierVotesOf[hook][groupId][token][round][owner][tierId]` across calls. The cap is group-scoped, so all-tiers rewards and each tier-scoped group can be claimed independently while each group enforces the same owner-tier budget.
 
 ## A.2 Allocation and vesting math
 
@@ -62,9 +62,9 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 ## A.6 Tier-scoped reward groups
 
 - **A.6.1 `groupId` keys the reward, vesting, and loan maps.** `rewardRoundOf`, `vestingDataOf`, `latestVestedIndexOf`, `activeVestingLoanIdOf`, and `nextClaimRoundOf` all carry a `groupId` dimension (`src/JBDistributor.sol`, `src/JB721Distributor.sol`); the `JBVestingLoan` struct carries `groupId` as its 2nd member (`src/structs/JBVestingLoan.sol`). In the base, `groupId` is a generic partition key with no tier meaning. The tier concept lives in `JB721Distributor`: `groupId == 0` is the all-tiers group, and a non-zero group is `keccak256(abi.encode(tierIds))` for a strictly-increasing tier set, derived by `JB721Distributor._groupIdFor`, which reverts `JB721Distributor_TierIdsNotIncreasing` on a non-increasing set.
-- **A.6.2 Group 0 is the default all-tiers pool.** The plain signatures (`fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`, `releaseForfeitedRewards`, `claimedFor`, `collectableFor`) route through `groupId == 0` and apply the per-owner voting-power cap (A.1.7). The `tierIds` overloads (on `JB721Distributor` only) add the tier dimension and never write group 0.
-- **A.6.3 Tier path has no owner cap and reconciles exactly.** A tier-scoped round's denominator is the summed `getPastTierVotingUnits(tierId, snapshotBlock)` over the funded tier set; each eligible NFT (its tier is in the set and it existed at the round snapshot) contributes its tier's `votingUnits` with no per-owner cap (`src/JB721Distributor.sol:_tierScopedStake`, `_totalStake`). Eligibility plus tier membership matches exactly the set the denominator counts, so per-NFT numerators sum to the pot.
-- **A.6.4 `_consumedVotesOf` is group-0-only.** The per-owner consumed-vote cap accounting (`_consumedVotesOf[hook][token][round][owner]`) is exercised only on the group-0 claim path; the tier path does not consult or mutate it.
+- **A.6.2 Group 0 is the default all-tiers pool.** The plain signatures (`fund`, `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`, `releaseForfeitedRewards`, `claimedFor`, `collectableFor`) route through `groupId == 0`. The `tierIds` overloads (on `JB721Distributor` only) add tier-set membership and never write group 0. Both paths enforce the same owner-tier active-vote cap (A.1.7).
+- **A.6.3 Tier-scoped denominators use active tier totals.** A tier-scoped round's denominator is the summed `getPastTotalTierActiveVotes(tierId, snapshotBlock)` over the funded tier set. Each eligible NFT must be in the funded tier set and owned at the round snapshot, then its numerator is `min(tier.votingUnits, remaining owner-tier active votes)` using `getPastAccountTierActiveVotes(owner, tierId, snapshotBlock)`.
+- **A.6.4 `_consumedTierVotesOf` is group-scoped.** Owner-tier consumed active-vote accounting (`_consumedTierVotesOf[hook][groupId][token][round][owner][tierId]`) is shared by the all-tiers and tier-scoped claim code, but keyed by `groupId` so overlapping reward groups cannot consume each other's budgets.
 - **A.6.5 Tier sets are recorded once and queryable.** `_tierIdsOfGroup[hook][groupId]` is written on the group's first funding and exposed via `tierIdsOf(hook, groupId)`; it is empty for group 0.
 - **A.6.6 Split funding is group-0 only.** `processSplitWith` always records funding under `groupId == 0` — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
 - **A.6.7 Token distributors are group-agnostic in weight.** `JBTokenDistributor` threads `groupId` only for storage isolation. Token distributors have no tier concept: non-expiring token rounds use global `getPastTotalSupply`, while active-voter token rounds use `getPastTotalActiveVotes`.
@@ -118,7 +118,7 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 - **`_canClaim(hook, tokenId, account) view → bool`** — abstract; subclass-defined ownership check.
 - **`_tokenBurned(hook, tokenId) view → bool`** — abstract; subclass-defined burn check.
 - **`_tokenStake(hook, tokenId) view → uint256`** — abstract; subclass-defined stake weight.
-- **`_totalStake(hook, groupId, blockNumber) view → uint256`** — abstract; subclass-defined total at block (721 group 0 = all-tiers supply, tier-scoped group = summed `getPastTierVotingUnits` over the group's tier set; token distributors ignore `groupId`, returning global supply for non-expiring rounds and active-vote supply for active-voter rounds).
+- **`_totalStake(hook, groupId, blockNumber) view → uint256`** — abstract; subclass-defined total at block (721 group 0 = `getPastTotalActiveVotes`, tier-scoped group = summed `getPastTotalTierActiveVotes` over the group's tier set; token distributors ignore `groupId`, returning global supply for non-expiring rounds and active-vote supply for active-voter rounds).
 - **`_claimPastRewards(hook, tokenIds, tokens)`** — abstract; subclass-defined lazy past-round materialization.
 - **`_requireCanClaimTokenIds(hook, tokenIds) view`** — abstract; subclass-defined batch authorization.
 
@@ -157,7 +157,7 @@ Concrete distributor for IVotes ERC-20 stakers. `tokenId` is the staker address 
 
 ## C.3 `JB721Distributor` — `src/JB721Distributor.sol`
 
-Concrete distributor for Juicebox 721 NFT stakers. `tokenId` is the NFT token ID; stake is `min(tier.votingUnits, owner.pastVotes)` at the snapshot block (A.1.6); the per-owner cap holds across an NFT batch (A.1.7).
+Concrete distributor for Juicebox 721 NFT stakers. `tokenId` is the NFT token ID; stake is capped by the snapshot owner's active units for the token's tier (A.1.6); the owner-tier cap holds across each reward group (A.1.7).
 
 ### Terminal/controller-only
 
@@ -165,14 +165,14 @@ Concrete distributor for Juicebox 721 NFT stakers. `tokenId` is the NFT token ID
 
 ### Staker-owner-gated (current NFT owner)
 
-- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1) and gate on `_canClaim` (only the current NFT owner); tokenIds must be strictly increasing (A.3.3). They dispatch into this distributor's `_claimPastRewards` override, which lazy-claims all completed past rounds with per-owner vote caps (`src/JB721Distributor.sol:190-311, 365-427`).
+- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1) and gate on `_canClaim` (only the current NFT owner); tokenIds must be strictly increasing (A.3.3). They dispatch into this distributor's `_claimPastRewards` override, which lazy-claims all completed past rounds with owner-tier active-vote caps.
 
 ### Internals
 
 - `_snapshotOwnerOf` uses staticcall to `IJB721Checkpoints.ownerOfAt` so hooks without the checkpoint API fail closed (return zero), making late mints + post-snapshot transfers ineligible rather than reverting the whole batch (`src/JB721Distributor.sol:531-550`).
-- `_consumedVotesOf[hook][token][round][owner]` persists the per-owner consumed cap across separate calls (`src/JB721Distributor.sol:79-81, 350, 410`).
+- `_consumedTierVotesOf[hook][groupId][token][round][owner][tierId]` persists the owner-tier consumed cap across separate calls.
 - `_tokenBurned` is a try-catch wrapper around `ownerOf` (`src/JB721Distributor.sol:468-474`).
-- `_claimRewardRoundForTokenId` applies the per-owner cap during lazy past-round claims, capping each owner's aggregate claim at `pastVotes` via the `consumed[]` scratch array (`src/JB721Distributor.sol:365-427`).
+- `_claimRewardRoundForTokenId` applies the owner-tier active-vote cap during lazy past-round claims via the `consumed[]` scratch array.
 
 ### Views
 
@@ -232,8 +232,8 @@ Pure helpers. No state, no auth. Three functions:
 | A.1.3 `poke()` permissionless | `src/JBDistributor.sol:331-333` |
 | A.1.4 per-round pot sealed on first credit | `src/JBDistributor.sol:1023-1053` |
 | A.1.5 token-distributor IVotes lookup | `src/JBTokenDistributor.sol` `_claimRewardRoundFor`, `_claimRewardsFor`, `_totalStake` |
-| A.1.6 721 stake = min(votingUnits, pastVotes) at snapshot owner | `src/JB721Distributor.sol:483-505, 531-550` |
-| A.1.7 per-owner vote cap across NFT batch | `src/JB721Distributor.sol:365-427` |
+| A.1.6 721 stake capped by snapshot owner-tier active votes | `src/JB721Distributor.sol` `_tokenStake`, `_claimRewardRoundForTokenId` |
+| A.1.7 owner-tier active-vote cap across each reward group | `src/JB721Distributor.sol` `_consumedTierVotesOf`, `_claimRewardRoundForTokenId` |
 | A.2.1 pro-rata mulDiv | `src/JBTokenDistributor.sol:295`, `src/JB721Distributor.sol:422` |
 | A.2.2 cumulative-share math (dust prevention) | `src/libraries/JBVestingMath.sol:36-73`, `src/JBDistributor.sol:432-446, 1272-1293` |
 | A.2.4 append-only vesting cursor | `src/JBDistributor.sol:1303-1316` |

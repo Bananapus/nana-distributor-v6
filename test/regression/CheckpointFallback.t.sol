@@ -25,6 +25,10 @@ contract MockRewardToken is ERC20 {
 }
 
 contract Mock721Store {
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
+    }
+
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         tier = JB721Tier({
             id: 1,
@@ -85,6 +89,20 @@ contract Mock721Checkpoints {
         return totalSupply;
     }
 
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = votesOf[account];
+    }
+
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
         return hook.ownerOfAtLikeInstalledCheckpoints(tokenId, blockNumber);
     }
@@ -143,7 +161,7 @@ contract Mock721Hook {
 }
 
 contract CheckpointFallbackTest is Test {
-    function test_lateMintedReplacementCannotConsumeSnapshotVotesBeforeRealSnapshotToken() public {
+    function test_lateMintedReplacementCannotConsumeSnapshotActiveUnitsBeforeRealSnapshotToken() public {
         address alice = address(0xA11CE);
         address bob = address(0xB0B);
 

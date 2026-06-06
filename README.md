@@ -22,7 +22,7 @@ The package separates distribution mechanics by asset type:
 
 - `JBDistributor` coordinates shared round and vesting logic
 - `JBTokenDistributor` distributes ERC-20 balances using `IVotes` checkpointed voting power
-- `JB721Distributor` distributes value to 721 holders using checkpointed voting power, ensuring only holders at the funded round's snapshot block are eligible
+- `JB721Distributor` distributes value to active 721 holders using the hook's checkpointed owner and active-vote data, ensuring only holders at the funded round's snapshot block are eligible
 
 Both concrete distributors implement `IJBSplitHook`, which makes them usable directly from Juicebox payout splits.
 
@@ -68,7 +68,8 @@ This repo does not explain why an allocation exists. It only defines how funded 
 - token distributors record `IJBActiveVotes.getPastTotalActiveVotes` at the funded round's snapshot block; only
   addresses with `getPastVotes` at that block share the pot
 - 721 distributors record the hook checkpoint module's active total for all-tiers rewards, or the summed active totals
-  for a tier-scoped reward group
+  for a tier-scoped reward group; both modes cap each NFT claim by the snapshot owner's remaining active units for that
+  NFT's tier
 - `recycleExpiredRewards` is permissionless; it recycles the expired round's unmaterialized remainder while preserving
   amounts that already started vesting
 - eligible expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
@@ -87,7 +88,8 @@ This repo does not explain why an allocation exists. It only defines how funded 
   require the explicit `fund(hook, tierIds, token, amount)` overload, and claims/collections must pass the same
   `tierIds` to hit that group
 - tier-scoped 721 pots weigh each eligible NFT by its tier's `votingUnits` against a summed
-  `getPastTotalTierActiveVotes` denominator, which requires `@bananapus/721-hook-v6 >= 0.0.73` for that checkpoints API
+  `getPastTotalTierActiveVotes` denominator, then cap each numerator with `getPastAccountTierActiveVotes`; this
+  requires `@bananapus/721-hook-v6 >= 0.0.73` for the active-vote checkpoints API
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 

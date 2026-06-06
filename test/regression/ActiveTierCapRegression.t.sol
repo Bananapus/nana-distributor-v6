@@ -84,6 +84,10 @@ contract VotingCapMockStore {
         return tiers[tokenTiers[tokenId]];
     }
 
+    function tierIdOfToken(uint256 tokenId) external view returns (uint256 tierId) {
+        tierId = tokenTiers[tokenId];
+    }
+
     function setBurnedFor(uint256 tierId, uint256 count) external {
         burned[tierId] = count;
     }
@@ -113,9 +117,20 @@ contract VotingCapMockCheckpoints {
     /// @dev Tracks whether a per-address override was explicitly set (to allow setting 0).
     mapping(address => bool) public votesOverrideSet;
 
+    /// @dev Per-account, per-tier active vote overrides. If set, the account-tier getter returns this value.
+    mapping(address account => mapping(uint256 tierId => uint256)) public accountTierActiveVotesOverride;
+
+    /// @dev Tracks whether an account-tier active vote override was explicitly set.
+    mapping(address account => mapping(uint256 tierId => bool)) public accountTierActiveVotesOverrideSet;
+
     constructor(VotingCapMockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
+    }
+
+    function setAccountTierActiveVotesOverride(address account, uint256 tierId, uint256 value) external {
+        accountTierActiveVotesOverride[account][tierId] = value;
+        accountTierActiveVotesOverrideSet[account][tierId] = true;
     }
 
     function setTotalSupplyOverride(uint256 value) external {
@@ -139,7 +154,7 @@ contract VotingCapMockCheckpoints {
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
         if (votesOverrideSet[account]) return votesOverride[account];
-        // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
+        // Default: avoid constraining mock callers that still inspect IVotes-style account votes.
         return type(uint256).max;
     }
 
@@ -153,6 +168,36 @@ contract VotingCapMockCheckpoints {
     {
         blockNumber;
         activeVotes = _tierActiveVotes(tierId);
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        if (accountTierActiveVotesOverrideSet[account][tierId]) {
+            return accountTierActiveVotesOverride[account][tierId];
+        }
+
+        VotingCapMockHook hook = VotingCapMockHook(hookAddr);
+        uint256 tokenCount = hook.tokenIdCount();
+
+        for (uint256 i; i < tokenCount;) {
+            uint256 tokenId = hook.tokenIdAt(i);
+
+            if (store.tokenTiers(tokenId) == tierId && hook.ownerOfAt(tokenId, blockNumber) == account) {
+                JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+                activeVotes += tier.votingUnits;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -184,6 +229,8 @@ contract VotingCapMockHook {
     VotingCapMockCheckpoints public _checkpoints;
 
     mapping(uint256 tokenId => address owner) public owners;
+    mapping(uint256 tokenId => bool tracked) public tokenTracked;
+    uint256[] public tokenIds;
 
     constructor(VotingCapMockStore store_) {
         _store = store_;
@@ -213,19 +260,34 @@ contract VotingCapMockHook {
     }
 
     function setOwner(uint256 tokenId, address owner) external {
+        _trackTokenId(tokenId);
         owners[tokenId] = owner;
+    }
+
+    function tokenIdAt(uint256 index) external view returns (uint256 tokenId) {
+        tokenId = tokenIds[index];
+    }
+
+    function tokenIdCount() external view returns (uint256 count) {
+        count = tokenIds.length;
     }
 
     function burn(uint256 tokenId) external {
         delete owners[tokenId];
     }
+
+    function _trackTokenId(uint256 tokenId) internal {
+        if (tokenTracked[tokenId]) return;
+
+        tokenTracked[tokenId] = true;
+        tokenIds.push(tokenId);
+    }
 }
 
-/// @notice Tests for per-owner voting power cap in JB721Distributor.
-/// @dev Verifies that an owner holding multiple NFTs cannot claim more rewards than their
-/// historical voting power allows. The `_claimRewardRoundForTokenId` path in JB721Distributor
-/// tracks consumed voting power per owner and caps each NFT's effective stake.
-contract VotingPowerCapRegressionTest is Test {
+/// @notice Tests for per-owner, per-tier active vote caps in JB721Distributor.
+/// @dev Verifies that an owner holding multiple NFTs cannot claim more rewards than their historical active tier
+/// units allow. The `_claimRewardRoundForTokenId` path tracks consumed active tier units per owner and tier.
+contract ActiveTierCapRegressionTest is Test {
     JB721Distributor distributor;
     VotingCapMockRewardToken rewardToken;
     VotingCapMockHook hook;
@@ -315,12 +377,12 @@ contract VotingPowerCapRegressionTest is Test {
     // Tests
     // =====================================================================
 
-    /// @notice Owner has 3 NFTs (50 voting units each = 150 total) but only 100 past votes.
-    /// Should get rewards for only 100 votes total, not 150.
-    function test_h26_multipleNFTsCappedAtVotingPower() public {
+    /// @notice Owner has 3 NFTs (50 voting units each = 150 total) but only 100 active units.
+    /// Should get rewards for only 100 units total, not 150.
+    function test_h26_multipleNFTsCappedAtActiveTierUnits() public {
         // Alice has 3 NFTs x 50 voting units = 150 votingUnits total.
-        // But her pastVotes is only 100 — so she should be capped at 100.
-        hook._checkpoints().setVotesOverride(alice, 100);
+        // But her active tier units are only 100, so she should be capped at 100.
+        hook._checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
 
         // Total supply = 3 minted * 50 voting units = 150.
         // (store has initialSupply=10, remainingSupply=7, so 3 minted)
@@ -339,7 +401,7 @@ contract VotingPowerCapRegressionTest is Test {
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // Without the cap, Alice would get: mulDiv(1500, 50, 150) * 3 = 500 * 3 = 1500 ether.
-        // With the cap: Alice has 100 past votes across 3 NFTs (50 each).
+        // With the cap: Alice has 100 active tier units across 3 NFTs (50 each).
         // NFT 1: min(50, 100 remaining) = 50 -> consumed = 50
         // NFT 2: min(50, 50 remaining) = 50 -> consumed = 100
         // NFT 3: min(50, 0 remaining) = 0 -> skipped
@@ -352,7 +414,7 @@ contract VotingPowerCapRegressionTest is Test {
         uint256 totalClaimed = claimed1 + claimed2 + claimed3;
 
         // Each NFT gets mulDiv(1500, 50, 150) = 500 ether for 50 effective units,
-        // but NFT 3 gets 0 (remaining pastVotes exhausted).
+        // but NFT 3 gets 0 (remaining active tier units exhausted).
         assertEq(claimed1, 500 ether, "NFT 1: should get full 50-unit share");
         assertEq(claimed2, 500 ether, "NFT 2: should get full 50-unit share");
         assertEq(claimed3, 0, "NFT 3: should get 0 (voting power exhausted)");
@@ -366,10 +428,10 @@ contract VotingPowerCapRegressionTest is Test {
         );
     }
 
-    /// @notice An owner with 1 NFT and sufficient past votes gets the full reward (backward compatibility).
+    /// @notice An owner with 1 NFT and sufficient active units gets the full reward.
     function test_h26_singleNFTUnaffected() public {
-        // Alice has 3 NFTs but we only vest 1 — pastVotes = 100 which is >= 50 voting units.
-        hook._checkpoints().setVotesOverride(alice, 100);
+        // Alice has 3 NFTs but we only vest 1; active units = 100 which is >= 50 voting units.
+        hook._checkpoints().setAccountTierActiveVotesOverride(alice, 1, 100);
 
         _fundHook(1500 ether);
         _advanceToRound(1);
@@ -383,11 +445,11 @@ contract VotingPowerCapRegressionTest is Test {
         vm.prank(alice);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // With 1 NFT at 50 voting units, pastVotes=100 is more than enough.
+        // With 1 NFT at 50 voting units, 100 active units is more than enough.
         // Alice's NFT 1 stake = min(50, 100) = 50.
         // Share = mulDiv(1500, 50, 150) = 500 ether.
         uint256 claimed = distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken)));
-        assertEq(claimed, 500 ether, "Single NFT should get full reward when pastVotes >= votingUnits");
+        assertEq(claimed, 500 ether, "Single NFT should get full reward when active units >= votingUnits");
 
         // Verify total vesting.
         assertEq(

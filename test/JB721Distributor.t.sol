@@ -116,9 +116,20 @@ contract MockCheckpoints {
     /// @dev Tracks whether a per-address override was explicitly set (to allow setting 0).
     mapping(address => bool) public votesOverrideSet;
 
+    /// @dev Per-account, per-tier active vote overrides. If set, the account-tier getter returns this value.
+    mapping(address account => mapping(uint256 tierId => uint256)) public accountTierActiveVotesOverride;
+
+    /// @dev Tracks whether an account-tier active vote override was explicitly set.
+    mapping(address account => mapping(uint256 tierId => bool)) public accountTierActiveVotesOverrideSet;
+
     constructor(MockStore _store, address _hook) {
         store = _store;
         hookAddr = _hook;
+    }
+
+    function setAccountTierActiveVotesOverride(address account, uint256 tierId, uint256 value) external {
+        accountTierActiveVotesOverride[account][tierId] = value;
+        accountTierActiveVotesOverrideSet[account][tierId] = true;
     }
 
     function setTotalSupplyOverride(uint256 value) external {
@@ -142,7 +153,7 @@ contract MockCheckpoints {
 
     function getPastVotes(address account, uint256) external view returns (uint256) {
         if (votesOverrideSet[account]) return votesOverride[account];
-        // Default: return max so min(votingUnits, pastVotes) = votingUnits for any holder.
+        // Default: avoid constraining mock callers that still inspect IVotes-style account votes.
         return type(uint256).max;
     }
 
@@ -166,9 +177,34 @@ contract MockCheckpoints {
         activeVotes = _tierActiveVotes(tierId);
     }
 
-    function getPastTierVotingUnits(uint256 tierId, uint256 blockNumber) external view returns (uint256 votingUnits) {
-        blockNumber;
-        votingUnits = _tierActiveVotes(tierId);
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        if (accountTierActiveVotesOverrideSet[account][tierId]) {
+            return accountTierActiveVotesOverride[account][tierId];
+        }
+
+        MockHook hook = MockHook(hookAddr);
+        uint256 tokenCount = hook.tokenIdCount();
+
+        for (uint256 i; i < tokenCount;) {
+            uint256 tokenId = hook.tokenIdAt(i);
+
+            if (store.tokenTiers(tokenId) == tierId && hook.ownerOfAt(tokenId, blockNumber) == account) {
+                JB721Tier memory tier = store.tierOf(hookAddr, tierId, false);
+                activeVotes += tier.votingUnits;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function ownerOfAt(uint256 tokenId, uint256 blockNumber) external view returns (address) {
@@ -204,6 +240,8 @@ contract MockHook {
 
     mapping(uint256 tokenId => address owner) public owners;
     mapping(uint256 tokenId => mapping(uint256 blockNumber => address owner)) public historicalOwnerOf;
+    mapping(uint256 tokenId => bool tracked) public tokenTracked;
+    uint256[] public tokenIds;
 
     constructor(MockStore store) {
         _store = store;
@@ -238,15 +276,32 @@ contract MockHook {
     }
 
     function setOwner(uint256 tokenId, address owner) external {
+        _trackTokenId(tokenId);
         owners[tokenId] = owner;
     }
 
     function setHistoricalOwner(uint256 tokenId, uint256 blockNumber, address owner) external {
+        _trackTokenId(tokenId);
         historicalOwnerOf[tokenId][blockNumber] = owner;
+    }
+
+    function tokenIdAt(uint256 index) external view returns (uint256 tokenId) {
+        tokenId = tokenIds[index];
+    }
+
+    function tokenIdCount() external view returns (uint256 count) {
+        count = tokenIds.length;
     }
 
     function burn(uint256 tokenId) external {
         delete owners[tokenId];
+    }
+
+    function _trackTokenId(uint256 tokenId) internal {
+        if (tokenTracked[tokenId]) return;
+
+        tokenTracked[tokenId] = true;
+        tokenIds.push(tokenId);
     }
 }
 
@@ -1415,12 +1470,9 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
     }
 
-    function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerVotes() public {
+    function test_delayedClaimAfterTransferUsesHistoricalSnapshotOwnerActiveVotes() public {
         uint256[] memory tokenIds = _singleTokenId(1);
         IERC20[] memory tokens = _singleRewardToken();
-
-        hook.CHECKPOINTS().setVotesOverride(alice, 100);
-        hook.CHECKPOINTS().setVotesOverride(charlie, 0);
 
         _fundHook(1000 ether);
         (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
@@ -1438,7 +1490,7 @@ contract JB721DistributorTest is Test {
         vm.prank(charlie);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
-        // The amount proves the claim used Alice's snapshot votes, not Charlie's current zero votes.
+        // The amount proves the claim used Alice's snapshot active units, not Charlie's current custody.
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
     }
 
@@ -1449,7 +1501,6 @@ contract JB721DistributorTest is Test {
         store.setTokenTier(siblingTokenId, 1);
         hook.setOwner(2, alice);
         hook.setOwner(siblingTokenId, alice);
-        hook.CHECKPOINTS().setVotesOverride(alice, 400);
 
         _fundHook(1600 ether);
         (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
@@ -1517,11 +1568,12 @@ contract JB721DistributorTest is Test {
         assertEq(distributor.claimedFor(address(hook), lateTokenId, IERC20(address(rewardToken))), 0);
     }
 
-    function test_ownerVotingCapPersistsAcrossSeparateDelayedClaims() public {
+    function test_ownerTierActiveCapPersistsAcrossSeparateDelayedClaims() public {
         IERC20[] memory tokens = _singleRewardToken();
 
+        store.setTokenTier(2, 1);
         hook.setOwner(2, alice);
-        hook.CHECKPOINTS().setVotesOverride(alice, 100);
+        hook.CHECKPOINTS().setAccountTierActiveVotesOverride(alice, 1, 100);
         hook.CHECKPOINTS().setTotalSupplyOverride(100);
 
         _fundHook(1000 ether);

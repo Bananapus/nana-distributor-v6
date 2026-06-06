@@ -94,6 +94,10 @@ contract TM721Checkpoints {
         blockNumber;
         return 1;
     }
+
+    function getPastAccountTierActiveVotes(address, uint256, uint256) external pure returns (uint256 activeVotes) {
+        activeVotes = 1;
+    }
 }
 
 contract TM721Hook {

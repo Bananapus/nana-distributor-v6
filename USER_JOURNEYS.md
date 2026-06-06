@@ -230,7 +230,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 2. The distributor derives `groupId = keccak256(abi.encode(tierIds))` and records the tier set on the group's first funding (queryable via `tierIdsOf(hook, groupId)`).
 3. The accepted amount is assigned to the current reward round for that group.
 4. Only holders whose NFT tier is in the funded set — and whose NFT existed at the round snapshot — can claim the pot.
-5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTierVotingUnits` over the funded tier set. There is no per-owner vote cap on the tier path.
+5. Each eligible NFT's share is pro-rata by its tier's `votingUnits`: the pot's denominator is the summed `getPastTotalTierActiveVotes` over the funded tier set, and each token's numerator is capped by the snapshot owner's remaining `getPastAccountTierActiveVotes` for that token's tier and reward group.
 
 **Group model:** `groupId == 0` is the all-tiers group — the default pool, claimed by the plain (no-`tierIds`) signatures. Non-zero groups isolate their reward, vesting, and loan accounting. To act on a tier-scoped group's claims, use the `tierIds` overloads of `beginVesting`, `collectVestedRewards`, `borrowAgainstVesting`, `recycleExpiredRewards`, and `releaseForfeitedRewards` — each derives the same group ID from the tier set.
 
@@ -242,7 +242,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Postconditions**
 - the pot is reserved for holders of the funded tiers at the funding round's snapshot
 - the tier set is permanently recorded for that group on its first funding
-- all-tiers (group 0) accounting is independent of every tier-scoped group
+- all-tiers (group 0) accounting is independent of every tier-scoped group, even though both modes enforce the same owner-tier active-vote cap
 
 ## Trust boundaries
 

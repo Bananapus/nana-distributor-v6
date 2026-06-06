@@ -18,6 +18,10 @@ import {JBDistributor} from "../../src/JBDistributor.sol";
 contract CollectionReentryDirectory {}
 
 contract CollectionReentryStore {
+    function tierIdOfToken(uint256) external pure returns (uint256 tierId) {
+        tierId = 1;
+    }
+
     function tierOfTokenId(address, uint256, bool) external pure returns (JB721Tier memory tier) {
         JB721TierFlags memory flags;
         tier = JB721Tier({
@@ -62,6 +66,20 @@ contract CollectionReentryCheckpoints {
     function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
         blockNumber;
         return totalSupply;
+    }
+
+    function getPastAccountTierActiveVotes(
+        address account,
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
+        tierId;
+        blockNumber;
+        activeVotes = account == CollectionReentryHook(hook).owner() ? 100 : 0;
     }
 
     function ownerOfAt(uint256 tokenId, uint256) external view returns (address) {
