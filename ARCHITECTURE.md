@@ -8,7 +8,7 @@
 
 `JBDistributor` is the shared vesting engine. `JBTokenDistributor` assigns accepted funding to historical reward rounds keyed by checkpointed `IVotes` power, then lets each encoded staker lazily claim past rounds into a fresh vesting entry. `JB721Distributor` follows the same historical-round pattern for NFT owners, using the 721 hook's `CHECKPOINTS()` module and tier voting units to decide each funded round's eligible NFT stake.
 
-Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps token reward rounds on the non-expiring total-supply path, while a nonzero duration makes token rounds active-voter rounds. Active-voter rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding and split rewards only among addresses with snapshot `getPastVotes`; rounds with no active votes can be recycled permissionlessly after the deadline.
+Both variants can be used as `IJBSplitHook` receivers. Each deployment has one immutable claim duration: `0` keeps reward rounds non-expiring, while a nonzero duration lets eligible expired inventory recycle. Token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding and split rewards only among addresses with snapshot `getPastVotes`; rounds with no active votes can be recycled permissionlessly after the deadline.
 
 ## Core invariants
 
@@ -104,7 +104,7 @@ fund a tier-scoped pot
 ```
 
 - **Denominator and numerator.** For the all-tiers group, `JB721Distributor` records `getPastTotalActiveVotes(snapshotBlock)` from the 721 hook's checkpoints module. For a tier-scoped pot, it records the summed `getPastTotalTierActiveVotes(tierId, snapshotBlock)` over the funded tier set. Both modes claim with the same numerator rule: each eligible NFT contributes up to its tier's `votingUnits`, capped by the snapshot owner's remaining `getPastAccountTierActiveVotes(owner, tierId, snapshotBlock)` for that reward group.
-- **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; token weight never has a tier dimension. Non-expiring token rounds use global `getPastTotalSupply`, while active-voter token rounds use `getPastTotalActiveVotes`.
+- **Token distributors are group-agnostic.** `JBTokenDistributor` threads `groupId` only for storage isolation; token weight never has a tier dimension. Token rounds use `getPastTotalActiveVotes`; `CLAIM_DURATION` only controls expiry.
 - **Split funding is group-0 only.** `processSplitWith` always records funding under group 0 — a split cannot carry a tier set. Tier-scoped pots require the explicit `fund(hook, tierIds, token, amount)`.
 
 ## Accounting model

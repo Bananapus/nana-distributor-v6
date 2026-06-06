@@ -33,14 +33,14 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 1. Fund the distributor directly or through a payout split.
 2. The accepted amount is assigned to the current reward round for the chosen stake source.
 3. The distributor records that round's snapshot block and the stake model for the distributor type.
-4. The distributor's immutable claim duration determines whether token rounds use a total-supply denominator or an
-   active-vote-total denominator.
+4. The distributor records the active-vote denominator for token rounds, collection-wide 721 rounds, or tier-scoped
+   721 rounds.
 5. Confirm the tracked balance matches what the distributor received.
 6. Use the distributor as the vesting surface, not as the source of entitlement logic.
 
 **Round assignment:** If a rewarder sends money to the distributor during round N, that accepted amount is reserved for the historical stakers or NFT owners at round N's snapshot. It does not vest immediately and does not get split among whoever shows up first. It becomes claimable starting in round N + 1, and each eligible claimant can show up later to materialize their own historical share into a vesting entry.
 
-**Expiring rewards:** The claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero deployment claim duration means token rounds do not expire and use the round's `getPastTotalSupply` denominator. A nonzero deployment claim duration makes token rounds active-voter rounds: funding records `getPastTotalActiveVotes` at the snapshot block, and addresses with snapshot `getPastVotes` share that pot whenever they claim later. Direct funding and split funding use the same immutable duration, so permissionless direct funding cannot choose an incompatible deadline for a shared hook/token/round bucket.
+**Expiring rewards:** The claim deadline is measured from the start of round N + 1, when round N first becomes claimable. A zero deployment claim duration means reward rounds do not expire. Token funding always records `getPastTotalActiveVotes` at the snapshot block, and addresses with snapshot `getPastVotes` share that pot whenever they claim later. Direct funding and split funding use the same immutable duration, so permissionless direct funding cannot choose an incompatible deadline for a shared hook/token/round bucket.
 
 **Failure Modes**
 - wrong asset funded
@@ -78,7 +78,7 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 **Helper behavior:** Starting vesting is permissionless because no reward tokens leave the distributor. A helper can
 start a holder's vesting clock without needing wallet access from the holder.
 
-**Snapshot timing:** Funding records the funding round's snapshot block. Non-expiring token rounds also record `IVotes` total supply at funding; active-voter token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
+**Snapshot timing:** Funding records the funding round's snapshot block. Token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding, and 721 rounds record the relevant checkpointed active total. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
 
 **AMM custody lifecycle:** For active-voter token rounds, the denominator uses total active votes at the funded round's snapshot block. If a holder transfers tokens into an AMM before a round's snapshot, those tokens no longer count toward the holder's votes for that round, and an AMM that does not delegate has no share. When the holder removes liquidity and the tokens return before a later round's snapshot, the returned tokens count again for that later round if the holder's delegate is still set.
 
