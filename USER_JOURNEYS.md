@@ -55,25 +55,28 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 ## Journey 2: Start a vesting round
 
-**Actor:** for token rewards, the encoded staker; for 721 rewards, the current NFT owner.
+**Actor:** any holder, helper, keeper, or frontend.
 
 **Intent:** materialize rewards into vesting.
 
 **Preconditions**
 - the round timing and parameters are valid
 - the stake source is usable and non-zero
-- token stakers are claiming their own encoded address
-- NFT owners are claiming token IDs they currently own
+- token IDs encode valid staker addresses
+- NFT token IDs are live and, when batched, strictly increasing
 
 **Main Flow**
-1. Call `beginVesting`.
+1. Call `beginVesting` for the holder's encoded token slot or NFT token IDs.
 2. Claim past funded reward rounds through `currentRound - 1` into a fresh vesting entry when the round is ready.
 3. The distributor uses each funded round's recorded snapshot block and the distributor-specific stake denominator.
-4. For active-voter token rounds with a nonzero recorded active total, the caller materializes their snapshot
+4. For active-voter token rounds with a nonzero recorded active total, the call materializes the holder's snapshot
    `getPastVotes` share immediately, whether before or after the deadline.
 5. If an expired round has no protected claimant set, the claim transaction recycles its unclaimed amount instead of
    vesting it.
 6. Vesting entries become claimable over the configured schedule.
+
+**Helper behavior:** Starting vesting is permissionless because no reward tokens leave the distributor. A helper can
+start a holder's vesting clock without needing wallet access from the holder.
 
 **Snapshot timing:** Funding records the funding round's snapshot block. Non-expiring token rounds also record `IVotes` total supply at funding; active-voter token rounds record `IJBActiveVotes.getPastTotalActiveVotes` at funding. A claimant who claims in round N only starts vesting rewards from rounds `<= N - 1`. `poke` can still be used to lock the current and next round snapshots before funding or claims.
 
@@ -91,27 +94,28 @@ This repo distributes already-owned assets over time. Token and 721 rewards are 
 
 ## Journey 3: Collect vested rewards
 
-**Actor:** eligible recipient.
+**Actor:** holder, approved helper, keeper, or frontend.
 
 **Intent:** collect the share that has unlocked for a round.
 
 **Preconditions**
-- the recipient is authorized under the distributor type
+- the recipient is either authorized under the distributor type or is the canonical beneficiary for every token ID
 - either some share has already vested, or the claimant has unclaimed past reward rounds to materialize
 
 **Main Flow**
-1. Call the relevant claim function.
+1. Call `collectVestedRewards`.
 2. The distributor first materializes unclaimed past reward rounds into a new vesting entry.
-3. The distributor checks authority and unlocked amount.
-4. The vested share transfers to the claimant.
+3. The distributor checks whether the caller controls the token IDs or is sending rewards to their canonical
+   beneficiary.
+4. The vested share transfers to the beneficiary.
 
 **Failure Modes**
-- invalid claimant
+- helper tries to route rewards away from the canonical beneficiary
 - claim batch includes invalid 721 token IDs
 - reward token transfer fails
 
 **Postconditions**
-- vested rewards move to the claimant
+- vested rewards move to the requested beneficiary
 - any newly materialized past rewards begin vesting from this claim round
 
 ## Journey 4: Recycle expired rewards

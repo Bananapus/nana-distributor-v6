@@ -236,6 +236,49 @@ contract JB721TierScopedRewards is Test {
         assertEq(rewardToken.balanceOf(alice), 100, "alice collected full tier-1 share");
     }
 
+    function test_helperCanBeginVestingTierScopedForCurrentOwner() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+
+        assertEq(
+            distributor.claimedFor(address(hook), set, TOKEN_1, IERC20(address(rewardToken))),
+            100,
+            "helper should start Alice's tier-scoped vesting"
+        );
+    }
+
+    function test_helperCanCollectTierScopedToCurrentOwner() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+        _advanceToRound(distributor.currentRound() + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        distributor.collectVestedRewards(address(hook), set, _single(TOKEN_1), _rewardTokens(), alice);
+
+        assertEq(rewardToken.balanceOf(alice), 100, "helper should collect only to Alice");
+        assertEq(rewardToken.balanceOf(bob), 0, "helper should not receive Alice's rewards");
+    }
+
+    function test_helperCannotCollectTierScopedToSelf() public {
+        uint256[] memory set = _tiers1(1);
+        _fundTier(set, 100);
+        _advanceToNextRound();
+
+        distributor.beginVesting(address(hook), set, _single(TOKEN_1), _rewardTokens());
+        _advanceToRound(distributor.currentRound() + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        distributor.collectVestedRewards(address(hook), set, _single(TOKEN_1), _rewardTokens(), bob);
+    }
+
     // =====================================================================
     // Helpers
     // =====================================================================

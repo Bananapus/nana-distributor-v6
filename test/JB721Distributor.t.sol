@@ -1015,6 +1015,37 @@ contract JB721DistributorTest is Test {
         distributor.collectVestedRewards(address(hook), tokenIds, tokens, bob);
     }
 
+    function test_helperCanBeginVestingForCurrentOwner() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        _advanceToNextRound();
+
+        vm.prank(bob);
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+
+        assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+    }
+
+    function test_helperCanCollectToCurrentOwner() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        _advanceToNextRound();
+        distributor.beginVesting(address(hook), tokenIds, tokens);
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(bob);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
+
+        assertEq(rewardToken.balanceOf(alice), 250 ether);
+        assertEq(rewardToken.balanceOf(bob), 0);
+    }
+
     function test_collectVestedRewards_nothingToCollect() public {
         // No vesting started -- collecting should succeed with zero transfer.
         uint256[] memory tokenIds = new uint256[](1);
@@ -1478,20 +1509,28 @@ contract JB721DistributorTest is Test {
         (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
         hook.setHistoricalOwner(1, snapshotBlock, alice);
 
-        // The NFT transfers before anyone claims, so the current owner is the only account authorized to claim.
+        // The NFT transfers before anyone claims, so helpers can start vesting but collection belongs to Charlie.
         hook.setOwner(1, charlie);
 
         _advanceToRound(1);
 
         vm.prank(alice);
-        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
-        distributor.beginVesting(address(hook), tokenIds, tokens);
-
-        vm.prank(charlie);
         distributor.beginVesting(address(hook), tokenIds, tokens);
 
         // The amount proves the claim used Alice's snapshot active units, not Charlie's current custody.
         assertEq(distributor.claimedFor(address(hook), 1, IERC20(address(rewardToken))), 250 ether);
+
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(JBDistributor.JBDistributor_NoAccess.selector);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, alice);
+
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(hook), tokenIds, tokens, charlie);
+
+        assertEq(rewardToken.balanceOf(charlie), 250 ether);
+        assertEq(rewardToken.balanceOf(alice), 0);
     }
 
     function test_beginVesting_duplicateTokenIdsRevertsBeforeConsumingSiblingRewards() public {

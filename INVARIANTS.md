@@ -29,10 +29,21 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 ## A.3 Collection authorization
 
-- **A.3.1 `collectVestedRewards` is gated to the token owner.** `_requireCanClaimTokenIds` (abstract base declaration at `src/JBDistributor.sol:665`) reverts unless every requested token ID's `_canClaim` returns true for `msg.sender`; each child implements it (`src/JBTokenDistributor.sol:364-375`, `src/JB721Distributor.sol:445-462`). For `JBTokenDistributor`, `_canClaim` requires `tokenId == uint256(uint160(msg.sender))` and reverts on high-bit aliasing (`src/JBTokenDistributor.sol:321-327`). For `JB721Distributor`, `_canClaim` requires `IERC721.ownerOf(tokenId) == msg.sender` (`src/JB721Distributor.sol:438-440`).
-- **A.3.2 Non-owner cannot start vesting on either distributor's stakes.** The shared base `beginVesting` and `collectVestedRewards` both call `_requireCanClaimTokenIds` before materializing past rewards, for both the token and 721 distributors (`src/JBDistributor.sol:281`, `:506`). This prevents a third party from starting a staker's vesting clock before the staker actually claims.
-- **A.3.3 NFT batches must be strictly increasing.** `JB721Distributor._requireCanClaimTokenIds` reverts `JB721Distributor_TokenIdsNotIncreasing` if `tokenIds` is not strictly ascending, so the same NFT cannot appear twice in one call (`src/JB721Distributor.sol:445-462`).
-- **A.3.4 Beneficiary is caller-supplied, but only the owner can authorize.** Owner can direct vested rewards to any address; no third party can re-route the owner's vest stream.
+- **A.3.1 `beginVesting` is permissionless.** The shared base validates token IDs, then materializes past rewards into
+  vesting entries. No reward tokens leave the distributor, so a third party can only start another holder's vesting
+  clock.
+- **A.3.2 `collectVestedRewards` preserves beneficiary control.** `_requireCanCollectTo` lets an authorized holder
+  route rewards to any beneficiary. A helper that does not control a token ID can collect only to that token ID's
+  canonical beneficiary, as returned by `_claimBeneficiaryOf`.
+- **A.3.3 Canonical beneficiaries are distributor-specific.** For `JBTokenDistributor`, the beneficiary is the address
+  encoded in `tokenId`, and high-bit aliasing reverts. For `JB721Distributor`, the beneficiary is
+  `IERC721.ownerOf(tokenId)`, so burned or nonexistent NFTs cannot be helper-collected.
+- **A.3.4 NFT batches must be strictly increasing.** `JB721Distributor._validateTokenIds` and
+  `JB721Distributor._requireCanClaimTokenIds` both revert `JB721Distributor_TokenIdsNotIncreasing` if `tokenIds` is
+  not strictly ascending, so the same NFT cannot appear twice in one call.
+- **A.3.5 Loan and redirect authority stays holder-gated.** `borrowAgainstVesting` and owner-directed custom
+  beneficiaries still call `_requireCanClaimTokenIds`; a third party cannot borrow against someone else's vesting
+  rewards or redirect them away from the canonical beneficiary.
 
 ## A.4 Loan-against-vesting protections
 
@@ -75,9 +86,10 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 The distributor has **no global admin and no per-hook operator role**. There is no Ownable, no upgrade hook, no protocol-fee setter, no pause switch. All mutating surface is either:
 
-- staker-owner-gated (`collectVestedRewards`, `beginVesting` on the token distributor, `borrowAgainstVesting`),
+- holder-gated (`borrowAgainstVesting`, custom-beneficiary collection),
 - terminal/controller-gated (`processSplitWith`),
-- permissionless settlement (`fund`, `poke`, `recycleExpiredRewards`, `releaseForfeitedRewards`, `repayVestingLoan`, `writeOffLiquidatedVestingLoan`, base `beginVesting`).
+- permissionless settlement (`fund`, `poke`, `beginVesting`, canonical-beneficiary `collectVestedRewards`,
+  `recycleExpiredRewards`, `releaseForfeitedRewards`, `repayVestingLoan`, `writeOffLiquidatedVestingLoan`).
 
 The only authority granted at construction is a wildcard `BURN_TOKENS` permission to `REV_LOANS`, gated on `revLoans != address(0)` (A.4.14). The distributor itself never receives a project-scoped permission and never holds a project NFT.
 
@@ -98,14 +110,14 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 
 ### Permissionless settlement
 
-- **`beginVesting(hook, tokenIds, tokens)`** — shared base implementation for both distributors. Reverts `JBDistributor_EmptyTokenIds` if empty, gates on `_requireCanClaimTokenIds` (only the authorized owner/staker may start the clock), then calls `_claimPastRewards` to materialize historical reward rounds (`src/JBDistributor.sol:263-285`). Active-voter token rounds with nonzero active votes materialize lazily; resolved empty rounds advance the cursor (A.2.5).
+- **`beginVesting(hook, tokenIds, tokens)`** — shared base implementation for both distributors. Reverts `JBDistributor_EmptyTokenIds` if empty, validates token IDs, then calls `_claimPastRewards` to materialize historical reward rounds. Active-voter token rounds with nonzero active votes materialize lazily; resolved empty rounds advance the cursor (A.2.5).
 - **`recycleExpiredRewards(hook, token, rounds[]) → amount`** — permissionless (`src/JBDistributor.sol:304-327`). See A.5.1.
 - **`releaseForfeitedRewards(hook, tokenIds, tokens, beneficiary)`** — permissionless; requires burned tokenIds (`src/JBDistributor.sol:341-365`). See A.5.4.
 - **`poke()`** — permissionless snapshot lock-in (`src/JBDistributor.sol:331-333`). See A.1.3.
 
-### Staker-owner gated
+### Holder-gated and helper collection
 
-- **`collectVestedRewards(hook, tokenIds, tokens, beneficiary)`** — shared base implementation; only the staker (see A.3.1). Reverts `JBDistributor_EmptyTokenIds` if empty, gates on `_requireCanClaimTokenIds`, materializes past reward rounds via `_claimPastRewards`, then `_unlockRewards(..., ownerClaim: true)` releases the unlocked portion of existing vesting entries to `beneficiary` (`src/JBDistributor.sol:488-513`). Native send failures revert via `JBDistributor_NativeTransferFailed`.
+- **`collectVestedRewards(hook, tokenIds, tokens, beneficiary)`** — shared base implementation. Reverts `JBDistributor_EmptyTokenIds` if empty, validates token IDs, applies `_requireCanCollectTo`, materializes past reward rounds via `_claimPastRewards`, then `_unlockRewards(..., ownerClaim: true)` releases the unlocked portion of existing vesting entries to `beneficiary`. Native send failures revert via `JBDistributor_NativeTransferFailed`. See A.3.2.
 - **`borrowAgainstVesting(hook, tokenIds, tokens, sourceToken, minBorrowAmount, prepaidFeePercent, beneficiary) → (loanId, collateralCount)`** — only the staker. Requires `tokenIds.length == tokens.length == 1`, `VESTING_ROUNDS != 0`, `REV_LOANS != address(0)`, and the reward token must be a REVOwner-owned revnet project token (`src/JBDistributor.sol:527-576, 673-728`). See A.4.
 
 ### Permissionless loan settlement
@@ -116,11 +128,16 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 ### Hook-overridable internals
 
 - **`_canClaim(hook, tokenId, account) view → bool`** — abstract; subclass-defined ownership check.
+- **`_claimBeneficiaryOf(hook, tokenId) view → address`** — abstract; subclass-defined canonical collection
+  beneficiary.
+- **`_claimPastRewards(hook, tokenIds, tokens)`** — abstract; subclass-defined lazy past-round materialization.
+- **`_requireCanClaimTokenIds(hook, tokenIds) view`** — abstract; subclass-defined batch authorization for redirects
+  and borrowing.
 - **`_tokenBurned(hook, tokenId) view → bool`** — abstract; subclass-defined burn check.
 - **`_tokenStake(hook, tokenId) view → uint256`** — abstract; subclass-defined stake weight.
 - **`_totalStake(hook, groupId, blockNumber) view → uint256`** — abstract; subclass-defined total at block (721 group 0 = `getPastTotalActiveVotes`, tier-scoped group = summed `getPastTotalTierActiveVotes` over the group's tier set; token distributors ignore `groupId`, returning global supply for non-expiring rounds and active-vote supply for active-voter rounds).
-- **`_claimPastRewards(hook, tokenIds, tokens)`** — abstract; subclass-defined lazy past-round materialization.
-- **`_requireCanClaimTokenIds(hook, tokenIds) view`** — abstract; subclass-defined batch authorization.
+- **`_validateTokenIds(hook, tokenIds) view`** — abstract; subclass-defined batch validation for permissionless
+  vesting.
 
 ### Views
 
@@ -135,15 +152,15 @@ Concrete distributor for IVotes ERC-20 stakers. `tokenId` is the staker address 
 - **`processSplitWith(JBSplitHookContext) payable`** — only `DIRECTORY.isTerminalOf(projectId, msg.sender)` OR `DIRECTORY.controllerOf(projectId) == msg.sender` (`src/JBTokenDistributor.sol:107-145`).
   - **Invariants:** for native, `msg.value == context.amount` exactly (reverts `JBTokenDistributor_NativeAmountMismatch`); for ERC-20, `msg.value == 0` (reverts `JBTokenDistributor_TokenMismatch`) and pull via balance-delta accounting; `hook = context.split.beneficiary` is the IVotes token address.
 
-### Staker-owner-gated
+### Claiming and collection
 
-- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1) and gate on `_canClaim` (only the encoded staker). They dispatch into this distributor's `_claimPastRewards` override, which materializes all completed past rounds (`< currentRound()`) into one fresh vesting entry per token (`src/JBTokenDistributor.sol:172-206`).
+- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1). `beginVesting` can be called by any helper for a valid encoded staker slot. `collectVestedRewards` lets helpers collect only to the encoded staker, while the encoded staker can choose any beneficiary. Both dispatch into this distributor's `_claimPastRewards` override, which materializes all completed past rounds (`< currentRound()`) into one fresh vesting entry per token.
 
 ### Internals
 
 - `_claimPastRewardsForTokenId` / `_claimRewardsFor` iterate `[firstRound, lastRound]`. Token rounds accumulate `mulDiv(round.amount, pastVotes, round.totalStake)` against the denominator recorded at funding. Expired active-voter rounds with zero active votes recycle.
 - `_tokenBurned` is hardcoded `false`; `releaseForfeitedRewards` therefore always reverts on this distributor (A.5.4).
-- `_canClaim` rejects `tokenId >> 160 != 0` to defeat address-alias attacks (`src/JBTokenDistributor.sol:321-327`).
+- `_claimBeneficiaryOf` rejects `tokenId >> 160 != 0` to defeat address-alias attacks.
 
 ### Views
 
@@ -163,9 +180,9 @@ Concrete distributor for Juicebox 721 NFT stakers. `tokenId` is the NFT token ID
 
 - **`processSplitWith(JBSplitHookContext) payable`** — same auth pattern as C.2 with `JB721Distributor_*` errors (`src/JB721Distributor.sol:125-163`).
 
-### Staker-owner-gated (current NFT owner)
+### Claiming and collection
 
-- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1) and gate on `_canClaim` (only the current NFT owner); tokenIds must be strictly increasing (A.3.3). They dispatch into this distributor's `_claimPastRewards` override, which lazy-claims all completed past rounds with owner-tier active-vote caps.
+- `beginVesting` / `collectVestedRewards` are defined once in the base (see C.1). `beginVesting` can be called by any helper for live, strictly-increasing NFT token IDs. `collectVestedRewards` lets helpers collect only to the current NFT owner, while the current NFT owner can choose any beneficiary. Both dispatch into this distributor's `_claimPastRewards` override, which lazy-claims all completed past rounds with owner-tier active-vote caps.
 
 ### Internals
 
@@ -239,8 +256,8 @@ Pure helpers. No state, no auth. Three functions:
 | A.2.4 append-only vesting cursor | `src/JBDistributor.sol:1303-1316` |
 | A.2.5 cursor behavior on empty and active-voter rounds | `src/JBTokenDistributor.sol` `_claimPastRewardsForTokenId`, `_claimRewardsFor`; `src/JB721Distributor.sol` `_claimPastRewardsForToken` |
 | A.2.6 burned tokens skipped in vesting | `src/JB721Distributor.sol:388` |
-| A.3.1 `_canClaim` gating | `src/JBDistributor.sol:665`, `src/JBTokenDistributor.sol:321-327`, `src/JB721Distributor.sol:438-440` |
-| A.3.2 token-distributor `beginVesting` owner-gated | `src/JBDistributor.sol:263-285`, `src/JBTokenDistributor.sol:364-375` |
+| A.3.1 permissionless `beginVesting` validation | `src/JBDistributor.sol` `_beginVesting`, `_validateTokenIds` |
+| A.3.2 collection beneficiary guard | `src/JBDistributor.sol` `_requireCanCollectTo`, `_claimBeneficiaryOf` |
 | A.3.3 721 strictly-increasing tokenIds | `src/JB721Distributor.sol:445-462` |
 | A.4.1 active loan blocks collection | `src/JBDistributor.sol:414, 1256, 1386-1393` |
 | A.4.2 one outstanding loan per position | `src/JBDistributor.sol:682-687` |

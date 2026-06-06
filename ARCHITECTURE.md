@@ -14,7 +14,7 @@ Both variants can be used as `IJBSplitHook` receivers. Each deployment has one i
 
 - snapshot timing must stay coherent
 - tracked funded balance must cover current vesting obligations
-- claim authority must match the distributor type
+- beneficiary routing must match the distributor type
 - expired recycling must only move unclaimed reward-round inventory
 - 721 forfeiture handling must not over-allocate or recycle value accidentally
 - token and 721 variants must preserve the same core vesting math
@@ -55,7 +55,7 @@ fund 721 distributor
   -> assign accepted amount to current reward round
   -> record snapshot block and total 721 checkpointed stake for that round
   -> record the deployment's fixed claim deadline when the duration is nonzero
-  -> current NFT owner later claims rounds <= currentRound - 1
+  -> any helper can materialize rounds <= currentRound - 1 for a live current owner
   -> one fresh vesting entry starts at claim time
 ```
 
@@ -85,7 +85,7 @@ any caller
 
 ```text
 claimant
-  -> prove authority for the token ID or encoded claimant slot
+  -> choose an authorized beneficiary route for the token ID or encoded claimant slot
   -> compute unlocked share
   -> transfer the vested amount
 ```
@@ -125,7 +125,7 @@ The main variables are snapshot balance, total vesting amount, reward-round clai
 ## Safe change guide
 
 - review snapshot timing and vesting math together
-- if claim authority changes, re-check both distributor variants separately
+- if beneficiary-routing authority changes, re-check both distributor variants separately
 - if funding semantics change, test the allowance-based `transferFrom` flow explicitly
 
 ## Canonical checks

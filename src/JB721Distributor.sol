@@ -139,10 +139,10 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     //*********************************************************************//
 
     // The group-0 (all-tiers) `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both
-    // distributors share the exact same flow (authorize -> materialize past rounds via `_claimPastRewards` ->
+    // distributors share the exact same flow (validate -> materialize past rounds via `_claimPastRewards` ->
     // optionally release unlocked), so the round-claim logic lives once in the base and dispatches to this contract's
-    // `_claimPastRewards` / `_requireCanClaimTokenIds` overrides below. The tier-scoped overloads below derive a
-    // canonical group ID from the tier set and call the same base helpers.
+    // `_claimPastRewards` / `_validateTokenIds` overrides below. The tier-scoped overloads below derive a canonical
+    // group ID from the tier set and call the same base helpers.
 
     /// @notice Begin vesting all unclaimed past reward rounds for the specified NFT token IDs in a tier-scoped group.
     /// @param hook The 721 hook whose NFT owners are vesting.
@@ -365,7 +365,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @notice Begin vesting then collect everything unlocked for a tier-scoped reward group.
     /// @param hook The 721 hook whose NFT owners are collecting.
     /// @param tierIds The strictly-increasing tier set defining the group.
-    /// @param tokenIds The IDs of the NFTs to collect for (caller must be authorized for all of them).
+    /// @param tokenIds The IDs of the NFTs to collect for.
     /// @param tokens The reward tokens to collect vested amounts of.
     /// @param beneficiary The recipient of the collected tokens.
     function collectVestedRewards(
@@ -693,7 +693,16 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param account The account to check ownership for.
     /// @return canClaim True if the account owns the token.
     function _canClaim(address hook, uint256 tokenId, address account) internal view override returns (bool canClaim) {
-        canClaim = IERC721(hook).ownerOf(tokenId) == account;
+        canClaim = _claimBeneficiaryOf({hook: hook, tokenId: tokenId}) == account;
+    }
+
+    /// @notice The current NFT owner that receives permissionless collections.
+    /// @param hook The 721 hook the NFT belongs to.
+    /// @param tokenId The NFT token ID to get the owner of.
+    /// @return beneficiary The current NFT owner.
+    function _claimBeneficiaryOf(address hook, uint256 tokenId) internal view override returns (address beneficiary) {
+        // The hook's `ownerOf` reverts for burned or nonexistent NFTs, so only live NFTs can collect.
+        beneficiary = IERC721(hook).ownerOf(tokenId);
     }
 
     /// @notice Derive the canonical group ID for a tier set. The empty set is the all-tiers group (0).
@@ -727,8 +736,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         }
     }
 
-    /// @notice Revert unless the caller is authorized to claim each NFT token ID.
-    /// @param hook The 721 hook whose NFT owners are claiming.
+    /// @notice Revert unless the caller is authorized to redirect or borrow against each NFT token ID.
+    /// @param hook The 721 hook whose NFT owners are being checked.
     /// @param tokenIds The NFT token IDs to check.
     function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
         // Each requested NFT must currently belong to msg.sender and appear in strictly increasing order.
@@ -820,6 +829,27 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
         for (uint256 i; i < tierIds.length;) {
             total += checkpoints.getPastTotalTierActiveVotes({tierId: tierIds[i], blockNumber: blockNumber});
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @notice Revert unless every NFT token ID is live and strictly increasing.
+    /// @param hook The 721 hook whose NFT token IDs are being validated.
+    /// @param tokenIds The NFT token IDs to validate.
+    function _validateTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
+        // Permissionless helpers can start vesting only for live NFTs in a canonical order.
+        for (uint256 i; i < tokenIds.length;) {
+            uint256 tokenId = tokenIds[i];
+
+            if (i != 0 && tokenId <= tokenIds[i - 1]) {
+                revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});
+            }
+
+            // `ownerOf` reverts for burned or nonexistent NFTs, keeping forfeiture-only IDs out of vesting claims.
+            _claimBeneficiaryOf({hook: hook, tokenId: tokenId});
+
             unchecked {
                 ++i;
             }

@@ -30,6 +30,8 @@ deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract packa
   numerator by the snapshot owner's `getPastAccountTierActiveVotes` for the token's tier.
 - Expired reward rounds recycle the unmaterialized remainder after the deadline while preserving rewards that already
   started vesting. Deployments with `CLAIM_DURATION == 0` keep rounds non-expiring.
+- `beginVesting` is permissionless, and `collectVestedRewards` can be called by helpers only when rewards are paid to
+  the canonical holder; authorized holders can still choose any collection beneficiary.
 - Distributor flows include claim, collect, recycle, vesting-loan, and liquidation/write-off event surface that V5
   integrators will not have indexed before.
 

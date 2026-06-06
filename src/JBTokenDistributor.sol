@@ -149,9 +149,9 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     // `beginVesting` and `collectVestedRewards` are provided by `JBDistributor`. Both distributors share the exact
-    // same flow (authorize -> materialize past rounds via `_claimPastRewards` -> optionally release unlocked), so the
+    // same flow (validate -> materialize past rounds via `_claimPastRewards` -> optionally release unlocked), so the
     // round-claim logic lives once in the base and dispatches to this contract's `_claimPastRewards` /
-    // `_requireCanClaimTokenIds` overrides below.
+    // `_validateTokenIds` overrides below.
 
     //*********************************************************************//
     // -------------------------- public views --------------------------- //
@@ -360,18 +360,28 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
-    /// @notice Check if the account matches the staker address encoded in the tokenId.
-    /// @dev tokenId encodes the staker address as `uint256(uint160(stakerAddress))`.
+    /// @notice Check if the account matches the staker address encoded in the token ID.
+    /// @dev The token ID encodes the staker address as `uint256(uint160(stakerAddress))`.
     /// @param hook Unused — access is determined by the tokenId encoding.
     /// @param tokenId The encoded staker address.
     /// @param account The account to check.
     /// @return canClaim True if the account matches the encoded address.
     function _canClaim(address hook, uint256 tokenId, address account) internal pure override returns (bool canClaim) {
         hook; // Silence unused variable warning.
+        canClaim = _claimBeneficiaryOf({hook: hook, tokenId: tokenId}) == account;
+    }
+
+    /// @notice The encoded staker address that receives permissionless collections.
+    /// @dev Reverts on high-bit aliasing so every token ID maps to exactly one address.
+    /// @param hook Unused — the beneficiary is determined by the token ID encoding.
+    /// @param tokenId The encoded staker address.
+    /// @return beneficiary The staker address encoded in `tokenId`.
+    function _claimBeneficiaryOf(address hook, uint256 tokenId) internal pure override returns (address beneficiary) {
+        hook; // Silence unused variable warning.
         if (tokenId >> 160 != 0) revert JBTokenDistributor_InvalidTokenId({tokenId: tokenId});
         // The high bits were checked above, so this cast recovers the encoded address.
         // forge-lint: disable-next-line(unsafe-typecast)
-        canClaim = address(uint160(tokenId)) == account;
+        beneficiary = address(uint160(tokenId));
     }
 
     /// @notice Revert unless the caller is authorized to claim each token ID.
@@ -458,5 +468,19 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
 
         // All token reward rounds split only across units delegated to nonzero delegates at the snapshot block.
         totalStakedAmount = IJBActiveVotes(hook).getPastTotalActiveVotes(blockNumber);
+    }
+
+    /// @notice Revert unless every token ID can be decoded as a staker address.
+    /// @param hook The IVotes token whose staker slots are being validated.
+    /// @param tokenIds The encoded staker addresses to validate.
+    function _validateTokenIds(address hook, uint256[] calldata tokenIds) internal pure override {
+        // Permissionless helpers can start vesting for any valid encoded staker slot.
+        for (uint256 i; i < tokenIds.length;) {
+            _claimBeneficiaryOf({hook: hook, tokenId: tokenIds[i]});
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 }

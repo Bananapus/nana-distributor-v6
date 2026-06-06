@@ -702,6 +702,57 @@ contract JBTokenDistributorTest is Test {
         distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, bob);
     }
 
+    function test_helperCanBeginVestingForStaker() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        _fundDistributor(1000 ether);
+        _advanceToRound(1);
+
+        IERC20[] memory tokens = _singleRewardToken();
+
+        vm.prank(carol);
+        distributor.beginVesting(address(votesToken), _singleTokenId(alice), tokens);
+
+        uint256 aliceClaimed =
+            distributor.claimedFor(address(votesToken), _tokenId(alice), IERC20(address(rewardToken)));
+        assertEq(aliceClaimed, 1000 ether, "helper should start Alice's vesting");
+    }
+
+    function test_helperCanCollectToEncodedStaker() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        _fundDistributor(1000 ether);
+        _advanceToRound(1);
+
+        IERC20[] memory tokens = _singleRewardToken();
+        distributor.beginVesting(address(votesToken), _singleTokenId(alice), tokens);
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(carol);
+        distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, alice);
+
+        assertEq(rewardToken.balanceOf(alice), 1000 ether, "helper should collect only to Alice");
+    }
+
+    function test_ownerCanCollectToDifferentBeneficiary() public {
+        vm.prank(alice);
+        votesToken.delegate(alice);
+
+        _fundDistributor(1000 ether);
+        _advanceToRound(1);
+
+        IERC20[] memory tokens = _singleRewardToken();
+        distributor.beginVesting(address(votesToken), _singleTokenId(alice), tokens);
+        _advanceToRound(1 + VESTING_ROUNDS);
+
+        vm.prank(alice);
+        distributor.collectVestedRewards(address(votesToken), _singleTokenId(alice), tokens, bob);
+
+        assertEq(rewardToken.balanceOf(bob), 1000 ether, "Alice should be able to choose Bob");
+    }
+
     function test_supportsInterface() public view {
         assertTrue(distributor.supportsInterface(type(IJBTokenDistributor).interfaceId), "IJBTokenDistributor");
         assertTrue(distributor.supportsInterface(type(IJBSplitHook).interfaceId), "IJBSplitHook");

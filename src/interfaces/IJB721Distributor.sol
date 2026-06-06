@@ -65,6 +65,7 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
     //*********************************************************************//
 
     /// @notice Claims tokens and begins vesting from a tier-scoped reward group.
+    /// @dev Permissionless. No reward tokens leave the distributor.
     /// @param hook The hook whose stakers are vesting.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenIds The IDs to claim rewards for.
@@ -102,6 +103,8 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
         returns (uint256 loanId, uint256 collateralCount);
 
     /// @notice Collect vested tokens from a tier-scoped reward group.
+    /// @dev Authorized NFT owners can collect to any beneficiary. Helpers can collect only to the canonical
+    /// beneficiary of every token ID they do not control.
     /// @param hook The hook whose stakers are collecting.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenIds The IDs of the tokens to collect for.

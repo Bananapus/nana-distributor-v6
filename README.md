@@ -6,7 +6,7 @@
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — system overview, modules, trust boundaries, and core invariants.
 - [USER_JOURNEYS.md](./USER_JOURNEYS.md) — end-to-end flows for funders and claimants across token and 721 variants.
-- [INVARIANTS.md](./INVARIANTS.md) — per-section invariants for snapshot fairness, vesting math, claim authority, loans, and recycling.
+- [INVARIANTS.md](./INVARIANTS.md) — per-section invariants for snapshot fairness, vesting math, beneficiary routing, loans, and recycling.
 - [RISKS.md](./RISKS.md) — risk register with priority risks and the minimum invariants to verify.
 - [ADMINISTRATION.md](./ADMINISTRATION.md) — deployment parameters, control posture, and recovery guidance.
 - [SKILLS.md](./SKILLS.md) — quick index for routing tasks into the right sub-document.
@@ -43,9 +43,10 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 1. a project funds the distributor, often through a payout split
 2. accepted funding is assigned to the current reward round for the chosen token or 721 stake source
 3. each funded reward round records an active-vote snapshot denominator for its token, collection, or tier group
-4. the encoded token staker or current NFT owner later claims completed past reward rounds into a fresh vesting entry
+4. anyone can start vesting completed past reward rounds for an encoded token staker or current NFT owner
 5. anyone can recycle expired reward-round inventory that has not started vesting after the claim deadline
-6. recipients collect their vested share as the configured vesting schedule unlocks
+6. recipients collect their vested share as the configured vesting schedule unlocks; helpers can collect only to the
+   canonical holder
 7. eligible claimants can borrow against vesting revnet rewards without bypassing the vesting schedule
 8. some unclaimable value can be recycled through explicit cleanup paths, depending on the distributor type
 
@@ -61,8 +62,10 @@ This repo does not explain why an allocation exists. It only defines how funded 
 ## Integration traps
 
 - distribution correctness depends on the distributor actually holding the assets it is expected to vest
-- ERC-20 and ERC-721 distributions share historical reward-round accounting, but claim authority differs:
-  token rewards are claimed by the encoded staker address, while 721 rewards are claimed by the current NFT owner
+- ERC-20 and ERC-721 distributions share historical reward-round accounting, but their canonical beneficiaries differ:
+  token rewards belong to the encoded staker address, while 721 rewards belong to the current NFT owner
+- `beginVesting` is permissionless because no value leaves the distributor; `collectVestedRewards` is permissionless
+  only when paid to the canonical beneficiary, while an authorized holder can still choose any beneficiary
 - `CLAIM_DURATION` is fixed at deployment; `0` means reward rounds do not expire, while nonzero values set the window
   after which unmaterialized reward inventory can be recycled
 - token distributors record `IJBActiveVotes.getPastTotalActiveVotes` at the funded round's snapshot block; only

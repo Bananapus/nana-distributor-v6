@@ -248,6 +248,7 @@ interface IJBDistributor {
     //*********************************************************************//
 
     /// @notice Claims tokens and begins vesting from the default group.
+    /// @dev Permissionless. No reward tokens leave the distributor.
     /// @param hook The hook whose stakers are vesting.
     /// @param tokenIds The IDs to claim rewards for.
     /// @param tokens The tokens to claim.
@@ -276,6 +277,8 @@ interface IJBDistributor {
         returns (uint256 loanId, uint256 collateralCount);
 
     /// @notice Collect vested tokens from the default group.
+    /// @dev Authorized holders can collect to any beneficiary. Helpers can collect only to the canonical beneficiary
+    /// of every token ID they do not control.
     /// @param hook The hook whose stakers are collecting.
     /// @param tokenIds The IDs of the tokens to collect for.
     /// @param tokens The addresses of the tokens to collect.
