@@ -323,8 +323,9 @@ abstract contract JBDistributor is IJBDistributor {
         amount = _recycleExpiredRewards({hook: hook, groupId: 0, token: token, rounds: rounds});
     }
 
-    /// @notice Recycle unlocked rewards tied to burned tokens into the current reward round.
-    /// @dev Anyone can call this for burned tokens.
+    /// @notice Recycle rewards tied to burned tokens into the current reward round as they unlock.
+    /// @dev Anyone can call this for burned tokens. Unclaimed historical shares are materialized before unlocked
+    /// forfeited amounts are recycled.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens (reverts if any are not actually burned).
     /// @param tokens The reward tokens to recycle.
@@ -641,6 +642,8 @@ abstract contract JBDistributor is IJBDistributor {
     }
 
     /// @notice Shared forfeiture-release logic across reward groups.
+    /// @dev Materializes unclaimed historical shares for burned token IDs before recycling the currently unlocked
+    /// forfeited amount.
     /// @param hook The hook whose tokens were burned.
     /// @param groupId The reward group (0 = the default group).
     /// @param tokenIds The IDs of the burned tokens.
@@ -658,6 +661,9 @@ abstract contract JBDistributor is IJBDistributor {
         // Do not let reward-token callbacks mutate vesting state during inbound balance-delta accounting.
         _requireNotAcceptingToken();
 
+        // Let concrete distributors enforce forfeiture-only validation before claim cursors can move.
+        _validateForfeitedTokenIds({hook: hook, tokenIds: tokenIds});
+
         // Make sure that all staker token IDs are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
@@ -668,7 +674,10 @@ abstract contract JBDistributor is IJBDistributor {
             }
         }
 
-        // Unlock the rewards and recycle the forfeited amount.
+        // Materialize any still-unclaimed historical shares using the same reward math as live claims.
+        _claimPastRewards({hook: hook, groupId: groupId, tokenIds: tokenIds, tokens: tokens});
+
+        // Unlock the vested forfeiture amount and recycle it into the current reward round.
         _unlockRewards({
             hook: hook,
             groupId: groupId,
@@ -1605,12 +1614,22 @@ abstract contract JBDistributor is IJBDistributor {
         }
     }
 
-    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations,
-    /// and their unlocked forfeited rewards can be recycled via `releaseForfeitedRewards`.
+    /// @notice Check whether a staker token has been burned. Burned tokens are excluded from stake calculations, and
+    /// their historical forfeited rewards can be materialized and recycled via `releaseForfeitedRewards`.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The token ID to check.
     /// @return tokenWasBurned True if the token has been burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view virtual returns (bool tokenWasBurned);
+
+    /// @notice Validate token IDs passed to `releaseForfeitedRewards`.
+    /// @dev Defaults to no additional validation. Concrete distributors can enforce ordering or model-specific rules
+    /// that are not captured by `_tokenBurned`.
+    /// @param hook The hook the token IDs belong to.
+    /// @param tokenIds The token IDs to validate for forfeiture.
+    function _validateForfeitedTokenIds(address hook, uint256[] calldata tokenIds) internal view virtual {
+        hook;
+        tokenIds;
+    }
 
     /// @notice The stake weight of a specific token ID, used to calculate its pro-rata share of distributions.
     /// @dev Subclasses define how stake is measured.

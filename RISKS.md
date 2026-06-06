@@ -115,9 +115,11 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - expired recycling settles eligible expired rounds and records the recycled amount into the current round without changing
   tracked balance; active-voter token rounds with nonzero active votes do not recycle
 - `latestVestedIndexOf` advances contiguously
-- burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their unlocked forfeited rewards recycle only through the explicit forfeiture path
+- burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their historical forfeited rewards
+  materialize and recycle only through the explicit forfeiture path
 - only the encoded address can begin vesting or collect from the token distributor
-- only the current NFT owner can begin vesting or collect from the 721 distributor
+- only live NFT IDs can begin vesting, and collection helpers must route to the current NFT owner unless the owner
+  redirects rewards themselves
 - native split-hook credits equal the native value actually received, and ERC-20 split-hook credits are measured by
   token balance delta with no accompanying `msg.value`
 - ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
@@ -145,7 +147,10 @@ This is intentionally different from late non-expiring claims. Non-expiring roun
 
 ### 7.3 Rewards can remain undistributed when stake is missing
 
-If participants have zero effective stake for a funded reward round, their share is not redirected to later claimants. It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For 721 distributions, already-materialized unvested or forfeited value can still return to the distributable pool under the 721-specific rules.
+If participants have zero effective stake for a funded reward round, their share is not redirected to later claimants.
+It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For
+721 distributions, burned NFTs' unclaimed historical shares can be materialized through `releaseForfeitedRewards`, and
+the unlocked forfeited value can return to the distributable pool under the 721-specific rules.
 
 ### 7.4 721 and `IVotes` variants intentionally differ
 
@@ -157,7 +162,8 @@ They share the vesting engine but not the same ownership model.
 
 ### 7.6 Burned-token forfeiture follows the vesting curve
 
-`releaseForfeitedRewards()` does not immediately free the full nominal amount of every burned token's vesting entry. It
-uses the same linear unlock math as collection, with `ownerClaim = false`, so only the currently unlocked portion is
-removed from `totalVestingAmountOf` and recycled into the current reward round. Still-locked forfeited portions stay
-accounted as vesting until a later forfeiture call unlocks and recycles them.
+`releaseForfeitedRewards()` does not immediately free the full nominal amount tied to every burned token. It first
+materializes any unclaimed historical shares for the burned token IDs, then uses the same linear unlock math as
+collection, with `ownerClaim = false`. Only the currently unlocked portion is removed from `totalVestingAmountOf` and
+recycled into the current reward round. Still-locked forfeited portions stay accounted as vesting until a later
+forfeiture call unlocks and recycles them.

@@ -314,7 +314,8 @@ interface IJBDistributor {
         external
         returns (uint256 amount);
 
-    /// @notice Recycle unlocked rewards from burned tokens in the default group into the current reward round.
+    /// @notice Recycle rewards from burned tokens in the default group into the current reward round as they unlock.
+    /// @dev Unclaimed historical reward shares are materialized before the unlocked forfeited amount is recycled.
     /// @param hook The hook whose tokens were burned.
     /// @param tokenIds The IDs of the burned tokens.
     /// @param tokens The reward tokens to recycle.

@@ -1210,6 +1210,50 @@ contract JB721DistributorTest is Test {
         assertEq(recycledAmount, 125 ether);
     }
 
+    function test_releaseForfeitedRewards_materializesUnclaimedBurnedRewards() public {
+        _fundHook(1000 ether);
+
+        uint256[] memory tokenIds = _singleTokenId(1);
+        IERC20[] memory tokens = _singleRewardToken();
+
+        (, uint256 snapshotBlock,,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
+        hook.setHistoricalOwner(1, snapshotBlock, alice);
+
+        _advanceToNextRound();
+        hook.burn(1);
+
+        distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
+
+        // The burned NFT's historical share is no longer stranded in the reward round.
+        (,, uint256 claimedAmount,,) = distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), 0);
+        assertEq(claimedAmount, 250 ether);
+
+        // The materialized share follows the vesting curve before it can recycle.
+        assertEq(distributor.nextClaimRoundOf(address(hook), 0, 1, IERC20(address(rewardToken))), 1);
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 250 ether);
+        assertEq(distributor.balanceOf(address(hook), IERC20(address(rewardToken))), 1000 ether);
+
+        _advanceToRound(1 + VESTING_ROUNDS);
+        distributor.releaseForfeitedRewards(address(hook), tokenIds, tokens, address(0));
+
+        // Once fully vested, the forfeited share recycles into the current active NFT set.
+        assertEq(distributor.totalVestingAmountOf(address(hook), IERC20(address(rewardToken))), 0);
+
+        (uint256 recycledAmount,,,,) =
+            distributor.rewardRoundOf(address(hook), 0, IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(recycledAmount, 250 ether);
+    }
+
+    function test_releaseForfeitedRewards_duplicateBurnedTokenIds_reverts() public {
+        _fundHook(1000 ether);
+
+        _advanceToNextRound();
+        hook.burn(1);
+
+        vm.expectRevert(abi.encodeWithSelector(JB721Distributor.JB721Distributor_TokenIdsNotIncreasing.selector, 1, 1));
+        distributor.releaseForfeitedRewards(address(hook), _duplicateTokenIds(1), _singleRewardToken(), address(0));
+    }
+
     /// @notice Burned token IDs are skipped during beginVesting — no overbooking.
     function test_burnedTokenSkippedDuringVesting() public {
         uint256[] memory tokenIds = new uint256[](2);

@@ -27,7 +27,7 @@ import {JBVestingData} from "./structs/JBVestingData.sol";
 /// @dev Any project can use this distributor by configuring a payout split with
 /// `hook = this contract` and `beneficiary = address(their 721 hook)`.
 /// @dev The stake weight of each NFT is its tier's `votingUnits`. Burned NFTs are excluded from the total stake
-/// calculation and their unlocked forfeited rewards can be recycled via `releaseForfeitedRewards`.
+/// calculation, and their historical rewards can be materialized and recycled via `releaseForfeitedRewards`.
 /// @dev Funded rewards are assigned to the funding round. NFT owners claim historical rounds lazily; all unclaimed
 /// past rewards begin vesting when the current NFT owner claims, not when the rewards were funded.
 /// @dev Implements `IJBSplitHook` so it can receive tokens directly from Juicebox project payout splits.
@@ -245,8 +245,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         amount = _recycleExpiredRewards({hook: hook, groupId: _groupIdFor(tierIds), token: token, rounds: rounds});
     }
 
-    /// @notice Recycle unlocked rewards tied to burned NFTs in a tier-scoped group into the current reward round.
-    /// @dev Anyone can call this for burned tokens.
+    /// @notice Recycle rewards tied to burned NFTs in a tier-scoped group into the current reward round as they unlock.
+    /// @dev Anyone can call this for burned tokens. Unclaimed historical shares are materialized before unlocked
+    /// forfeited amounts are recycled.
     /// @param hook The 721 hook whose NFTs were burned.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenIds The IDs of the burned NFTs (reverts if any are not actually burned).
@@ -767,6 +768,28 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
             tokenWasBurned = false;
         } catch {
             tokenWasBurned = true;
+        }
+    }
+
+    /// @notice Revert unless burned NFT token IDs are strictly increasing.
+    /// @dev Forfeiture materializes unclaimed historical shares before recycling vested amounts, so burned token IDs
+    /// need the same no-duplicate ordering guarantee as live claim batches.
+    /// @param hook Unused for ordering validation.
+    /// @param tokenIds The burned NFT token IDs to validate.
+    function _validateForfeitedTokenIds(address hook, uint256[] calldata tokenIds) internal pure override {
+        hook;
+
+        // Permissionless forfeiture callers must submit each burned NFT once in canonical order.
+        for (uint256 i; i < tokenIds.length;) {
+            uint256 tokenId = tokenIds[i];
+
+            if (i != 0 && tokenId <= tokenIds[i - 1]) {
+                revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});
+            }
+
+            unchecked {
+                ++i;
+            }
         }
     }
 

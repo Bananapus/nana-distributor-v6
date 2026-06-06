@@ -81,6 +81,17 @@ any caller
   -> the stale collection lock is cleared while newer vesting entries remain collectable
 ```
 
+### 721 forfeiture recycle
+
+```text
+any caller
+  -> provide burned NFT token IDs and reward tokens
+  -> distributor verifies the token IDs are burned and strictly increasing
+  -> unclaimed historical shares for those burned NFTs are materialized into vesting entries
+  -> the currently unlocked forfeited amount is recycled into the current reward round
+  -> still-locked forfeited vesting remains accounted until a later forfeiture call unlocks it
+```
+
 ### Collect
 
 ```text

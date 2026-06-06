@@ -161,9 +161,11 @@ start a holder's vesting clock without needing wallet access from the holder.
 
 **Main Flow**
 1. Call `releaseForfeitedRewards`.
-2. The distributor reduces current vesting obligations for those forfeited claims.
-3. The released value remains in distributor inventory.
-4. The released value is recorded into the current reward round.
+2. The distributor verifies the NFT token IDs are burned and strictly increasing.
+3. The distributor materializes any unclaimed historical reward shares for those burned NFTs.
+4. The distributor reduces current vesting obligations only for the portion that has unlocked.
+5. The released value remains in distributor inventory.
+6. The released value is recorded into the current reward round.
 
 **Failure Modes**
 - caller expects the same behavior from the token distributor
@@ -171,6 +173,7 @@ start a holder's vesting clock without needing wallet access from the holder.
 
 **Postconditions**
 - forfeited 721 rewards are no longer available to the burned NFT
+- still-locked forfeited rewards remain accounted as vesting until a later forfeiture call unlocks them
 - forfeited 721 rewards become available through the current reward round after a later round starts
 
 ## Journey 6: Borrow against vesting Revnet rewards

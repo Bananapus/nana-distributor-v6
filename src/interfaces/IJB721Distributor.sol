@@ -142,7 +142,8 @@ interface IJB721Distributor is IJBDistributor, IJBSplitHook {
         external
         returns (uint256 amount);
 
-    /// @notice Recycle unlocked rewards from burned tokens in a tier-scoped group into the current reward round.
+    /// @notice Recycle rewards from burned tokens in a tier-scoped group into the current reward round as they unlock.
+    /// @dev Unclaimed historical reward shares are materialized before the unlocked forfeited amount is recycled.
     /// @param hook The hook whose tokens were burned.
     /// @param tierIds The strictly-increasing tier set defining the group.
     /// @param tokenIds The IDs of the burned tokens.

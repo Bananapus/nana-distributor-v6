@@ -67,8 +67,9 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 - **A.5.1 `recycleExpiredRewards` recycles eligible expired inventory into the current round.** Permissionless. Only acts on rounds whose `claimDeadline != 0` and `block.timestamp >= claimDeadline`. `claimedAmount` is set to `amount` BEFORE the new round write, so the round cannot double-recycle. In `JBTokenDistributor`, active-voter rounds with nonzero active votes recycle zero and remain claimable by snapshot voters.
 - **A.5.2 `CLAIM_DURATION == 0` makes rewards never expire.** `_claimDeadlineFor` returns 0 (`src/JBDistributor.sol:1155-1161`) and `_rewardRoundExpired` returns false unconditionally (`src/JBDistributor.sol:1166-1173`).
 - **A.5.3 Expired rounds short-circuit during lazy claim only when they are recyclable.** `JBTokenDistributor._claimRewardsFor` recycles an expired active-voter round only if its recorded active-vote total is zero; otherwise snapshot voters can still materialize their pro-rata share after the deadline. `JB721Distributor._claimPastRewardsForToken` routes expired unclaimed rounds through `_recycleExpiredRewardRound`.
-- **A.5.4 `releaseForfeitedRewards` requires tokenIds actually burned.** Reverts `JBDistributor_NoAccess` unless every requested tokenId returns `_tokenBurned == true` (`src/JBDistributor.sol:341-365`). For `JBTokenDistributor` this always reverts because `_tokenBurned` is hardcoded `false` (`src/JBTokenDistributor.sol:334-338`); only the 721 distributor exposes this path (`src/JB721Distributor.sol:468-474`).
-- **A.5.5 Forfeited inventory recycles into the current round, not to the caller.** `_unlockRewards` with `ownerClaim=false` calls `_recordRewardRound` for the unlocked amount instead of transferring; the inventory stays inside the distributor (`src/JBDistributor.sol:1224-1228`). The `beneficiary` argument is intentionally unused on the forfeit path.
+- **A.5.4 `releaseForfeitedRewards` requires tokenIds actually burned.** Reverts `JBDistributor_NoAccess` unless every requested tokenId returns `_tokenBurned == true`. For `JBTokenDistributor` this always reverts because `_tokenBurned` is hardcoded `false`; only the 721 distributor exposes this path.
+- **A.5.5 Forfeited 721 inventory materializes before it recycles.** `releaseForfeitedRewards` calls `_claimPastRewards` for burned token IDs before `_unlockRewards`, so non-expiring historical shares cannot stay outside both vesting and expiry accounting. The 721 distributor requires burned token IDs to be strictly increasing before those claim cursors can move.
+- **A.5.6 Forfeited inventory recycles into the current round, not to the caller.** `_unlockRewards` with `ownerClaim=false` calls `_recordRewardRound` for the unlocked amount instead of transferring; the inventory stays inside the distributor. The `beneficiary` argument is intentionally unused on the forfeit path.
 
 ## A.6 Tier-scoped reward groups
 
@@ -112,7 +113,7 @@ The only authority granted at construction is a wildcard `BURN_TOKENS` permissio
 
 - **`beginVesting(hook, tokenIds, tokens)`** — shared base implementation for both distributors. Reverts `JBDistributor_EmptyTokenIds` if empty, validates token IDs, then calls `_claimPastRewards` to materialize historical reward rounds. Active-voter token rounds with nonzero active votes materialize lazily; resolved empty rounds advance the cursor (A.2.5).
 - **`recycleExpiredRewards(hook, token, rounds[]) → amount`** — permissionless (`src/JBDistributor.sol:304-327`). See A.5.1.
-- **`releaseForfeitedRewards(hook, tokenIds, tokens, beneficiary)`** — permissionless; requires burned tokenIds (`src/JBDistributor.sol:341-365`). See A.5.4.
+- **`releaseForfeitedRewards(hook, tokenIds, tokens, beneficiary)`** — permissionless; requires burned tokenIds, materializes their unclaimed historical shares, then recycles the unlocked forfeited amount. See A.5.4-A.5.6.
 - **`poke()`** — permissionless snapshot lock-in (`src/JBDistributor.sol:331-333`). See A.1.3.
 
 ### Holder-gated and helper collection
@@ -275,8 +276,9 @@ Pure helpers. No state, no auth. Three functions:
 | A.5.1 recycleExpiredRewards permissionless recycle | `src/JBDistributor.sol:304-327, 1060-1096` |
 | A.5.2 CLAIM_DURATION==0 → no expiry | `src/JBDistributor.sol:1155-1173` |
 | A.5.3 lazy claim handles expired rounds | `src/JBTokenDistributor.sol` `_claimRewardsFor`, `src/JB721Distributor.sol` `_claimPastRewardsForToken` |
-| A.5.4 releaseForfeitedRewards requires burns | `src/JBDistributor.sol:341-365`, `src/JBTokenDistributor.sol:334-338`, `src/JB721Distributor.sol:468-474` |
-| A.5.5 forfeit recycles into current round | `src/JBDistributor.sol:1224-1228` |
+| A.5.4 releaseForfeitedRewards requires burns | `src/JBDistributor.sol` `_releaseForfeitedRewards`, `src/JBTokenDistributor.sol` `_tokenBurned`, `src/JB721Distributor.sol` `_tokenBurned` |
+| A.5.5 forfeited 721 inventory materializes before recycling | `src/JBDistributor.sol` `_releaseForfeitedRewards`, `src/JB721Distributor.sol` `_validateForfeitedTokenIds` |
+| A.5.6 forfeit recycles into current round | `src/JBDistributor.sol` `_unlockRewards` |
 | C.2 `processSplitWith` terminal/controller gate (token) | `src/JBTokenDistributor.sol:107-145` |
 | C.3 `processSplitWith` terminal/controller gate (721) | `src/JB721Distributor.sol:125-163` |
 | D.4 `_requireNotAcceptingToken` reentrancy guard | `src/JBDistributor.sol:1377-1380` |

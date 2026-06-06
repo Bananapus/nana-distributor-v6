@@ -48,7 +48,7 @@ If the issue is "where did the project's value come from?" start in `nana-core-v
 6. recipients collect their vested share as the configured vesting schedule unlocks; helpers can collect only to the
    canonical holder
 7. eligible claimants can borrow against vesting revnet rewards without bypassing the vesting schedule
-8. some unclaimable value can be recycled through explicit cleanup paths, depending on the distributor type
+8. burned 721 rewards can be materialized and recycled through explicit cleanup paths as they vest
 
 This repo does not explain why an allocation exists. It only defines how funded inventory is handed out.
 
@@ -83,8 +83,9 @@ This repo does not explain why an allocation exists. It only defines how funded 
   stale collection lock and forfeit only the vesting rewards that were collateralized by that loan
 - distributors deployed with `VESTING_ROUNDS == 0` disable revnet vesting loans because rewards are immediately
   collectible instead of locked in a vesting position
-- `releaseForfeitedRewards` matters for 721 distributions; token-vote distributions do not have the same burned-token
-  forfeiture path
+- `releaseForfeitedRewards` matters for 721 distributions; it first materializes any unclaimed historical shares for
+  burned NFTs, then recycles only the amount unlocked by the vesting schedule. Token-vote distributions do not have the
+  same burned-token forfeiture path
 - reward, vesting, and loan accounting carries a `groupId`: `0` is the all-tiers group (the default pool), a non-zero
   group is `keccak256(abi.encode(tierIds))`. The tier overloads live on `JB721Distributor`; the base is tier-agnostic.
   Split funding via `processSplitWith` always lands in group 0 — a split cannot carry a tier set; tier-scoped pots
