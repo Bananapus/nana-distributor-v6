@@ -121,7 +121,14 @@ contract VPCapMockCheckpoints {
         return 0; // Default: no historical votes (realistic behavior).
     }
 
-    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+    function getPastTotalTierActiveVotes(
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
         blockNumber;
         activeVotes = _tierActiveVotes(tierId);
     }

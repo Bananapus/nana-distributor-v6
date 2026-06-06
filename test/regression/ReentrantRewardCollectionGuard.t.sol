@@ -59,7 +59,7 @@ contract CollectionReentryCheckpoints {
         return account == CollectionReentryHook(hook).owner() ? 100 : 0;
     }
 
-    function getPastTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
         blockNumber;
         return totalSupply;
     }

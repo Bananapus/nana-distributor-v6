@@ -118,7 +118,7 @@ contract Mock721Checkpoints {
         return account == address(0) ? 0 : 100;
     }
 
-    function getPastTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
         blockNumber;
         return (3 - hook.STORE().burned()) * 100;
     }

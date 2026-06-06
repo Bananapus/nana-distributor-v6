@@ -143,7 +143,14 @@ contract VotingCapMockCheckpoints {
         return type(uint256).max;
     }
 
-    function getPastTierActiveVotes(uint256 tierId, uint256 blockNumber) external view returns (uint256 activeVotes) {
+    function getPastTotalTierActiveVotes(
+        uint256 tierId,
+        uint256 blockNumber
+    )
+        external
+        view
+        returns (uint256 activeVotes)
+    {
         blockNumber;
         activeVotes = _tierActiveVotes(tierId);
     }

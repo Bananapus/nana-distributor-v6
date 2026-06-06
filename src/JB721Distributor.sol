@@ -814,8 +814,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
 
     /// @notice The total active stake sharing a group's round rewards at a specific block.
     /// @dev For the all-tiers group (0) this is `getPastTotalActiveVotes` from the hook's checkpoints module. For a
-    /// tier-scoped group it is the summed `getPastTierActiveVotes` over the group's tier set. `CLAIM_DURATION` only
-    /// controls expiry.
+    /// tier-scoped group it is the summed `getPastTotalTierActiveVotes` over the group's tier set. `CLAIM_DURATION`
+    /// only controls expiry.
     /// @param hook The hook to get the total stake for.
     /// @param groupId The reward group (0 = all tiers).
     /// @param blockNumber The block number to get the total staked amount at.
@@ -840,7 +840,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         // Tier-scoped group: sum each funded tier's active voting units at the snapshot block.
         uint256[] memory tierIds = _tierIdsOfGroup[hook][groupId];
         for (uint256 i; i < tierIds.length;) {
-            total += checkpoints.getPastTierActiveVotes({tierId: tierIds[i], blockNumber: blockNumber});
+            total += checkpoints.getPastTotalTierActiveVotes({tierId: tierIds[i], blockNumber: blockNumber});
             unchecked {
                 ++i;
             }

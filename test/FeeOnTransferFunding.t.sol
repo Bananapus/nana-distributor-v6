@@ -43,7 +43,7 @@ contract _FotCheckpoints {
         return 1;
     }
 
-    function getPastTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external pure returns (uint256) {
         blockNumber;
         return 1;
     }

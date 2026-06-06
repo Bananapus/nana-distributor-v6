@@ -123,7 +123,7 @@ contract Regression721Checkpoints {
         return totalSupply;
     }
 
-    function getPastTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
+    function getPastTotalTierActiveVotes(uint256, uint256 blockNumber) external view returns (uint256) {
         blockNumber;
         return totalSupply;
     }

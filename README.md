@@ -87,7 +87,7 @@ This repo does not explain why an allocation exists. It only defines how funded 
   require the explicit `fund(hook, tierIds, token, amount)` overload, and claims/collections must pass the same
   `tierIds` to hit that group
 - tier-scoped 721 pots weigh each eligible NFT by its tier's `votingUnits` against a summed
-  `getPastTierActiveVotes` denominator, which requires `@bananapus/721-hook-v6 >= 0.0.72` for that checkpoints API
+  `getPastTotalTierActiveVotes` denominator, which requires `@bananapus/721-hook-v6 >= 0.0.73` for that checkpoints API
 - snapshot timing is part of the trusted surface
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 

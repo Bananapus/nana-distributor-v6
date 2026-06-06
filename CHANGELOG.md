@@ -26,7 +26,7 @@ deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract packa
   each claimant's share uses snapshot `getPastVotes`. Undelegated balances, including AMM-held tokens, do not share
   rewards.
 - 721 distributors allocate all-tiers and tier-scoped reward rounds against checkpointed active vote totals from the
-  hook. A tier-scoped group sums `getPastTierActiveVotes` for the funded tier set.
+  hook. A tier-scoped group sums `getPastTotalTierActiveVotes` for the funded tier set.
 - Expired reward rounds recycle the unmaterialized remainder after the deadline while preserving rewards that already
   started vesting. Deployments with `CLAIM_DURATION == 0` keep rounds non-expiring.
 - Distributor flows include claim, collect, recycle, vesting-loan, and liquidation/write-off event surface that V5
@@ -104,4 +104,4 @@ Generated event/error name deltas:
 - AMM-held or otherwise undelegated tokens are inactive until the holder receives the tokens back and delegates before
   a later funded snapshot.
 - This package expects `@bananapus/core-v6 >= 0.0.86` for `IJBActiveVotes` and
-  `@bananapus/721-hook-v6 >= 0.0.72` for the active-vote-aware checkpoint interface.
+  `@bananapus/721-hook-v6 >= 0.0.73` for the active-vote-aware checkpoint interface.
