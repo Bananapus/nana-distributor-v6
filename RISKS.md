@@ -15,7 +15,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 | P0 | Wrong stake snapshot or stale stake source | A bad stake reading misallocates rewards for an entire round. | Snapshot review, invariants, and careful integration with the chosen hook or `IVotes` token. |
 | P1 | Zero-stake or bad-parameter deployment | Bad constructor inputs can brick an instance; no eligible stake can leave reward rounds unclaimable until cleanup rules apply. | Deployment-time validation and operator runbooks. |
 | P1 | Split funding trust mismatch | `processSplitWith` expects exact native value or an ERC-20 allowance and pulls tokens via `transferFrom`. | Restrict callers and test native conservation plus the allowance flow. |
-| P1 | Expiry window misconfiguration | Too-short claim durations can make zero-active rounds recyclable earlier than intended. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
+| P1 | Expiry window misconfiguration | Too-short claim durations can make unclaimed rewards recyclable earlier than intended. | Deployment runbooks, UI warnings, and tests for deadline behavior. |
 | P1 | Revnet loan custody mismatch | If the claimant receives the loan NFT, they can repay directly and bypass vesting. | The distributor owns loan NFTs, blocks collection while collateralized, and restores collateral only through `repayVestingLoan`. |
 | P1 | Reward-token callback accounting | ERC-20 reward tokens are arbitrary contracts and can call back during `transferFrom`; native value transfers (e.g. the vesting-loan overpayment refund) can call back into the recipient. | Transiently block distributor reward-accounting mutations while an inbound ERC-20 balance delta is being measured. Settle a repaid vesting loan's state before refunding any native overpayment, so a re-entrant write-off cannot double-decrement the loaned-vesting inventory (checks-effects-interactions). |
 
@@ -31,7 +31,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Late claims do not reallocate historical rewards.** Funded reward rounds are reserved for historical stakers or NFT owners and are not reassigned merely because someone claims late.
 - **Expiring token rounds are active-voter rounds.** A nonzero immutable claim duration records the hook's
   `getPastTotalActiveVotes` at the funded round's snapshot block. Only addresses with snapshot `getPastVotes` share
-  the pot. A token round with zero active votes can be recycled into the current reward round after its deadline.
+  the pot during the claim window. Unclaimed rewards can be recycled into the current reward round after the deadline.
 - **Claim duration is deployment-wide.** To keep per-round storage compact, one hook/token/round has one claim deadline. Funding calls do not accept caller-chosen deadlines.
 - **Partial-round claims are linear, not cliff-based.**
 - **Forfeited 721 rewards are recycled through the current round.** Burned-token forfeiture removes only the currently
@@ -62,8 +62,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Empty historical claims can be no-ops.** Token and 721 historical claims can succeed without creating a vesting entry when no past reward rounds are claimable or the claimant had zero eligible stake.
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
-- **Expired recycling is permissionless but deadline-gated.** Any caller can recycle eligible expired inventory, but
-  non-expired rounds, non-expiring rounds, and active-voter token rounds with nonzero active votes recycle zero.
+- **Expired recycling is permissionless but deadline-gated.** Any caller can recycle eligible expired inventory after the
+  configured deadline. Non-expired and non-expiring rounds cannot be recycled.
 - **Loan-backed collection is intentionally locked while a loan is active.** If a token ID's vesting rewards are
   collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid or
   liquidated and written off.
@@ -113,7 +113,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - round snapshots stay stable within a round once initialized, including zero-balance ones; active-voter token rounds
   seal `totalStake` from `getPastTotalActiveVotes` at the fixed snapshot block
 - expired recycling settles eligible expired rounds and records the recycled amount into the current round without changing
-  tracked balance; active-voter token rounds with nonzero active votes do not recycle
+  tracked balance
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their historical forfeited rewards
   materialize and recycle only through the explicit forfeiture path
@@ -141,9 +141,9 @@ In both concrete distributors, current-round funding is assigned to the current 
 
 ### 7.2 Expired unclaimed rewards are recyclable
 
-Deployers can set a claim duration to attach a deadline to all funding paths. The window starts when the funded reward round first becomes claimable, not when the transfer lands. For token distributors, a nonzero duration uses the hook's active-vote total at funding. After the deadline, `recycleExpiredRewards` can be called by anyone, but active-voter token rounds with nonzero active votes recycle zero.
+Deployers can set a claim duration to attach a deadline to all funding paths. The window starts when the funded reward round first becomes claimable, not when the transfer lands. For token distributors, a nonzero duration uses the hook's active-vote total at funding. After the deadline, `recycleExpiredRewards` can be called by anyone to move unclaimed expired inventory into the current round.
 
-This is intentionally different from late non-expiring claims. Non-expiring rounds remain reserved for historical stakers or NFT owners indefinitely. Active-voter token rounds trade total-supply dilution for an active-vote denominator; rounds with zero active votes can be cleaned up permissionlessly after the deployer's configured window.
+This is intentionally different from late non-expiring claims. Non-expiring rounds remain reserved for historical stakers or NFT owners indefinitely. Active-voter token rounds trade total-supply dilution for an active-vote denominator and a deployer-configured claim window.
 
 ### 7.3 Rewards can remain undistributed when stake is missing
 
