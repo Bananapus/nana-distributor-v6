@@ -124,8 +124,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   token balance delta with no accompanying `msg.value`
 - ERC-20 funding balance-delta windows cannot be reentered to mutate reward accounting
 - 721 consumed-vote caps only increase for token IDs that create a nonzero vesting entry
-- late claim transactions recycle expired token rounds only when the round's recorded active-vote total is zero; active
-  snapshot voters can still vest their share after the deadline
+- late claim/recycle transactions recycle an expired token round (one past its `claimDeadline`) unconditionally — the
+  unclaimed remainder is redistributed to the current round's active voters, and an individual late claim on an expired
+  round returns zero. Rounds configured with `CLAIM_DURATION == 0` never expire and are therefore never recycled.
 
 ## 7. Accepted behaviors
 
@@ -151,6 +152,13 @@ If participants have zero effective stake for a funded reward round, their share
 It remains in the distributor balance unless a claimant with historical voting power for that round materializes it. For
 721 distributions, burned NFTs' unclaimed historical shares can be materialized through `releaseForfeitedRewards`, and
 the unlocked forfeited value can return to the distributable pool under the 721-specific rules.
+
+Deploy-config footgun — permanent strand under `CLAIM_DURATION == 0`: a round whose snapshot `totalStake` is zero
+(realistic at a project's first funding, before any holder has delegated — active votes count only delegated units) can
+never be claimed. If the distributor was deployed with `CLAIM_DURATION == 0`, that round also never expires, so
+`recycleExpiredRewards` can never move it and the funded amount is stranded permanently. Mitigation: deploy with a
+nonzero `CLAIM_DURATION` (so a no-stake round eventually expires and recycles to active voters), and/or ensure at least
+one holder has self-delegated before the first round is funded.
 
 ### 7.4 721 and `IVotes` variants intentionally differ
 

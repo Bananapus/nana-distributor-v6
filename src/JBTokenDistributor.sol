@@ -21,10 +21,14 @@ import {JBClaimContext} from "./structs/JBClaimContext.sol";
 import {JBRewardRoundData} from "./structs/JBRewardRoundData.sol";
 import {JBVestingData} from "./structs/JBVestingData.sol";
 
-/// @notice A singleton distributor that distributes ERC-20 rewards to IVotes-compatible token holders with delegated
-/// voting power and linear vesting.
+/// @notice A singleton distributor that distributes ERC-20 rewards to holders of an `IJBActiveVotes` token with
+/// delegated voting power and linear vesting.
 /// @dev Any project can use this distributor by configuring a payout split with
-/// `hook = this contract` and `beneficiary = address(their IVotes token)`.
+/// `hook = this contract` and `beneficiary = address(their token)`. The token MUST implement `IJBActiveVotes` (e.g. a
+/// Juicebox `JBERC20`); a plain OpenZeppelin `IVotes`/`ERC20Votes` token lacks `getPastTotalActiveVotes` and will
+/// revert inside `_recordRewardRound` at fund time. Because funding arrives via a payout split, that revert is
+/// swallowed by the terminal's split try/catch — the funds soft-land back in the project and nothing distributes,
+/// silently. Wire only an `IJBActiveVotes` token.
 /// @dev The stake weight of each holder is their delegated voting power at the funded round's snapshot block.
 /// Holders must delegate (even to themselves) to participate.
 /// @dev Funded rewards are assigned to the funding round. Holders claim historical rounds lazily; all unclaimed past
@@ -414,7 +418,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @notice The delegated voting power of a staker at the current round's snapshot block.
     /// @dev Uses `IVotes.getPastVotes` for checkpointed lookups. The block number is derived from
     /// `roundSnapshotBlock[currentRound()]`, which is set on first interaction in a round.
-    /// @param hook The IVotes-compatible token contract.
+    /// @param hook The `IJBActiveVotes` token contract.
     /// @param tokenId The encoded staker address (`uint256(uint160(stakerAddress))`).
     /// @return tokenStakeAmount The delegated voting power at the round's snapshot block.
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
@@ -423,7 +427,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     }
 
     /// @notice The delegated voting power of a staker at an explicit snapshot block.
-    /// @param hook The IVotes-compatible token contract.
+    /// @param hook The `IJBActiveVotes` token contract.
     /// @param tokenId The encoded staker address.
     /// @param blockNumber The historical block to query.
     /// @return tokenStakeAmount The delegated voting power at `blockNumber`.
@@ -450,7 +454,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @notice The total stake denominator recorded when a token reward round is first funded.
     /// @dev Always uses `IJBActiveVotes.getPastTotalActiveVotes`, so undelegated balances such as AMM-held tokens do
     /// not share rewards. `CLAIM_DURATION` only controls whether unmaterialized allocations can expire.
-    /// @param hook The IVotes-compatible token contract.
+    /// @param hook The `IJBActiveVotes` token contract.
     /// @param groupId The reward group (unused for token distributors — kept for base-hook conformance).
     /// @param blockNumber The block number to get the active total at.
     /// @return totalStakedAmount The stake denominator to record for the funded round.
