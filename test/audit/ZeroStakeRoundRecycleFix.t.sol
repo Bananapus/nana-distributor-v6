@@ -58,8 +58,7 @@ contract ZeroStakeRoundRecycleFix is JBTokenDistributorTest {
         uint48 claimDuration = 100;
         _fundExpiringDistributor(1000 ether, claimDuration);
 
-        (, , , , uint256 totalStake) =
-            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
+        (,,,, uint256 totalStake) = distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), 0);
         assertGt(totalStake, 0, "round has real stake");
 
         // Before the deadline, recycle must be a no-op for a staked round (claimants still protected).
