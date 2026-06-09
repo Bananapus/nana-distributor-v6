@@ -153,12 +153,12 @@ It remains in the distributor balance unless a claimant with historical voting p
 721 distributions, burned NFTs' unclaimed historical shares can be materialized through `releaseForfeitedRewards`, and
 the unlocked forfeited value can return to the distributable pool under the 721-specific rules.
 
-Deploy-config footgun — permanent strand under `CLAIM_DURATION == 0`: a round whose snapshot `totalStake` is zero
-(realistic at a project's first funding, before any holder has delegated — active votes count only delegated units) can
-never be claimed. If the distributor was deployed with `CLAIM_DURATION == 0`, that round also never expires, so
-`recycleExpiredRewards` can never move it and the funded amount is stranded permanently. Mitigation: deploy with a
-nonzero `CLAIM_DURATION` (so a no-stake round eventually expires and recycles to active voters), and/or ensure at least
-one holder has self-delegated before the first round is funded.
+Zero-stake rounds are always recyclable: a round whose snapshot `totalStake` is zero (realistic at a project's first
+funding, before any holder has delegated — active votes count only delegated units) can never be claimed. To prevent
+such funds from being stranded — permanently, when `CLAIM_DURATION == 0` and the round never expires —
+`recycleExpiredRewards` recycles a zero-`totalStake` round regardless of its deadline, moving the funds into the
+current round for the active staker set (recoverable once anyone has delegated). Deploying with a nonzero
+`CLAIM_DURATION` additionally lets ordinary no-stake rounds expire and recycle on their own schedule.
 
 ### 7.4 721 and `IVotes` variants intentionally differ
 

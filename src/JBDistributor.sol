@@ -1188,8 +1188,11 @@ abstract contract JBDistributor is IJBDistributor {
         // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][groupId][token][round];
 
-        // Ignore rounds that either never expire or have not reached their deadline yet.
-        if (!_rewardRoundExpired(rewardRound)) return 0;
+        // Ignore rounds that have not reached their deadline yet — UNLESS the round can never be claimed because its
+        // snapshot `totalStake` is zero (e.g. funded before anyone delegated). Such a round's funds are unclaimable;
+        // gating recycle on expiry would strand them forever when `CLAIM_DURATION == 0` (a zero deadline never
+        // expires), so allow recycling a zero-stake round regardless of deadline. There is no claimant to protect.
+        if (!_rewardRoundExpired(rewardRound) && rewardRound.totalStake != 0) return 0;
 
         // If prior claims have already materialized the whole round, there is nothing left to recycle.
         if (rewardRound.claimedAmount >= rewardRound.amount) return 0;
