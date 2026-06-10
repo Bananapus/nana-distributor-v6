@@ -305,7 +305,8 @@ abstract contract JBDistributor is IJBDistributor {
     }
 
     /// @notice Recycle unclaimed rewards from expired reward rounds into the current reward round.
-    /// @dev Recycling is permissionless; any keeper or frontend can sweep an expired round.
+    /// @dev Recycling is permissionless; any keeper or frontend can sweep an eligible prior round. Passing the current
+    /// reward round is a no-op, even when its snapshot stake is zero.
     /// @param hook The hook whose expired rewards should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.
@@ -1185,6 +1186,11 @@ abstract contract JBDistributor is IJBDistributor {
         internal
         returns (uint256 recycleAmount)
     {
+        // Never recycle a round into itself. This keeps raw round accounting stable for zero-stake current rounds; the
+        // same inventory can be swept once a later round is current.
+        uint256 recycledToRound = currentRound();
+        if (round == recycledToRound) return 0;
+
         // Load the reward round once so expiry, claimed amount, and funded amount stay in sync.
         JBRewardRoundData storage rewardRound = rewardRoundOf[hook][groupId][token][round];
 
@@ -1204,7 +1210,6 @@ abstract contract JBDistributor is IJBDistributor {
         rewardRound.claimedAmount = rewardRound.amount;
 
         // Keep the inventory in the distributor and give the current staker set a new claimable round.
-        uint256 recycledToRound = currentRound();
         _recordRewardRound({hook: hook, groupId: groupId, token: token, amount: recycleAmount});
 
         // Surface the permissionless recycle for off-chain accounting.

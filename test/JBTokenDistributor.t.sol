@@ -971,6 +971,50 @@ contract JBTokenDistributorTest is Test {
         assertEq(aliceClaimed, 700 ether, "recycled rewards are shared with current stakers");
     }
 
+    function test_zeroStakeCurrentRoundDoesNotRecycleIntoItself() public {
+        _fundDistributor(1000 ether);
+
+        uint256 round = distributor.currentRound();
+        assertEq(round, 0, "funded round is still current");
+
+        vm.prank(carol);
+        uint256 recycled = distributor.recycleExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(round)
+        });
+        assertEq(recycled, 0, "current round cannot recycle into itself");
+
+        (uint256 amount,, uint256 claimedAmount,, uint256 totalStake) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), round);
+        assertEq(amount, 1000 ether, "amount did not inflate");
+        assertEq(claimedAmount, 0, "round was not marked settled");
+        assertEq(totalStake, 0, "round remains zero-stake");
+
+        vm.prank(carol);
+        recycled = distributor.recycleExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(round)
+        });
+        assertEq(recycled, 0, "repeat current-round sweep is still a no-op");
+
+        (amount,, claimedAmount,,) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), round);
+        assertEq(amount, 1000 ether, "repeat sweep did not inflate amount");
+        assertEq(claimedAmount, 0, "repeat sweep did not inflate claimed amount");
+
+        _advanceToRound(1);
+
+        vm.prank(carol);
+        recycled = distributor.recycleExpiredRewards({
+            hook: address(votesToken), token: IERC20(address(rewardToken)), rounds: _singleRound(round)
+        });
+        assertEq(recycled, 1000 ether, "zero-stake prior round still recycles forward");
+
+        (,, claimedAmount,,) = distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), round);
+        (uint256 movedAmount,,,,) =
+            distributor.rewardRoundOf(address(votesToken), 0, IERC20(address(rewardToken)), distributor.currentRound());
+        assertEq(claimedAmount, 1000 ether, "prior round settled after forward recycle");
+        assertEq(movedAmount, 1000 ether, "later round receives recycled amount");
+    }
+
     function test_expiringNativeRewards_recycleWithoutControllerBurn() public {
         uint48 claimDuration = 10;
         IERC20 nativeToken = IERC20(JBConstants.NATIVE_TOKEN);
