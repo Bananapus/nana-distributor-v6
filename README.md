@@ -75,7 +75,9 @@ This repo does not explain why an allocation exists. It only defines how funded 
   NFT's tier
 - `recycleExpiredRewards` is permissionless; it recycles the expired round's unmaterialized remainder while preserving
   amounts that already started vesting
-- eligible expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round
+- eligible expired and forfeited rewards stay in distributor inventory and are recycled into the current reward round.
+  A reward round never recycles into itself; if the requested round is still current, the call is a no-op, including
+  for zero-stake rounds
 - revnet loan-backed vesting is opt-in at deployment; the reward token must be a REVOwner-owned revnet token, the
   distributor keeps the loan NFT, and repayment restores the original vesting schedule instead of releasing all
   collateral immediately

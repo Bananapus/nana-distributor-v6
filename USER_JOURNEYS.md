@@ -125,8 +125,8 @@ start a holder's vesting clock without needing wallet access from the holder.
 **Intent:** move recyclable expired reward inventory into the current reward round.
 
 **Preconditions**
-- the distributor was deployed with a nonzero claim duration
-- the claim deadline has passed
+- the target round is older than the current round, so the recycled inventory can move forward
+- either the claim deadline has passed, or the round has zero recorded stake and can never be claimed
 - the round has no protected claimant set, or the distributor path otherwise exposes an unclaimed remainder
 
 **Main Flow**
@@ -138,7 +138,8 @@ start a holder's vesting clock without needing wallet access from the holder.
 5. The recycled amount is recorded into the current reward round without leaving distributor inventory.
 
 **Failure Modes**
-- round is not expired, so nothing recycles
+- round is not expired and has nonzero stake, so nothing recycles
+- round is still current, so nothing recycles into itself
 - the token round has nonzero active votes, so nothing recycles
 - the whole round has already been claimed into vesting, so nothing recycles
 - the distributor was deployed with an unintended claim duration

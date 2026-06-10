@@ -62,8 +62,9 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **Empty historical claims can be no-ops.** Token and 721 historical claims can succeed without creating a vesting entry when no past reward rounds are claimable or the claimant had zero eligible stake.
 - **Bad constructor parameters can brick the instance.**
 - **Resolver or token callback failures can block collection.**
-- **Expired recycling is permissionless but deadline-gated.** Any caller can recycle eligible expired inventory after the
-  configured deadline. Non-expired and non-expiring rounds cannot be recycled.
+- **Expired recycling is permissionless and usually deadline-gated.** Any caller can recycle eligible expired inventory
+  after the configured deadline. A zero-`totalStake` prior round can also recycle before its deadline because it has no
+  possible claimant. Current-round requests and nonzero-stake unexpired rounds are no-ops.
 - **Loan-backed collection is intentionally locked while a loan is active.** If a token ID's vesting rewards are
   collateralized, collection for that token ID and reward token reverts until the distributor-owned loan is repaid or
   liquidated and written off.
@@ -112,8 +113,8 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - collections plus remaining vesting plus future distributable balance never exceed tracked funded balance
 - round snapshots stay stable within a round once initialized, including zero-balance ones; active-voter token rounds
   seal `totalStake` from `getPastTotalActiveVotes` at the fixed snapshot block
-- expired recycling settles eligible expired rounds and records the recycled amount into the current round without changing
-  tracked balance
+- expired recycling settles eligible prior rounds and records the recycled amount into the current round without changing
+  tracked balance; same-round recycle requests are no-ops
 - `latestVestedIndexOf` advances contiguously
 - burned NFTs are excluded from 721 stake (via zero checkpointed votes), and their historical forfeited rewards
   materialize and recycle only through the explicit forfeiture path
@@ -156,9 +157,11 @@ the unlocked forfeited value can return to the distributable pool under the 721-
 Zero-stake rounds are always recyclable: a round whose snapshot `totalStake` is zero (realistic at a project's first
 funding, before any holder has delegated — active votes count only delegated units) can never be claimed. To prevent
 such funds from being stranded — permanently, when `CLAIM_DURATION == 0` and the round never expires —
-`recycleExpiredRewards` recycles a zero-`totalStake` round regardless of its deadline, moving the funds into the
-current round for the active staker set (recoverable once anyone has delegated). Deploying with a nonzero
-`CLAIM_DURATION` additionally lets ordinary no-stake rounds expire and recycle on their own schedule.
+`recycleExpiredRewards` recycles a zero-`totalStake` prior round regardless of its deadline, moving the funds into the
+current round for the active staker set (recoverable once anyone has delegated). Passing the current round is a no-op,
+so repeated keeper calls cannot inflate the raw `rewardRoundOf.amount` or `claimedAmount` fields by recycling a round
+into itself. Deploying with a nonzero `CLAIM_DURATION` additionally lets ordinary no-stake rounds expire and recycle on
+their own schedule.
 
 ### 7.4 721 and `IVotes` variants intentionally differ
 

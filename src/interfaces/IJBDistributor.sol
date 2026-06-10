@@ -301,7 +301,8 @@ interface IJBDistributor {
     /// @notice Record the snapshot block for the current round. Callable by anyone (keepers, frontends).
     function poke() external;
 
-    /// @notice Recycle unclaimed rewards from expired default-group reward rounds into the current reward round.
+    /// @notice Recycle unclaimed rewards from eligible prior default-group reward rounds into the current reward round.
+    /// @dev Passing the current round is a no-op, including for zero-stake rounds.
     /// @param hook The hook whose expired reward rounds should be recycled.
     /// @param token The reward token to recycle.
     /// @param rounds The reward rounds to recycle.

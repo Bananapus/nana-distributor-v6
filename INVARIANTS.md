@@ -64,7 +64,12 @@ This file is the per-repo scoped invariants doc. The protocol-wide guarantees fo
 
 ## A.5 Expiry and recycling — dust prevention
 
-- **A.5.1 `recycleExpiredRewards` recycles eligible expired inventory into the current round.** Permissionless. Only acts on rounds whose `claimDeadline != 0` and `block.timestamp >= claimDeadline`. `claimedAmount` is set to `amount` BEFORE the new round write, so the round cannot double-recycle. In `JBTokenDistributor`, active-voter rounds with nonzero active votes recycle zero and remain claimable by snapshot voters.
+- **A.5.1 `recycleExpiredRewards` recycles eligible prior-round inventory into the current round.** Permissionless.
+  It acts on rounds whose `claimDeadline != 0` and `block.timestamp >= claimDeadline`, and also on zero-`totalStake`
+  rounds because no claimant can ever take a pro-rata share. It never recycles `round == currentRound`; a zero-stake
+  current round waits until a later round is current. `claimedAmount` is set to `amount` BEFORE the new round write, so
+  the source round cannot double-recycle. In `JBTokenDistributor`, active-voter rounds with nonzero active votes recycle
+  zero and remain claimable by snapshot voters.
 - **A.5.2 `CLAIM_DURATION == 0` makes rewards never expire.** `_claimDeadlineFor` returns 0 (`src/JBDistributor.sol:1155-1161`) and `_rewardRoundExpired` returns false unconditionally (`src/JBDistributor.sol:1166-1173`).
 - **A.5.3 Expired rounds short-circuit during lazy claim only when they are recyclable.** `JBTokenDistributor._claimRewardsFor` recycles an expired active-voter round only if its recorded active-vote total is zero; otherwise snapshot voters can still materialize their pro-rata share after the deadline. `JB721Distributor._claimPastRewardsForToken` routes expired unclaimed rounds through `_recycleExpiredRewardRound`.
 - **A.5.4 `releaseForfeitedRewards` requires tokenIds actually burned.** Reverts `JBDistributor_NoAccess` unless every requested tokenId returns `_tokenBurned == true`. For `JBTokenDistributor` this always reverts because `_tokenBurned` is hardcoded `false`; only the 721 distributor exposes this path.
