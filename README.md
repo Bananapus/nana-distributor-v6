@@ -97,6 +97,12 @@ This repo does not explain why an allocation exists. It only defines how funded 
   `getPastTotalTierActiveVotes` denominator, then cap each numerator with `getPastAccountTierActiveVotes`; this
   requires `@bananapus/721-hook-v6 >= 0.0.73` for the active-vote checkpoints API
 - snapshot timing is part of the trusted surface
+- `poke()`-style keeper or funding flows should be treated as snapshot policy decisions: calling them at a different
+  block can change which historical votes or NFTs share a funded round
+- 721 claim helpers should preflight the holder, tier set, checkpoint block, and available distributor inventory before
+  batching claims; ownership at the time of submission is not enough if the funded round used an older snapshot
+- direct token or native-token balances at a distributor are unaccounted inventory until an explicit funding or recycle
+  path assigns them to a reward round
 - this repo settles distributions, but it does not prove the upstream entitlement math was correct
 
 ## Where state lives
@@ -155,6 +161,8 @@ script/
 - teams should review claim timing and snapshot assumptions with the same care they review the payout source
 - token distributors require hooks that expose `IJBActiveVotes`; expiring token rounds recycle any unmaterialized
   remainder after the deadline
+- payout-split funding always enters the default reward group; tier-scoped rewards need explicit funding and matching
+  tier-scoped claim parameters
 
 ## For AI agents
 
