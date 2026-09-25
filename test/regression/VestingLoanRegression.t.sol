@@ -220,8 +220,9 @@ contract VestingLoanREVLoans {
         }
 
         REVLoan memory loan = _loanOf[loanId];
-        VestingLoanERC20(loan.sourceToken)
-            .transferFrom({from: msg.sender, to: address(this), value: maxRepayBorrowAmount});
+        VestingLoanERC20(loan.sourceToken).transferFrom({
+            from: msg.sender, to: address(this), value: maxRepayBorrowAmount
+        });
 
         uint256 returnedCollateral = collateralCountToReturn - collateralShortfall;
         rewardToken.mint({account: beneficiary, amount: returnedCollateral + extraRewardAmount});
