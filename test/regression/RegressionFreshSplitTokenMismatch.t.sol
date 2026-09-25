@@ -84,87 +84,87 @@ contract RegressionDirectory is IJBDirectory {
     function setTerminalsOf(uint256, IJBTerminal[] calldata) external {}
 }
 
-contract RegressionFreshSplitTokenMismatchTest is Test {
-    JBTokenDistributor distributor;
-    RegressionDirectory directory;
-    RegressionRewardToken reward;
-    RegressionStakeToken stake;
-    RegressionStakeToken victimStake;
+    contract RegressionFreshSplitTokenMismatchTest is Test {
+        JBTokenDistributor distributor;
+        RegressionDirectory directory;
+        RegressionRewardToken reward;
+        RegressionStakeToken stake;
+        RegressionStakeToken victimStake;
 
-    address attacker = address(0xA11CE);
-    address attackerTerminal = address(0xBEEF);
-    address victim = address(0xCAFE);
-    address victimHook;
+        address attacker = address(0xA11CE);
+        address attackerTerminal = address(0xBEEF);
+        address victim = address(0xCAFE);
+        address victimHook;
 
-    function setUp() public {
-        directory = new RegressionDirectory();
-        distributor = new JBTokenDistributor(
-            IJBDirectory(address(directory)),
-            IJBController(address(0)),
-            IREVLoans(address(0)),
-            IREVOwner(address(0)),
-            1 days,
-            1,
-            0,
-            address(0)
-        );
-        reward = new RegressionRewardToken();
-        stake = new RegressionStakeToken();
-        victimStake = new RegressionStakeToken();
+        function setUp() public {
+            directory = new RegressionDirectory();
+            distributor = new JBTokenDistributor(
+                IJBDirectory(address(directory)),
+                IJBController(address(0)),
+                IREVLoans(address(0)),
+                IREVOwner(address(0)),
+                1 days,
+                1,
+                0,
+                address(0)
+            );
+            reward = new RegressionRewardToken();
+            stake = new RegressionStakeToken();
+            victimStake = new RegressionStakeToken();
 
-        directory.setTerminal(1, IJBTerminal(attackerTerminal));
+            directory.setTerminal(1, IJBTerminal(attackerTerminal));
 
-        victimStake.mint(victim, 1 ether);
-        vm.prank(victim);
-        victimStake.delegate(victim);
-        victimHook = address(victimStake);
-        vm.roll(block.number + 1);
+            victimStake.mint(victim, 1 ether);
+            vm.prank(victim);
+            victimStake.delegate(victim);
+            victimHook = address(victimStake);
+            vm.roll(block.number + 1);
 
-        reward.mint(address(this), 100 ether);
-        reward.approve(address(distributor), 100 ether);
-        distributor.fund(victimHook, reward, 100 ether);
+            reward.mint(address(this), 100 ether);
+            reward.approve(address(distributor), 100 ether);
+            distributor.fund(victimHook, reward, 100 ether);
 
-        stake.mint(attacker, 1 ether);
-        vm.prank(attacker);
-        stake.delegate(attacker);
-        vm.roll(block.number + 1);
+            stake.mint(attacker, 1 ether);
+            vm.prank(attacker);
+            stake.delegate(attacker);
+            vm.roll(block.number + 1);
+        }
+
+        /// @notice Previously this test proved the attack worked. Now it proves the fix: sending ETH
+        /// with context.token set to an ERC-20 address reverts with TokenMismatch.
+        function test_authorizedTerminalCanBackFakeErc20CreditWithEthAndDrainVictimInventory() public {
+            vm.deal(attackerTerminal, 50 ether);
+
+            JBSplit memory split = JBSplit({
+                percent: 0,
+                projectId: 0,
+                beneficiary: payable(address(stake)),
+                preferAddToBalance: false,
+                lockedUntil: 0,
+                hook: IJBSplitHook(address(distributor))
+            });
+            JBSplitHookContext memory context = JBSplitHookContext({
+                token: address(reward),
+                amount: 50 ether,
+                decimals: 18,
+                projectId: 1,
+                groupId: uint256(uint160(address(reward))),
+                split: split
+            });
+
+            // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
+            vm.prank(attackerTerminal);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
+                    address(reward),
+                    JBConstants.NATIVE_TOKEN,
+                    50 ether
+                )
+            );
+            distributor.processSplitWith{value: 50 ether}(context);
+
+            // Victim's balance remains intact.
+            assertEq(distributor.balanceOf(victimHook, reward), 100 ether);
+        }
     }
-
-    /// @notice Previously this test proved the attack worked. Now it proves the fix: sending ETH
-    /// with context.token set to an ERC-20 address reverts with TokenMismatch.
-    function test_authorizedTerminalCanBackFakeErc20CreditWithEthAndDrainVictimInventory() public {
-        vm.deal(attackerTerminal, 50 ether);
-
-        JBSplit memory split = JBSplit({
-            percent: 0,
-            projectId: 0,
-            beneficiary: payable(address(stake)),
-            preferAddToBalance: false,
-            lockedUntil: 0,
-            hook: IJBSplitHook(address(distributor))
-        });
-        JBSplitHookContext memory context = JBSplitHookContext({
-            token: address(reward),
-            amount: 50 ether,
-            decimals: 18,
-            projectId: 1,
-            groupId: uint256(uint160(address(reward))),
-            split: split
-        });
-
-        // The attack now reverts because context.token != NATIVE_TOKEN when msg.value != 0.
-        vm.prank(attackerTerminal);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                JBTokenDistributor.JBTokenDistributor_TokenMismatch.selector,
-                address(reward),
-                JBConstants.NATIVE_TOKEN,
-                50 ether
-            )
-        );
-        distributor.processSplitWith{value: 50 ether}(context);
-
-        // Victim's balance remains intact.
-        assertEq(distributor.balanceOf(victimHook, reward), 100 ether);
-    }
-}

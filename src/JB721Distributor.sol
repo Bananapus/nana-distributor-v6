@@ -644,18 +644,17 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         {
             // Read the token's tier voting units once; this is the per-token maximum claim numerator.
             votingUnits =
-            IJB721TiersHook(ctx.hook).STORE().tierOfTokenId({
-                hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false
-            }).votingUnits;
+            IJB721TiersHook(ctx.hook)
+            .STORE()
+            .tierOfTokenId({hook: ctx.hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
             // Use the funding round's snapshot block, not the block at which the NFT owner finally claims.
             address owner = _snapshotOwnerOf({hook: ctx.hook, tokenId: tokenId, snapshotBlock: ctx.snapshotBlock});
             if (owner == address(0)) return (0, newUniqueCount);
 
             // Cap this NFT against the snapshot owner's active units for this exact tier.
-            activeTierVotes = IJB721TiersHook(ctx.hook).checkpoints().getPastAccountTierActiveVotes({
-                account: owner, tierId: tierId, blockNumber: ctx.snapshotBlock
-            });
+            activeTierVotes = IJB721TiersHook(ctx.hook).checkpoints()
+                .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: ctx.snapshotBlock});
             if (activeTierVotes == 0) return (0, newUniqueCount);
 
             bool found;
@@ -814,9 +813,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     function _tokenStake(address hook, uint256 tokenId) internal view override returns (uint256 tokenStakeAmount) {
         uint256 tierId = IJB721TiersHook(hook).STORE().tierIdOfToken(tokenId);
         uint256 votingUnits =
-            IJB721TiersHook(hook).STORE().tierOfTokenId({
-            hook: hook, tokenId: tokenId, includeResolvedUri: false
-        }).votingUnits;
+            IJB721TiersHook(hook)
+        .STORE()
+        .tierOfTokenId({hook: hook, tokenId: tokenId, includeResolvedUri: false}).votingUnits;
 
         // Stake eligibility is fixed at the round snapshot block, not the caller's current block.
         uint256 snapshotBlock = roundSnapshotBlock[currentRound()];
@@ -824,9 +823,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         if (owner == address(0)) return 0;
 
         // Read the owner's active units for this token's tier at the snapshot block.
-        uint256 activeTierVotes = IJB721TiersHook(hook).checkpoints().getPastAccountTierActiveVotes({
-            account: owner, tierId: tierId, blockNumber: snapshotBlock
-        });
+        uint256 activeTierVotes = IJB721TiersHook(hook).checkpoints()
+            .getPastAccountTierActiveVotes({account: owner, tierId: tierId, blockNumber: snapshotBlock});
 
         // If the owner had no active units in this tier at the snapshot block, the token is ineligible.
         if (activeTierVotes == 0) return 0;
