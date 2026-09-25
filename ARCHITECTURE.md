@@ -30,6 +30,7 @@ Both variants can be used as `IJBSplitHook` receivers. Each deployment has one i
 ## Trust boundaries
 
 - split-hook caller authentication depends on `JBDirectory`
+- the ERC-2771 trusted forwarder can act for any signer on claims, collection, funding, loan repayment and refunds; split-hook delivery never trusts it
 - `JBTokenDistributor` trusts `IVotes` checkpoint history
 - `JB721Distributor` trusts the 721 hook's `CHECKPOINTS()` module for historical voting power and the store for tier metadata
 - upstream entitlement logic still lives outside this repo

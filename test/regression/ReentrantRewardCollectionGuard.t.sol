@@ -167,7 +167,8 @@ contract ReentrantRewardCollectionGuardTest is Test {
             revOwner: IREVOwner(address(0)),
             initialRoundDuration: ROUND_DURATION,
             initialVestingRounds: VESTING_ROUNDS,
-            initialClaimDuration: 0
+            initialClaimDuration: 0,
+            trustedForwarder: address(0)
         });
         _reward = new CollectionReentryRewardToken();
         _hook = new CollectionReentryHook({

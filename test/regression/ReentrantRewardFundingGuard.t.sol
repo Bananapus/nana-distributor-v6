@@ -125,7 +125,8 @@ contract ReentrantRewardFundingGuard is Test {
             IREVOwner(address(0)),
             1,
             1,
-            0
+            0,
+            address(0)
         );
         _reward = new ReentrantRewardToken();
         _stake = new ReentrantVotesToken();

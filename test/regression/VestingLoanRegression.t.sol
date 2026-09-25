@@ -296,7 +296,8 @@ contract VestingLoanRegressionTest is Test {
             revOwner: IREVOwner(_revOwner),
             initialRoundDuration: _ROUND_DURATION,
             initialVestingRounds: _VESTING_ROUNDS,
-            initialClaimDuration: 0
+            initialClaimDuration: 0,
+            trustedForwarder: address(0)
         });
 
         assertEq(permissions.account(), address(_distributor));
@@ -586,7 +587,8 @@ contract VestingLoanRegressionTest is Test {
             revOwner: IREVOwner(_revOwner),
             initialRoundDuration: _ROUND_DURATION,
             initialVestingRounds: 0,
-            initialClaimDuration: 0
+            initialClaimDuration: 0,
+            trustedForwarder: address(0)
         });
 
         _stakeToken.mint({account: _alice, amount: 100 ether});

@@ -80,7 +80,8 @@ contract FeeOnTransferFundingTest is Test {
             IREVOwner(address(0)),
             _ROUND_DURATION,
             _VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         fotToken = new MockFeeOnTransferToken({_feeBps: 100}); // 1%
         fotToken.mint(funder, 1000e18);

@@ -105,7 +105,8 @@ contract RegressionDirectory is IJBDirectory {
                 IREVOwner(address(0)),
                 1 days,
                 1,
-                0
+                0,
+                address(0)
             );
             reward = new RegressionRewardToken();
             stake = new RegressionStakeToken();

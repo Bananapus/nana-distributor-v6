@@ -54,7 +54,8 @@ contract JB721TierScopedRewards is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         rewardToken = new MockToken();

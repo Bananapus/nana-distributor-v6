@@ -113,6 +113,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
+    /// @param trustedForwarder A trusted forwarder of transactions to this contract.
     constructor(
         IJBDirectory directory,
         IJBController controller,
@@ -120,9 +121,18 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
         IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
-        uint48 initialClaimDuration
+        uint48 initialClaimDuration,
+        address trustedForwarder
     )
-        JBDistributor(controller, revLoans, revOwner, initialRoundDuration, initialVestingRounds, initialClaimDuration)
+        JBDistributor(
+            controller,
+            revLoans,
+            revOwner,
+            initialRoundDuration,
+            initialVestingRounds,
+            initialClaimDuration,
+            trustedForwarder
+        )
     {
         DIRECTORY = directory;
     }
@@ -537,7 +547,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                     token: token,
                     amount: tokenAmounts[i],
                     vestingReleaseRound: ctx.vestingReleaseRound,
-                    caller: msg.sender
+                    caller: _msgSender()
                 });
             }
 
@@ -741,7 +751,7 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     /// @param hook The 721 hook whose NFT owners are being checked.
     /// @param tokenIds The NFT token IDs to check.
     function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
-        // Each requested NFT must currently belong to msg.sender and appear in strictly increasing order.
+        // Each requested NFT must currently belong to the caller and appear in strictly increasing order.
         for (uint256 i; i < tokenIds.length;) {
             uint256 tokenId = tokenIds[i];
 
@@ -749,8 +759,8 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 revert JB721Distributor_TokenIdsNotIncreasing({previousTokenId: tokenIds[i - 1], tokenId: tokenId});
             }
 
-            if (!_canClaim({hook: hook, tokenId: tokenId, account: msg.sender})) {
-                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: msg.sender});
+            if (!_canClaim({hook: hook, tokenId: tokenId, account: _msgSender()})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: _msgSender()});
             }
 
             unchecked {

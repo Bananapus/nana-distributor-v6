@@ -146,10 +146,10 @@ contract ZeroRewardReplayTest is Test {
         store.setTokenTier(2, 60);
 
         JB721Distributor control = new JB721Distributor(
-            directory, IJBController(address(0)), IREVLoans(address(0)), IREVOwner(address(0)), 1 days, 4, 0
+            directory, IJBController(address(0)), IREVLoans(address(0)), IREVOwner(address(0)), 1 days, 4, 0, address(0)
         );
         JB721Distributor attacked = new JB721Distributor(
-            directory, IJBController(address(0)), IREVLoans(address(0)), IREVOwner(address(0)), 1 days, 4, 0
+            directory, IJBController(address(0)), IREVLoans(address(0)), IREVOwner(address(0)), 1 days, 4, 0, address(0)
         );
 
         rewardToken.mint(address(this), 4);

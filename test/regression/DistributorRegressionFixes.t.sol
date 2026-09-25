@@ -133,7 +133,8 @@ contract DistributorRegressionFixesTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         votesToken.mint(alice, 1000 ether);
@@ -152,7 +153,8 @@ contract DistributorRegressionFixesTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         nftDirectory.setTerminal(projectId, address(this), true);

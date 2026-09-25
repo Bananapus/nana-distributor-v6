@@ -141,7 +141,8 @@ contract TokenMismatchTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         hook = address(votesToken);
@@ -309,7 +310,8 @@ contract TokenMismatch721DistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
     }
 

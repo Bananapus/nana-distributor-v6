@@ -223,7 +223,8 @@ contract RegressionFreshVerificationTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         RegressionToken reward = new RegressionToken();
         RegressionVotes stake = new RegressionVotes();
@@ -283,7 +284,8 @@ contract RegressionFreshVerificationTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();
@@ -333,7 +335,8 @@ contract RegressionFreshVerificationTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         RegressionToken reward = new RegressionToken();
         Regression721Store store = new Regression721Store();

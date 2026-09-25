@@ -286,7 +286,8 @@ contract ActiveTierCapSufficiencyTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         directory.setTerminal(1, address(this), true);

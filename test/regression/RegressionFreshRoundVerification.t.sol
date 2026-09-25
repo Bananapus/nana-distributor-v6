@@ -171,7 +171,8 @@ contract RegressionFreshRoundVerificationTest is Test {
             IREVOwner(address(0)),
             1 days,
             1,
-            0
+            0,
+            address(0)
         );
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFresh721Store store = new RegressionFresh721Store();
@@ -220,7 +221,8 @@ contract RegressionFreshRoundVerificationTest is Test {
             IREVOwner(address(0)),
             1 days,
             0,
-            0
+            0,
+            address(0)
         );
         RegressionFreshRewardToken reward = new RegressionFreshRewardToken();
         RegressionFreshVotes votes = new RegressionFreshVotes();
