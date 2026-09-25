@@ -289,7 +289,8 @@ contract VestingLoanNativeRefundSettlementTest is Test {
             revOwner: IREVOwner(_revOwner),
             initialRoundDuration: _ROUND_DURATION,
             initialVestingRounds: _VESTING_ROUNDS,
-            initialClaimDuration: 0
+            initialClaimDuration: 0,
+            trustedForwarder: address(0)
         });
 
         _repayer = new NativeRefundReentrant(_distributor);

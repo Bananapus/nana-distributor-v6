@@ -94,7 +94,8 @@ contract DistributorRegressionTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         VotingCapMockRewardToken rewardToken = new VotingCapMockRewardToken();
 
@@ -172,7 +173,8 @@ contract DistributorRegressionTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         RegressionRewardToken rewardToken = new RegressionRewardToken();
         RegressionVotesToken victimVotes = new RegressionVotesToken();

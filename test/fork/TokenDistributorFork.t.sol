@@ -605,7 +605,8 @@ contract TokenDistributorForkTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         // Mark the distributor as feeless so payouts to it aren't reduced by the 2.5% fee.
@@ -621,7 +622,8 @@ contract TokenDistributorForkTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         vm.prank(multisig);

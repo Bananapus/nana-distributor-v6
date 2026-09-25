@@ -201,7 +201,8 @@ contract JBTokenDistributorInvariantTest is StdInvariant, Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0 // CLAIM_DURATION == 0: rewards never expire, denominator = getPastTotalSupply.
+            0, // CLAIM_DURATION == 0: rewards never expire, denominator = getPastTotalSupply.
+            address(0)
         );
 
         // Mint and self-delegate so both stakers have checkpointed voting power.

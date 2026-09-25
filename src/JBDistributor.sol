@@ -9,6 +9,7 @@ import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBPermissionsData} from "@bananapus/core-v6/src/structs/JBPermissionsData.sol";
 import {JBSingleAllowance} from "@bananapus/core-v6/src/structs/JBSingleAllowance.sol";
 import {JBPermissionIds} from "@bananapus/permission-ids-v6/src/JBPermissionIds.sol";
+import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
@@ -31,7 +32,7 @@ import {JBVestingLoan} from "./structs/JBVestingLoan.sol";
 /// (`_claimBeneficiaryOf`, `_canClaim`), how token IDs are validated (`_validateTokenIds`), and what "burned" means
 /// (`_tokenBurned`). Two concrete implementations exist: `JBTokenDistributor` (IVotes tokens) and `JB721Distributor`
 /// (Juicebox 721 NFTs).
-abstract contract JBDistributor is IJBDistributor {
+abstract contract JBDistributor is ERC2771Context, IJBDistributor {
     using SafeERC20 for IERC20;
 
     //*********************************************************************//
@@ -230,14 +231,18 @@ abstract contract JBDistributor is IJBDistributor {
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
+    /// @param trustedForwarder A trusted forwarder of transactions to this contract.
     constructor(
         IJBController controller,
         IREVLoans revLoans,
         IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
-        uint48 initialClaimDuration
-    ) {
+        uint48 initialClaimDuration,
+        address trustedForwarder
+    )
+        ERC2771Context(trustedForwarder)
+    {
         if (initialRoundDuration == 0) {
             revert JBDistributor_InvalidRoundDuration({roundDuration: initialRoundDuration});
         }
@@ -535,9 +540,9 @@ abstract contract JBDistributor is IJBDistributor {
         // Return any native overpayment last, following checks-effects-interactions. The loan is already settled, so a
         // re-entrant call during this transfer cannot observe a half-settled loan.
         if (nativeRefundAmount != 0) {
-            (bool success,) = msg.sender.call{value: nativeRefundAmount}("");
+            (bool success,) = _msgSender().call{value: nativeRefundAmount}("");
             if (!success) {
-                revert JBDistributor_NativeTransferFailed({beneficiary: msg.sender, amount: nativeRefundAmount});
+                revert JBDistributor_NativeTransferFailed({beneficiary: _msgSender(), amount: nativeRefundAmount});
             }
         }
     }
@@ -668,7 +673,7 @@ abstract contract JBDistributor is IJBDistributor {
         // Make sure that all staker token IDs are burned.
         for (uint256 i; i < tokenIds.length;) {
             if (!_tokenBurned({hook: hook, tokenId: tokenIds[i]})) {
-                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: _msgSender()});
             }
             unchecked {
                 ++i;
@@ -859,7 +864,7 @@ abstract contract JBDistributor is IJBDistributor {
             minBorrowAmount: ctx.minBorrowAmount,
             prepaidFeePercent: ctx.prepaidFeePercent,
             beneficiary: ctx.beneficiary,
-            caller: msg.sender
+            caller: _msgSender()
         });
     }
 
@@ -925,7 +930,7 @@ abstract contract JBDistributor is IJBDistributor {
             // Pull the exact current payoff from the caller. Distributor inventory must not cover a shortfall.
             IERC20 sourceToken = IERC20(loan.sourceToken);
             uint256 sourceBalanceBefore = sourceToken.balanceOf(address(this));
-            sourceToken.safeTransferFrom({from: msg.sender, to: address(this), value: repayBorrowAmount});
+            sourceToken.safeTransferFrom({from: _msgSender(), to: address(this), value: repayBorrowAmount});
             uint256 receivedAmount = sourceToken.balanceOf(address(this)) - sourceBalanceBefore;
             if (receivedAmount != repayBorrowAmount) {
                 revert JBDistributor_UnexpectedRepayAmount({amount: receivedAmount, expectedAmount: repayBorrowAmount});
@@ -986,7 +991,7 @@ abstract contract JBDistributor is IJBDistributor {
         // Return any excess reward tokens created during source-fee payment to the repayer.
         uint256 excessRewardAmount = restoredAmount - vestingLoan.collateralCount;
         if (excessRewardAmount != 0) {
-            vestingLoan.token.safeTransfer({to: msg.sender, value: excessRewardAmount});
+            vestingLoan.token.safeTransfer({to: _msgSender(), value: excessRewardAmount});
         }
 
         emit RepayVestingLoan({
@@ -995,7 +1000,7 @@ abstract contract JBDistributor is IJBDistributor {
             token: vestingLoan.token,
             collateralCount: vestingLoan.collateralCount,
             repayBorrowAmount: repayBorrowAmount,
-            caller: msg.sender
+            caller: _msgSender()
         });
     }
 
@@ -1055,7 +1060,7 @@ abstract contract JBDistributor is IJBDistributor {
             token: vestingLoan.token,
             loanId: loanId,
             collateralCount: collateralCount,
-            caller: msg.sender
+            caller: _msgSender()
         });
     }
 
@@ -1109,7 +1114,7 @@ abstract contract JBDistributor is IJBDistributor {
             }
 
             // ERC-20 funding is measured by balance delta so fee-on-transfer tokens are accounted correctly.
-            amount = _acceptErc20FundsFrom({token: token, from: msg.sender, amount: amount});
+            amount = _acceptErc20FundsFrom({token: token, from: _msgSender(), amount: amount});
         }
 
         // Store the accepted amount in this round's historical reward ledger.
@@ -1219,7 +1224,7 @@ abstract contract JBDistributor is IJBDistributor {
             toRound: recycledToRound,
             token: token,
             amount: recycleAmount,
-            caller: msg.sender
+            caller: _msgSender()
         });
     }
 
@@ -1273,7 +1278,7 @@ abstract contract JBDistributor is IJBDistributor {
         if (snapshotBlock == 0) {
             snapshotBlock = block.number - 1;
             roundSnapshotBlock[round] = snapshotBlock;
-            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock, caller: msg.sender});
+            emit RoundSnapshotRecorded({round: round, snapshotBlock: snapshotBlock, caller: _msgSender()});
         }
     }
 
@@ -1354,7 +1359,7 @@ abstract contract JBDistributor is IJBDistributor {
                     // If forfeiture: keep inventory in the distributor and give the current staker set a fresh round.
                     _recordRewardRound({hook: hook, groupId: groupId, token: token, amount: totalTokenAmount});
                     emit ForfeitedRewardsRecycled({
-                        hook: hook, round: round, token: token, amount: totalTokenAmount, caller: msg.sender
+                        hook: hook, round: round, token: token, amount: totalTokenAmount, caller: _msgSender()
                     });
                 }
             }
@@ -1431,7 +1436,7 @@ abstract contract JBDistributor is IJBDistributor {
                         token: token,
                         amount: claimAmount,
                         vestingReleaseRound: vesting.releaseRound,
-                        caller: msg.sender
+                        caller: _msgSender()
                     });
                 }
 
@@ -1582,10 +1587,10 @@ abstract contract JBDistributor is IJBDistributor {
             uint256 tokenId = tokenIds[i];
 
             // Holders can choose any beneficiary for token IDs they control.
-            if (!_canClaim({hook: hook, tokenId: tokenId, account: msg.sender})) {
+            if (!_canClaim({hook: hook, tokenId: tokenId, account: _msgSender()})) {
                 // Helpers can only send rewards to the token ID's canonical beneficiary.
                 if (beneficiary != _claimBeneficiaryOf({hook: hook, tokenId: tokenId})) {
-                    revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: msg.sender});
+                    revert JBDistributor_NoAccess({hook: hook, tokenId: tokenId, account: _msgSender()});
                 }
             }
 

@@ -22,6 +22,8 @@ deployed V5 package counterpart in `../../v5/evm`; it is a new V6 contract packa
 - `JB721Distributor` distributes rewards to 721 holders using token or tier inputs and historical voting/unit
   snapshots.
 - `JBTokenDistributor` distributes rewards for token-based contexts and enforces expected token/native payment inputs.
+- Distributors accept an ERC-2771 trusted forwarder (the last constructor argument), so sponsored claims, collection,
+  funding and loan repayment resolve to the signer. Split-hook delivery keeps authenticating the direct caller.
 - Token distributors allocate funded rounds against `IJBActiveVotes.getPastTotalActiveVotes(snapshotBlock)`, while
   each claimant's share uses snapshot `getPastVotes`. Undelegated balances, including AMM-held tokens, do not share
   rewards.

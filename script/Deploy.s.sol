@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
+import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 
@@ -36,7 +37,9 @@ contract Deploy is Script {
             revOwner: revOwner,
             initialRoundDuration: roundDuration,
             initialVestingRounds: vestingRounds,
-            initialClaimDuration: claimDuration
+            initialClaimDuration: claimDuration,
+            // Accept the same meta-transaction forwarder as core, so sponsored claims resolve to the signer.
+            trustedForwarder: ERC2771Context(address(controller)).trustedForwarder()
         });
 
         vm.stopBroadcast();

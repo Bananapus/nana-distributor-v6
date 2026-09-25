@@ -88,7 +88,8 @@ contract Regression20260505Test is Test {
             IREVOwner(address(0)),
             1,
             3,
-            0
+            0,
+            address(0)
         );
 
         directory.setController(PROJECT_ID, address(this));

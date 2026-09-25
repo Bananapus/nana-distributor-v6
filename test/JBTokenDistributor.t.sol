@@ -248,7 +248,8 @@ contract JBTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         // Mint staking tokens.
@@ -297,7 +298,8 @@ contract JBTokenDistributorTest is Test {
                 IREVOwner(address(0)),
                 ROUND_DURATION,
                 VESTING_ROUNDS,
-                claimDuration
+                claimDuration,
+                address(0)
             );
         }
 
@@ -577,7 +579,8 @@ contract JBTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         rewardToken.mint(carol, 1);
@@ -1026,7 +1029,8 @@ contract JBTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         distributor.fund{value: 1 ether}(address(votesToken), nativeToken, 0);
@@ -1054,7 +1058,8 @@ contract JBTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         unregisteredRewardToken.mint(address(this), 1 ether);
@@ -1088,7 +1093,8 @@ contract JBTokenDistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         unregisteredRewardToken.mint(address(this), 1);

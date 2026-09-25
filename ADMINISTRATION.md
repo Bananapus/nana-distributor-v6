@@ -38,6 +38,7 @@
 ## Immutable and one-way
 
 - bad constructor parameters can permanently make an instance unusable
+- the trusted forwarder is fixed at construction
 - snapshots define a round once taken
 - vested or collected value does not rewind
 

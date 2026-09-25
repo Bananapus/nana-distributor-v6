@@ -163,7 +163,8 @@ contract Token721OwnerOfAtFallbackTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
         MockRewardToken reward = new MockRewardToken();
         Mock721Store store = new Mock721Store();

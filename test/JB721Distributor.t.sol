@@ -394,7 +394,8 @@ contract JB721DistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            0
+            0,
+            address(0)
         );
 
         // Register this test contract as a terminal for PROJECT_ID so processSplitWith works.
@@ -485,7 +486,8 @@ contract JB721DistributorTest is Test {
                 IREVOwner(address(0)),
                 ROUND_DURATION,
                 VESTING_ROUNDS,
-                claimDuration
+                claimDuration,
+                address(0)
             );
         }
 
@@ -2590,7 +2592,8 @@ contract JB721DistributorTest is Test {
             IREVOwner(address(0)),
             ROUND_DURATION,
             VESTING_ROUNDS,
-            claimDuration
+            claimDuration,
+            address(0)
         );
 
         rewardToken.mint(charlie, 1);

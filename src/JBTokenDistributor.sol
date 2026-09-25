@@ -83,6 +83,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param initialRoundDuration The duration of each round, specified in seconds.
     /// @param initialVestingRounds The number of rounds until tokens are fully vested.
     /// @param initialClaimDuration The number of seconds claimants have after each reward round becomes claimable.
+    /// @param trustedForwarder A trusted forwarder of transactions to this contract.
     constructor(
         IJBDirectory directory,
         IJBController controller,
@@ -90,9 +91,18 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
         IREVOwner revOwner,
         uint256 initialRoundDuration,
         uint256 initialVestingRounds,
-        uint48 initialClaimDuration
+        uint48 initialClaimDuration,
+        address trustedForwarder
     )
-        JBDistributor(controller, revLoans, revOwner, initialRoundDuration, initialVestingRounds, initialClaimDuration)
+        JBDistributor(
+            controller,
+            revLoans,
+            revOwner,
+            initialRoundDuration,
+            initialVestingRounds,
+            initialClaimDuration,
+            trustedForwarder
+        )
     {
         DIRECTORY = directory;
     }
@@ -277,7 +287,7 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
             token: token,
             amount: tokenAmount,
             vestingReleaseRound: ctx.vestingReleaseRound,
-            caller: msg.sender
+            caller: _msgSender()
         });
     }
 
@@ -392,10 +402,10 @@ contract JBTokenDistributor is JBDistributor, IJBTokenDistributor {
     /// @param hook The IVotes token whose stakers are claiming.
     /// @param tokenIds The encoded staker addresses to check.
     function _requireCanClaimTokenIds(address hook, uint256[] calldata tokenIds) internal view override {
-        // Each tokenId is an encoded address, so every requested claim must belong to msg.sender.
+        // Each tokenId is an encoded address, so every requested claim must belong to the caller.
         for (uint256 i; i < tokenIds.length;) {
-            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: msg.sender})) {
-                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: msg.sender});
+            if (!_canClaim({hook: hook, tokenId: tokenIds[i], account: _msgSender()})) {
+                revert JBDistributor_NoAccess({hook: hook, tokenId: tokenIds[i], account: _msgSender()});
             }
 
             unchecked {

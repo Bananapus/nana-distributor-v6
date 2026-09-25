@@ -24,6 +24,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 - **`JBDirectory` is trusted.**
 - **Stake sources are trusted.**
 - **Deployment parameters must be sane.**
+- **The trusted forwarder is trusted.** When the constructor's forwarder calls, the last 20 bytes of calldata name the caller for claims, collection, funding, loan repayment and refunds. Split-hook delivery ignores the forwarder and only accepts a direct terminal or controller call.
 
 ## 2. Economic risks
 
@@ -50,7 +51,7 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
 
 ## 3. Access control and caller risks
 
-- **Vesting authority differs by distributor.** The token distributor only lets the encoded staker address start its own vesting clock. The 721 distributor only lets the current NFT owner materialize and collect rewards for that token ID.
+- **Vesting authority differs by distributor.** The token distributor lets anyone start the vesting clock for a valid encoded staker, while only that staker can collect. The 721 distributor only lets the current NFT owner materialize and collect rewards for that token ID.
 - **Claim authority differs by distributor type.**
 - **721 claim batches are brittle to invalid token IDs.**
 - **Forfeiture release is effectively 721-only.**

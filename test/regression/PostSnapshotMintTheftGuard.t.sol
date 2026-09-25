@@ -154,7 +154,8 @@ contract PostSnapshotMintTheftTest is Test {
             IREVOwner(address(0)),
             1 days,
             1,
-            0
+            0,
+            address(0)
         );
         MockRewardToken reward = new MockRewardToken();
         Mock721Store store = new Mock721Store();
