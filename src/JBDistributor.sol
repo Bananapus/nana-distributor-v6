@@ -1112,6 +1112,9 @@ abstract contract JBDistributor is ERC2771Context, IJBDistributor {
     /// @param token The reward token being funded.
     /// @param amount The nominal amount to fund.
     function _fund(address hook, uint256 groupId, IERC20 token, uint256 amount) internal {
+        // Do not let callbacks fund while a reward-token balance window is open.
+        _requireNotAcceptingToken();
+
         // Native funding is measured by msg.value, not the caller-provided amount.
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;

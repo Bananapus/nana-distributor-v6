@@ -13,6 +13,7 @@ import {JBSingleAllowance} from "@bananapus/core-v6/src/structs/JBSingleAllowanc
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -123,6 +124,7 @@ contract RepayReentrancyController {
 /// ERC-20 would, before moving the balance.
 contract RepayReentrancyHookedSource is ERC20 {
     address public hookTarget;
+    address public fireOnPullFrom;
     bool internal _fired;
 
     constructor() ERC20("Hooked", "HOOK") {}
@@ -131,12 +133,16 @@ contract RepayReentrancyHookedSource is ERC20 {
         _mint(account, amount);
     }
 
-    function setHookTarget(address target) external {
+    /// @param target The contract that receives control.
+    /// @param pulledFrom The holder whose pull hands control over: the repayer for the distributor's pull, the
+    /// distributor for the loans contract's pull.
+    function setHook(address target, address pulledFrom) external {
         hookTarget = target;
+        fireOnPullFrom = pulledFrom;
     }
 
     function transferFrom(address from, address to, uint256 value) public override returns (bool) {
-        if (!_fired && from == hookTarget) {
+        if (!_fired && from == fireOnPullFrom) {
             _fired = true;
             RepayReentrancyAttacker(payable(hookTarget)).onSourcePull();
         }
@@ -217,7 +223,9 @@ contract RepayReentrancyREVLoans {
         if (loan.sourceToken == JBConstants.NATIVE_TOKEN) {
             require(msg.value == maxRepayBorrowAmount, "unexpected native repay value");
         } else {
-            IERC20(loan.sourceToken).transferFrom(msg.sender, address(this), maxRepayBorrowAmount);
+            SafeERC20.safeTransferFrom({
+                token: IERC20(loan.sourceToken), from: msg.sender, to: address(this), value: maxRepayBorrowAmount
+            });
         }
 
         rewardToken.mint({account: beneficiary, amount: collateralCountToReturn});
@@ -241,6 +249,7 @@ contract RepayReentrancyAttacker {
 
     uint256 public nestedLoanId;
     uint256 public nestedRepayAmount;
+    address public nestedFundHook;
     bool public nestedSucceeded;
     bytes public nestedRevertReason;
 
@@ -256,7 +265,22 @@ contract RepayReentrancyAttacker {
         distributor.repayVestingLoan({loanId: loanId, maxRepayBorrowAmount: maxRepayBorrowAmount});
     }
 
+    function setNestedNativeFund(address hook) external {
+        nestedFundHook = hook;
+    }
+
     function onSourcePull() external {
+        if (nestedFundHook != address(0)) {
+            try distributor.fund{value: 1 ether}({
+                hook: nestedFundHook, token: IERC20(JBConstants.NATIVE_TOKEN), amount: 1 ether
+            }) {
+                nestedSucceeded = true;
+            } catch (bytes memory reason) {
+                nestedRevertReason = reason;
+            }
+            return;
+        }
+
         try distributor.repayVestingLoan{value: nestedRepayAmount}({
             loanId: nestedLoanId, maxRepayBorrowAmount: nestedRepayAmount
         }) {
@@ -312,7 +336,6 @@ contract VestingLoanRepayReentrancyTest is Test {
         });
 
         _attacker = new RepayReentrancyAttacker(_distributor);
-        _hookedSource.setHookTarget(address(_attacker));
 
         vm.deal(address(_revLoans), 1000 ether);
     }
@@ -320,7 +343,26 @@ contract VestingLoanRepayReentrancyTest is Test {
     /// @notice A hooked source token hands the repayer control while the distributor pulls the repayment. Repaying a
     /// second loan in the same reward token there must revert: otherwise that loan's returned collateral would be
     /// measured as the outer loan's excess and paid to the repayer while inventory is credited for both.
-    function test_repayVestingLoan_nestedRepayInsideSourcePullReverts() public {
+    function test_repayVestingLoan_nestedRepayInsideRepayerPullReverts() public {
+        _hookedSource.setHook({target: address(_attacker), pulledFrom: address(_attacker)});
+        _assertNestedRepayRejected();
+    }
+
+    /// @notice The loans contract pulls the source token from the distributor inside `REV_LOANS.repayLoan`. A source
+    /// token that hands control over there must be rejected the same way.
+    function test_repayVestingLoan_nestedRepayInsideLoansPullReverts() public {
+        _hookedSource.setHook({target: address(_attacker), pulledFrom: address(_distributor)});
+        _assertNestedRepayRejected();
+    }
+
+    /// @notice A nested native `fund` of the reward hook is rejected inside the window as well.
+    function test_repayVestingLoan_nestedNativeFundReverts() public {
+        _hookedSource.setHook({target: address(_attacker), pulledFrom: address(_attacker)});
+        _attacker.setNestedNativeFund(address(_stakeToken));
+        _assertNestedRepayRejected();
+    }
+
+    function _assertNestedRepayRejected() internal {
         _stake({holder: address(_attacker)});
         _stake({holder: _victim});
 
@@ -357,11 +399,11 @@ contract VestingLoanRepayReentrancyTest is Test {
         });
 
         // The nested repay was attempted inside the window and rejected by the armed guard.
-        assertFalse(_attacker.nestedSucceeded(), "nested repay must not succeed inside the repay window");
+        assertFalse(_attacker.nestedSucceeded(), "nested call must not succeed inside the repay window");
         assertEq(
             bytes4(_attacker.nestedRevertReason()),
             JBDistributor.JBDistributor_ReentrantTokenTransfer.selector,
-            "nested repay must revert with ReentrantTokenTransfer"
+            "nested call must revert with ReentrantTokenTransfer"
         );
 
         // Only the attacker's own collateral came back, nothing was paid out as excess, and the ledger matches the
