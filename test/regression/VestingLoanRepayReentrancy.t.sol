@@ -157,10 +157,23 @@ contract RepayReentrancyREVLoans {
 
     RepayReentrancyERC20 public immutable rewardToken;
 
+    error REVLoans_ReentrantLoanAction();
+
     uint256 public nextLoanId = 1;
 
     mapping(uint256 loanId => address owner) public ownerOf;
     mapping(uint256 loanId => REVLoan) internal _loanOf;
+
+    /// @dev Mirrors the production `nonReentrantLoanAction` lock so a nested repay that reaches the loans contract is
+    /// rejected here too; the distributor must reject it first.
+    bool transient _loanActionEntered;
+
+    modifier nonReentrantLoanAction() {
+        if (_loanActionEntered) revert REVLoans_ReentrantLoanAction();
+        _loanActionEntered = true;
+        _;
+        _loanActionEntered = false;
+    }
 
     constructor(RepayReentrancyERC20 rewardToken_) {
         rewardToken = rewardToken_;
@@ -178,6 +191,7 @@ contract RepayReentrancyREVLoans {
         address holder
     )
         external
+        nonReentrantLoanAction
         returns (uint256 loanId, REVLoan memory loan)
     {
         loanId = nextLoanId++;
@@ -216,6 +230,7 @@ contract RepayReentrancyREVLoans {
     )
         external
         payable
+        nonReentrantLoanAction
         returns (uint256 paidOffLoanId, REVLoan memory paidOffLoan)
     {
         REVLoan memory loan = _loanOf[loanId];

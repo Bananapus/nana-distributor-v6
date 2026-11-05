@@ -82,15 +82,20 @@ This file covers the shared vesting engine in `JBDistributor` and the two concre
   token distributors with `0` for the non-expiring total-supply path, or a nonzero duration for the active-voter
   active-total path.
 - **Reward-token callbacks fail closed during loan repayment.** `repayVestingLoan` arms the same guard from the
-  vesting-position load until the collateral delta is attributed: the reward-token balance window it measures spans the ERC-20 source-token pull and `REV_LOANS.repayLoan`, and
-  `_restoreVestingCollateral` pays everything above the original collateral count to the caller as excess. Before the
-  guard was armed there (found 2026-11-05), a source token that ran caller code on transfer could nest a second
-  `repayVestingLoan` for another loan in the same reward token, so the outer caller was paid that loan's collateral and
-  `_balanceOf` was credited for both loans while the contract held one. The native path exposed no caller callback and
-  the live `StickyDistributor` instances have `REV_LOANS` unset, so no deployed instance was reachable.
+  vesting-position load until the collateral delta is attributed. The reward-token balance window it measures spans the
+  ERC-20 source-token pull and `REV_LOANS.repayLoan`, and `_restoreVestingCollateral` pays everything above the original
+  collateral count to the caller as excess, so a nested repay, fund, split delivery, collection or borrow inside that
+  window reverts `JBDistributor_ReentrantTokenTransfer` instead of being attributed to the outer loan. The guard cannot
+  stop a plain ERC-20 transfer of the reward token into the distributor during the window: such tokens were never in
+  `_balanceOf` or `_accountedBalanceOf`, so they leave as the repayer's excess without touching any staker's accounted
+  inventory, exactly as they would be unreachable if they landed at any other time. Point splits at the distributor
+  with `hook = distributor`, never as a plain beneficiary.
 - **Reward-token callbacks fail closed during funding.** While `fund` or `processSplitWith` is measuring an inbound
   ERC-20 balance delta, reentrant `fund`, `processSplitWith`, `beginVesting`, `collectVestedRewards`, and
-  `releaseForfeitedRewards` calls revert, on the native paths as well as the ERC-20 ones. This prevents both over-crediting from nested funding and under-crediting from same-token collection netting
+  `releaseForfeitedRewards` calls revert, on the native paths as well as the ERC-20 ones. A split-hook delivery that a
+  token callback routes to this distributor inside such a window is therefore not accepted: the terminal returns a
+  hook-rejected payout to the project balance and the controller burns a rejected reserved-token split, so reward
+  tokens whose transfers call out must not be combined with splits pointed at the distributor. This prevents both over-crediting from nested funding and under-crediting from same-token collection netting
   against the inbound transfer.
 - **721 stake weights depend on checkpointed voting power at the funded round's snapshot block.** The `CHECKPOINTS()` module must be deployed and delegates must be set before the snapshot block, or stakers receive zero weight.
 - **721 vesting and claiming treat burned tokens differently.**
