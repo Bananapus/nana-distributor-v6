@@ -203,6 +203,9 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
                 && DIRECTORY.controllerOf(context.projectId) != IERC165(msg.sender)
         ) revert JB721Distributor_Unauthorized({projectId: context.projectId, caller: msg.sender});
 
+        // Do not let callbacks fund while a reward-token balance window is open.
+        _requireNotAcceptingToken();
+
         // The target hook is the split's beneficiary.
         address hook = address(context.split.beneficiary);
 

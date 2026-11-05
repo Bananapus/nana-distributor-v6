@@ -502,6 +502,11 @@ abstract contract JBDistributor is ERC2771Context, IJBDistributor {
         JBVestingLoan memory vestingLoan = _vestingLoanOf[loanId];
         if (vestingLoan.hook == address(0)) revert JBDistributor_NoVestingLoan({loanId: loanId});
 
+        // Arm the callback guard for the whole repayment. The reward-token balance window measured below spans the
+        // source-token pull and `REV_LOANS.repayLoan`, both of which run foreign code, so no reward-accounting mutation
+        // may land inside it: a nested repay, fund or collection would otherwise be attributed to this loan's excess.
+        _acceptingToken = address(vestingLoan.token);
+
         // Use Revnet's current fee quote to determine the amount needed to repay this loan now.
         REVLoan memory loan = REV_LOANS.loanOf(loanId);
         uint256 repayBorrowAmount =
@@ -536,6 +541,9 @@ abstract contract JBDistributor is ERC2771Context, IJBDistributor {
             rewardBalanceBefore: rewardBalanceBefore,
             repayBorrowAmount: repayBorrowAmount
         });
+
+        // The collateral delta is attributed, so reward accounting may move again before the refund call.
+        _acceptingToken = address(0);
 
         // Return any native overpayment last, following checks-effects-interactions. The loan is already settled, so a
         // re-entrant call during this transfer cannot observe a half-settled loan.
@@ -1104,6 +1112,9 @@ abstract contract JBDistributor is ERC2771Context, IJBDistributor {
     /// @param token The reward token being funded.
     /// @param amount The nominal amount to fund.
     function _fund(address hook, uint256 groupId, IERC20 token, uint256 amount) internal {
+        // Do not let callbacks fund while a reward-token balance window is open.
+        _requireNotAcceptingToken();
+
         // Native funding is measured by msg.value, not the caller-provided amount.
         if (address(token) == JBConstants.NATIVE_TOKEN) {
             amount = msg.value;
