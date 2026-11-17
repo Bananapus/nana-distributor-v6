@@ -10,6 +10,7 @@ import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBSplitHookContext} from "@bananapus/core-v6/src/structs/JBSplitHookContext.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {mulDiv} from "@prb/math/src/Common.sol";
@@ -770,14 +771,22 @@ contract JB721Distributor is JBDistributor, IJB721Distributor {
     }
 
     /// @notice Checks if the given token was burned.
+    /// @dev Only the standard `ERC721NonexistentToken` error counts as burned. Any other revert, including the empty
+    /// return data an out-of-gas call leaves behind, propagates: forfeiture recycles a token's unclaimed rewards to
+    /// everyone else, so whether a live token counts as burned must not depend on the gas the caller chose. A typed
+    /// error is a return value; a bare revert is not.
     /// @param hook The hook the token belongs to.
     /// @param tokenId The tokenId to check.
     /// @return tokenWasBurned True if the token was burned.
     function _tokenBurned(address hook, uint256 tokenId) internal view override returns (bool tokenWasBurned) {
         try IERC721(hook).ownerOf(tokenId) returns (address) {
-            tokenWasBurned = false;
-        } catch {
-            tokenWasBurned = true;
+            return false;
+        } catch (bytes memory reason) {
+            if (reason.length == 36 && bytes4(reason) == IERC721Errors.ERC721NonexistentToken.selector) return true;
+            // solhint-disable-next-line no-inline-assembly
+            assembly ("memory-safe") {
+                revert(add(reason, 32), mload(reason))
+            }
         }
     }
 
